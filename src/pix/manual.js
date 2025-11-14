@@ -87,8 +87,12 @@ async function createManualCharge({ amount = "10.00", productId }) {
 
     // Criar payload PIX (BR Code)
     console.log('Criando payload PIX...');
+    console.log('Chave PIX usada:', key);
+    console.log('Valor:', amount);
+    console.log('TXID:', txid);
     const copiaCola = createPixPayload(key, amount, txid);
-    console.log('Payload PIX criado:', copiaCola.substring(0, 50) + '...');
+    console.log('Payload PIX COMPLETO:', copiaCola);
+    console.log('Tamanho do payload:', copiaCola.length);
 
     // Gerar QR code como buffer (PNG)
     console.log('Gerando QR Code...');
