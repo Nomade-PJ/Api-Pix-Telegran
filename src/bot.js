@@ -8,10 +8,11 @@ const admin = require('./admin');
 function createBot(token) {
   const bot = new Telegraf(token);
 
-  // Registrar comandos admin
-  admin.registerAdminCommands(bot);
-
+  // Registrar handler do /start PRIMEIRO (antes dos comandos admin)
   bot.start(async (ctx) => {
+    console.log('=== HANDLER /start CHAMADO ===');
+    console.log('Chat ID:', ctx.chat.id);
+    console.log('User ID:', ctx.from.id);
     try {
       console.log('Comando /start recebido de:', ctx.from.id);
       
@@ -59,6 +60,9 @@ function createBot(token) {
       return ctx.reply('❌ Erro ao carregar menu. Tente novamente.');
     }
   });
+
+  // Registrar comandos admin DEPOIS do /start
+  admin.registerAdminCommands(bot);
 
   bot.action(/buy:(.+)/, async (ctx) => {
     try {
