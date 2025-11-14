@@ -16,14 +16,29 @@ function createBot(token) {
       // Salvar/atualizar usuário no banco
       await db.getOrCreateUser(ctx.from);
       
+      // Buscar produtos ativos do banco
+      const products = await db.getAllProducts();
+      
+      if (products.length === 0) {
+        return ctx.reply('🚧 Nenhum produto disponível no momento. Volte mais tarde!');
+      }
+      
+      // Gerar botões dinamicamente
+      const buttons = products.map(product => {
+        const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
+        return [Markup.button.callback(
+          `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`,
+          `buy:${product.product_id}`
+        )];
+      });
+      
+      // Adicionar botão do grupo
+      buttons.push([Markup.button.url('📢 Entrar no grupo', 'https://t.me/seugrupo')]);
+      
       const text = `👋 Olá! Bem-vindo ao **Bot da Val** 🌶️🔥\n\nEscolha uma opção abaixo:`;
       return ctx.reply(text, {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('🛍️ Comprar Pack A (R$30)', 'buy:packA')],
-          [Markup.button.callback('💎 Comprar Pack B (R$50)', 'buy:packB')],
-          [Markup.button.url('📢 Entrar no grupo', 'https://t.me/seugrupo')]
-        ])
+        ...Markup.inlineKeyboard(buttons)
       });
     } catch (err) {
       console.error('Erro no /start:', err);

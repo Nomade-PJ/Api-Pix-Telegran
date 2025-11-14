@@ -90,19 +90,87 @@ async function getProduct(productId) {
   }
 }
 
-async function getAllProducts() {
+async function getAllProducts(includeInactive = false) {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('products')
       .select('*')
-      .eq('is_active', true)
       .order('price', { ascending: true });
+    
+    if (!includeInactive) {
+      query = query.eq('is_active', true);
+    }
+    
+    const { data, error } = await query;
     
     if (error) throw error;
     return data || [];
   } catch (err) {
     console.error('Erro ao listar produtos:', err);
     return [];
+  }
+}
+
+async function createProduct({ productId, name, description, price, deliveryType = 'link', deliveryUrl = null }) {
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .insert([{
+        product_id: productId,
+        name,
+        description,
+        price,
+        delivery_type: deliveryType,
+        delivery_url: deliveryUrl,
+        is_active: true
+      }])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    console.log('Produto criado:', data.id);
+    return data;
+  } catch (err) {
+    console.error('Erro ao criar produto:', err);
+    throw err;
+  }
+}
+
+async function updateProduct(productId, updates) {
+  try {
+    const { error } = await supabase
+      .from('products')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString()
+      })
+      .eq('product_id', productId);
+    
+    if (error) throw error;
+    console.log('Produto atualizado:', productId);
+    return true;
+  } catch (err) {
+    console.error('Erro ao atualizar produto:', err);
+    return false;
+  }
+}
+
+async function deleteProduct(productId) {
+  try {
+    const { error } = await supabase
+      .from('products')
+      .update({
+        is_active: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('product_id', productId);
+    
+    if (error) throw error;
+    console.log('Produto desativado:', productId);
+    return true;
+  } catch (err) {
+    console.error('Erro ao desativar produto:', err);
+    return false;
   }
 }
 
@@ -307,6 +375,9 @@ module.exports = {
   isUserAdmin,
   getProduct,
   getAllProducts,
+  createProduct,
+  updateProduct,
+  deleteProduct,
   createTransaction,
   getTransactionByTxid,
   getLastPendingTransaction,
