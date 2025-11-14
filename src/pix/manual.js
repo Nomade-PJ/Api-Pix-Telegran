@@ -22,15 +22,15 @@ function createPixPayload(pixKey, amount, txid) {
   // ID 00: Payload Format Indicator
   const payloadFormat = '000201';
   
+  // ID 01: Point of Initiation Method (static = 11, dynamic = 12)
+  const initiationMethod = '010212';
+  
   // ID 26: Merchant Account Information (PIX)
-  const merchantAccount = 
-    '26' + 
-    String(
-      '0014br.gov.bcb.pix' +
-      '01' + String(pixKey.length).padStart(2, '0') + pixKey
-    ).length.toString().padStart(2, '0') +
-    '0014br.gov.bcb.pix' +
-    '01' + String(pixKey.length).padStart(2, '0') + pixKey;
+  // Estrutura: 26 + tamanho + (00 + tamanho + "br.gov.bcb.pix" + 01 + tamanho + chave)
+  const gui = '0014br.gov.bcb.pix';
+  const keyField = '01' + String(pixKey.length).padStart(2, '0') + pixKey;
+  const merchantAccountContent = gui + keyField;
+  const merchantAccount = '26' + String(merchantAccountContent.length).padStart(2, '0') + merchantAccountContent;
   
   // ID 52: Merchant Category Code
   const merchantCategory = '52040000';
@@ -49,16 +49,13 @@ function createPixPayload(pixKey, amount, txid) {
   const countryCode = '5802BR';
   
   // ID 62: Additional Data Field Template (txid)
-  const additionalData = 
-    '62' + 
-    String(
-      '05' + String(txid.length).padStart(2, '0') + txid
-    ).length.toString().padStart(2, '0') +
-    '05' + String(txid.length).padStart(2, '0') + txid;
+  const txidField = '05' + String(txid.length).padStart(2, '0') + txid;
+  const additionalData = '62' + String(txidField.length).padStart(2, '0') + txidField;
   
   // Montar payload sem CRC
   const payloadWithoutCRC = 
     payloadFormat + 
+    initiationMethod +
     merchantAccount + 
     merchantCategory + 
     currency + 
