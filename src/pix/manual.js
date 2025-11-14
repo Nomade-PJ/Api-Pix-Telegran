@@ -19,38 +19,63 @@ function crc16(str) {
 
 // Função para criar payload PIX (BR Code)
 function createPixPayload(pixKey, amount, txid) {
+  console.log('=== CRIANDO PAYLOAD PIX ===');
+  console.log('Chave recebida:', pixKey);
+  console.log('Tamanho da chave:', pixKey.length);
+  console.log('Valor:', amount);
+  console.log('TXID:', txid);
+  
   // ID 00: Payload Format Indicator
   const payloadFormat = '000201';
+  console.log('00 - Payload Format:', payloadFormat);
   
   // ID 01: Point of Initiation Method (static = 11, dynamic = 12)
   const initiationMethod = '010212';
+  console.log('01 - Initiation Method:', initiationMethod);
   
   // ID 26: Merchant Account Information (PIX)
   // Estrutura: 26 + tamanho + (00 + tamanho + "br.gov.bcb.pix" + 01 + tamanho + chave)
   const gui = '0014br.gov.bcb.pix';
+  console.log('GUI:', gui);
+  
   const keyField = '01' + String(pixKey.length).padStart(2, '0') + pixKey;
+  console.log('Key Field completo:', keyField);
+  console.log('Tamanho do Key Field:', keyField.length);
+  
   const merchantAccountContent = gui + keyField;
+  console.log('Merchant Account Content:', merchantAccountContent);
+  console.log('Tamanho do Merchant Account Content:', merchantAccountContent.length);
+  
   const merchantAccount = '26' + String(merchantAccountContent.length).padStart(2, '0') + merchantAccountContent;
+  console.log('26 - Merchant Account completo:', merchantAccount);
   
   // ID 52: Merchant Category Code
   const merchantCategory = '52040000';
+  console.log('52 - Merchant Category:', merchantCategory);
   
   // ID 53: Transaction Currency (986 = BRL)
   const currency = '5303986';
+  console.log('53 - Currency:', currency);
   
   // ID 54: Transaction Amount (se houver)
   let amountField = '';
   if (amount && parseFloat(amount) > 0) {
     const amountStr = parseFloat(amount).toFixed(2);
     amountField = '54' + String(amountStr.length).padStart(2, '0') + amountStr;
+    console.log('54 - Amount Field:', amountField);
   }
   
   // ID 58: Country Code
   const countryCode = '5802BR';
+  console.log('58 - Country:', countryCode);
   
   // ID 62: Additional Data Field Template (txid)
   const txidField = '05' + String(txid.length).padStart(2, '0') + txid;
+  console.log('TXID Field:', txidField);
+  console.log('Tamanho TXID Field:', txidField.length);
+  
   const additionalData = '62' + String(txidField.length).padStart(2, '0') + txidField;
+  console.log('62 - Additional Data:', additionalData);
   
   // Montar payload sem CRC
   const payloadWithoutCRC = 
@@ -64,9 +89,19 @@ function createPixPayload(pixKey, amount, txid) {
     additionalData + 
     '6304';
   
+  console.log('Payload SEM CRC:', payloadWithoutCRC);
+  console.log('Tamanho payload sem CRC:', payloadWithoutCRC.length);
+  
   // Calcular e adicionar CRC
   const crcValue = crc16(payloadWithoutCRC);
-  return payloadWithoutCRC + crcValue;
+  console.log('CRC calculado:', crcValue);
+  
+  const payloadFinal = payloadWithoutCRC + crcValue;
+  console.log('=== PAYLOAD FINAL ===');
+  console.log(payloadFinal);
+  console.log('Tamanho total:', payloadFinal.length);
+  
+  return payloadFinal;
 }
 
 async function createManualCharge({ amount = "10.00", productId }) {
