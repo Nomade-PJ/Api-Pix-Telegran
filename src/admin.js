@@ -288,11 +288,11 @@ Esta alteração é temporária. Para torná-la permanente, atualize também na 
         return ctx.reply('📦 Nenhum produto cadastrado ainda.\n\nUse /novoproduto para criar um.');
       }
       
-      let message = `🛍️ *PRODUTOS CADASTRADOS:*\n\n`;
+      let message = `🛍️ PRODUTOS CADASTRADOS:\n\n`;
       
       for (const product of products) {
         const status = product.is_active ? '✅' : '❌';
-        message += `${status} *${product.name}*\n`;
+        message += `${status} ${product.name}\n`;
         message += `🆔 ID: ${product.product_id}\n`;
         message += `💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}\n`;
         if (product.description) message += `📝 ${product.description}\n`;
@@ -308,12 +308,12 @@ Esta alteração é temporária. Para torná-la permanente, atualize também na 
         message += `\n`;
       }
       
-      message += `\n*Comandos:*\n`;
+      message += `\nComandos:\n`;
       message += `• /novoproduto - Criar novo\n`;
       message += `• /editarproduto - Editar\n`;
       message += `• /deletarproduto - Remover`;
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      return ctx.reply(message);
     } catch (err) {
       console.error('Erro ao listar produtos:', err);
       return ctx.reply('❌ Erro ao buscar produtos.');
