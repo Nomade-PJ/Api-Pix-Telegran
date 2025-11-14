@@ -11,11 +11,10 @@
     "telegraf": "^4.12.2",
     "axios": "^1.4.0",
     "qrcode": "^1.5.1",
-    "emv-qrcode": "^1.0.6",
     "form-data": "^4.0.0"
   },
   "engines": {
-    "node": ">=16.x"
+    "node": ">=18.x"
   }
 }
 
