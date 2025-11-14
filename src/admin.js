@@ -16,31 +16,29 @@ function registerAdminCommands(bot) {
       
       const stats = await db.getStats();
       
-      const message = `
-🔐 **PAINEL ADMINISTRATIVO**
+      const message = `🔐 *PAINEL ADMINISTRATIVO*
 
-📊 **Estatísticas:**
+📊 *Estatísticas:*
 👥 Usuários: ${stats.totalUsers}
 💳 Transações: ${stats.totalTransactions}
 ⏳ Pendentes: ${stats.pendingTransactions}
 💰 Total em vendas: R$ ${stats.totalSales}
 
-**📋 Gerenciar Vendas:**
-/pendentes - Ver transações pendentes
-/validar [txid] - Validar e entregar
-/stats - Estatísticas detalhadas
+*📋 Gerenciar Vendas:*
+• /pendentes - Ver transações pendentes
+• /validar [txid] - Validar e entregar
+• /stats - Estatísticas detalhadas
 
-**🛍️ Gerenciar Produtos:**
-/produtos - Listar todos os produtos
-/novoproduto - Criar novo produto
-/editarproduto - Editar produto
-/deletarproduto - Remover produto
+*🛍️ Gerenciar Produtos:*
+• /produtos - Listar todos os produtos
+• /novoproduto - Criar novo produto
+• /editarproduto - Editar produto
+• /deletarproduto - Remover produto
 
-**⚙️ Configurações:**
-/setpix [chave] - Alterar chave PIX
-/users - Listar usuários
-/broadcast [mensagem] - Enviar para todos
-`;
+*⚙️ Configurações:*
+• /setpix [chave] - Alterar chave PIX
+• /users - Listar usuários
+• /broadcast [mensagem] - Enviar para todos`;
       
       return ctx.reply(message, { parse_mode: 'Markdown' });
     } catch (err) {
@@ -61,16 +59,16 @@ function registerAdminCommands(bot) {
         return ctx.reply('✅ Nenhuma transação pendente!');
       }
       
-      let message = `⏳ **${pending.length} TRANSAÇÕES PENDENTES:**\n\n`;
+      let message = `⏳ *${pending.length} TRANSAÇÕES PENDENTES:*\n\n`;
       
       for (const tx of pending) {
-        message += `🆔 TXID: \`${tx.txid}\`\n`;
+        message += `🆔 TXID: ${tx.txid}\n`;
         message += `👤 User: ${tx.user?.first_name || 'N/A'} (@${tx.user?.username || 'N/A'})\n`;
         message += `📦 Produto: ${tx.product?.name || tx.product_id}\n`;
         message += `💵 Valor: R$ ${tx.amount}\n`;
         message += `📅 Recebido: ${new Date(tx.proof_received_at).toLocaleString('pt-BR')}\n`;
         message += `\n/validar_${tx.txid}\n`;
-        message += `—————————————————\n\n`;
+        message += `——————————\n\n`;
       }
       
       return ctx.reply(message, { parse_mode: 'Markdown' });
@@ -113,12 +111,12 @@ function registerAdminCommands(bot) {
         await deliver.deliverContent(transaction.telegram_id, product);
         await db.markAsDelivered(txid);
         
-        return ctx.reply(`✅ Transação validada e entregue!\n\n🆔 TXID: \`${txid}\`\n👤 Cliente: ${transaction.user?.first_name}\n💰 Valor: R$ ${transaction.amount}`, {
+        return ctx.reply(`✅ Transação validada e entregue!\n\n🆔 TXID: ${txid}\n👤 Cliente: ${transaction.user?.first_name}\n💰 Valor: R$ ${transaction.amount}`, {
           parse_mode: 'Markdown'
         });
       } catch (deliverErr) {
         console.error('Erro ao entregar:', deliverErr);
-        return ctx.reply(`⚠️ Transação validada, mas erro ao entregar.\nTXID: \`${txid}\`\nTente novamente ou entregue manualmente.`, {
+        return ctx.reply(`⚠️ Transação validada, mas erro ao entregar.\nTXID: ${txid}\nTente novamente ou entregue manualmente.`, {
           parse_mode: 'Markdown'
         });
       }
@@ -136,21 +134,19 @@ function registerAdminCommands(bot) {
       
       const stats = await db.getStats();
       
-      const message = `
-📊 **ESTATÍSTICAS DETALHADAS**
+      const message = `📊 *ESTATÍSTICAS DETALHADAS*
 
-👥 **Usuários:**
+👥 *Usuários:*
 Total: ${stats.totalUsers}
 
-💳 **Transações:**
+💳 *Transações:*
 Total: ${stats.totalTransactions}
 ⏳ Pendentes: ${stats.pendingTransactions}
 ✅ Entregues: ${stats.totalTransactions - stats.pendingTransactions}
 
-💰 **Financeiro:**
+💰 *Financeiro:*
 Total em vendas: R$ ${stats.totalSales}
-Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) / stats.totalTransactions).toFixed(2) : '0.00'}
-`;
+Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) / stats.totalTransactions).toFixed(2) : '0.00'}`;
       
       return ctx.reply(message, { parse_mode: 'Markdown' });
     } catch (err) {
@@ -215,12 +211,12 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
       
       if (error) throw error;
       
-      let message = `👥 **ÚLTIMOS 20 USUÁRIOS:**\n\n`;
+      let message = `👥 *ÚLTIMOS 20 USUÁRIOS:*\n\n`;
       
       for (const user of users) {
         message += `${user.is_admin ? '🔐 ' : ''}${user.first_name}`;
         if (user.username) message += ` @${user.username}`;
-        message += `\nID: \`${user.telegram_id}\`\n`;
+        message += `\nID: ${user.telegram_id}\n`;
         message += `Desde: ${new Date(user.created_at).toLocaleDateString('pt-BR')}\n\n`;
       }
       
@@ -239,21 +235,17 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
       
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length === 0) {
-        return ctx.reply(`❌ **Uso incorreto!**
+        return ctx.reply(`❌ *Uso incorreto!*
 
-**Formato:** /setpix [chave]
+*Formato:* /setpix [chave]
 
-**Exemplos:**
-/setpix seu@email.com
-/setpix 11999887766
-/setpix 12345678900
-/setpix 123e4567-e89b-12d3-a456-426614174000
+*Exemplos:*
+• /setpix seu@email.com
+• /setpix 11999887766
+• /setpix 12345678900
 
-**Tipos aceitos:**
-• Email
-• Telefone (com DDD, sem +55)
-• CPF/CNPJ (só números)
-• Chave aleatória`, { parse_mode: 'Markdown' });
+*Tipos aceitos:*
+Email, Telefone (com DDD, sem +55), CPF/CNPJ ou Chave aleatória`, { parse_mode: 'Markdown' });
       }
       
       const novaChave = args.join(' ').trim();
@@ -266,16 +258,16 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
       // Atualizar variável de ambiente (nota: isso só funciona durante execução)
       process.env.MY_PIX_KEY = novaChave;
       
-      await ctx.reply(`✅ **Chave PIX atualizada com sucesso!**
+      await ctx.reply(`✅ *Chave PIX atualizada com sucesso!*
 
-🔑 Nova chave: \`${novaChave}\`
+🔑 Nova chave: ${novaChave}
 
-⚠️ **IMPORTANTE:** 
+⚠️ *IMPORTANTE:* 
 Esta alteração é temporária. Para torná-la permanente, atualize também na Vercel:
 
 1. Acesse: Settings → Environment Variables
 2. Edite MY_PIX_KEY
-3. Valor: \`${novaChave}\`
+3. Valor: ${novaChave}
 4. Salve e redeploy`, { parse_mode: 'Markdown' });
       
     } catch (err) {
@@ -296,12 +288,12 @@ Esta alteração é temporária. Para torná-la permanente, atualize também na 
         return ctx.reply('📦 Nenhum produto cadastrado ainda.\n\nUse /novoproduto para criar um.');
       }
       
-      let message = `🛍️ **PRODUTOS CADASTRADOS:**\n\n`;
+      let message = `🛍️ *PRODUTOS CADASTRADOS:*\n\n`;
       
       for (const product of products) {
         const status = product.is_active ? '✅' : '❌';
-        message += `${status} **${product.name}**\n`;
-        message += `🆔 ID: \`${product.product_id}\`\n`;
+        message += `${status} *${product.name}*\n`;
+        message += `🆔 ID: ${product.product_id}\n`;
         message += `💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}\n`;
         if (product.description) message += `📝 ${product.description}\n`;
         message += `📦 Entrega: ${product.delivery_type === 'file' ? '📄 Arquivo' : '🔗 Link'}\n`;
@@ -309,17 +301,17 @@ Esta alteração é temporária. Para torná-la permanente, atualize também na 
           const urlPreview = product.delivery_url.length > 50 
             ? product.delivery_url.substring(0, 50) + '...' 
             : product.delivery_url;
-          message += `🔗 URL: ${urlPreview}\n`;
+          message += `🔗 ${urlPreview}\n`;
         } else {
-          message += `🔗 URL: Não configurada\n`;
+          message += `🔗 Não configurada\n`;
         }
         message += `\n`;
       }
       
-      message += `\n**Comandos:**\n`;
-      message += `/novoproduto - Criar novo\n`;
-      message += `/editarproduto - Editar\n`;
-      message += `/deletarproduto - Remover`;
+      message += `\n*Comandos:*\n`;
+      message += `• /novoproduto - Criar novo\n`;
+      message += `• /editarproduto - Editar\n`;
+      message += `• /deletarproduto - Remover`;
       
       return ctx.reply(message, { parse_mode: 'Markdown' });
     } catch (err) {
@@ -342,9 +334,9 @@ Esta alteração é temporária. Para torná-la permanente, atualize também na 
         data: {}
       };
       
-      return ctx.reply(`🎯 **CRIAR NOVO PRODUTO**
+      return ctx.reply(`🎯 *CRIAR NOVO PRODUTO*
 
-**Passo 1/4:** Digite o **nome** do produto:
+*Passo 1/4:* Digite o *nome* do produto:
 Exemplo: Pack Premium, Curso Avançado, etc.
 
 _Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
@@ -367,10 +359,10 @@ _Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
         return ctx.reply('📦 Nenhum produto para editar.');
       }
       
-      let message = `📝 **EDITAR PRODUTO**\n\nDigite o ID do produto que deseja editar:\n\n`;
+      let message = `📝 *EDITAR PRODUTO*\n\nDigite o ID do produto que deseja editar:\n\n`;
       
       for (const product of products) {
-        message += `• \`${product.product_id}\` - ${product.name}\n`;
+        message += `• ${product.product_id} - ${product.name}\n`;
       }
       
       message += `\n_Exemplo:_ /edit_packA\n_Cancelar:_ /cancelar`;
@@ -410,7 +402,7 @@ _Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
         data: { productId, product }
       };
       
-      return ctx.reply(`📝 **EDITAR: ${product.name}**
+      return ctx.reply(`📝 *EDITAR: ${product.name}*
 
 O que deseja editar?
 
@@ -439,11 +431,11 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
         return ctx.reply('📦 Nenhum produto para remover.');
       }
       
-      let message = `🗑️ **REMOVER PRODUTO**\n\n⚠️ Isso desativará o produto (não deleta do banco).\n\nDigite o ID do produto:\n\n`;
+      let message = `🗑️ *REMOVER PRODUTO*\n\n⚠️ Isso desativará o produto (não deleta do banco).\n\nDigite o ID do produto:\n\n`;
       
       for (const product of products) {
         if (product.is_active) {
-          message += `• \`${product.product_id}\` - ${product.name}\n`;
+          message += `• ${product.product_id} - ${product.name}\n`;
         }
       }
       
@@ -472,7 +464,7 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
       
       await db.deleteProduct(productId);
       
-      return ctx.reply(`✅ **Produto desativado com sucesso!**
+      return ctx.reply(`✅ *Produto desativado com sucesso!*
 
 🛍️ ${product.name}
 🆔 ID: ${productId}
@@ -514,9 +506,9 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
         if (session.step === 'name') {
           session.data.name = ctx.message.text.trim();
           session.step = 'price';
-          return ctx.reply(`✅ Nome: **${session.data.name}**
+          return ctx.reply(`✅ Nome: *${session.data.name}*
 
-**Passo 2/4:** Digite o **preço** (apenas números):
+*Passo 2/4:* Digite o *preço* (apenas números):
 Exemplo: 30.00 ou 50
 
 _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
@@ -529,9 +521,9 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
           }
           session.data.price = price;
           session.step = 'description';
-          return ctx.reply(`✅ Preço: **R$ ${price.toFixed(2)}**
+          return ctx.reply(`✅ Preço: *R$ ${price.toFixed(2)}*
 
-**Passo 3/4:** Digite uma **descrição** (ou envie "-" para pular):
+*Passo 3/4:* Digite uma *descrição* (ou envie "-" para pular):
 Exemplo: Acesso completo ao conteúdo premium
 
 _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
@@ -543,11 +535,11 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
           session.step = 'url';
           return ctx.reply(`✅ Descrição salva!
 
-**Passo 4/4:** Envie a **URL de entrega** ou envie um **arquivo**:
+*Passo 4/4:* Envie a *URL de entrega* ou envie um *arquivo*:
 
-📎 **Arquivo:** Envie um arquivo (ZIP, PDF, etc.)
-🔗 **Link:** Digite a URL (Google Drive, Mega, etc.)
-➖ **Pular:** Digite "-" para configurar depois
+📎 *Arquivo:* Envie um arquivo (ZIP, PDF, etc.)
+🔗 *Link:* Digite a URL (Google Drive, Mega, etc.)
+➖ *Pular:* Digite "-" para configurar depois
 
 _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
         }
@@ -580,13 +572,13 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
             
             delete global._SESSIONS[ctx.from.id];
             
-            return ctx.reply(`🎉 **PRODUTO CRIADO COM SUCESSO!**
+            return ctx.reply(`🎉 *PRODUTO CRIADO COM SUCESSO!*
 
-🛍️ **Nome:** ${session.data.name}
-🆔 **ID:** \`${session.data.productId}\`
-💰 **Preço:** R$ ${session.data.price.toFixed(2)}
-📝 **Descrição:** ${session.data.description || 'Nenhuma'}
-🔗 **URL:** ${session.data.deliveryUrl || 'Não configurada'}
+🛍️ *Nome:* ${session.data.name}
+🆔 *ID:* ${session.data.productId}
+💰 *Preço:* R$ ${session.data.price.toFixed(2)}
+📝 *Descrição:* ${session.data.description || 'Nenhuma'}
+🔗 *URL:* ${session.data.deliveryUrl || 'Não configurada'}
 
 O produto já está disponível no menu de compras!
 Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
@@ -620,7 +612,7 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
         await db.updateProduct(productId, updates);
         delete global._SESSIONS[ctx.from.id];
         
-        return ctx.reply(`✅ **Produto atualizado com sucesso!**
+        return ctx.reply(`✅ *Produto atualizado com sucesso!*
 
 Use /produtos para ver as alterações.`, { parse_mode: 'Markdown' });
       }
@@ -671,13 +663,13 @@ Use /produtos para ver as alterações.`, { parse_mode: 'Markdown' });
       
       delete global._SESSIONS[ctx.from.id];
       
-      return ctx.reply(`🎉 **PRODUTO CRIADO COM SUCESSO!**
+      return ctx.reply(`🎉 *PRODUTO CRIADO COM SUCESSO!*
 
-🛍️ **Nome:** ${session.data.name}
-🆔 **ID:** \`${session.data.productId}\`
-💰 **Preço:** R$ ${session.data.price.toFixed(2)}
-📝 **Descrição:** ${session.data.description || 'Nenhuma'}
-📄 **Arquivo:** ${fileName}
+🛍️ *Nome:* ${session.data.name}
+🆔 *ID:* ${session.data.productId}
+💰 *Preço:* R$ ${session.data.price.toFixed(2)}
+📝 *Descrição:* ${session.data.description || 'Nenhuma'}
+📄 *Arquivo:* ${fileName}
 
 O produto já está disponível no menu de compras!
 Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
