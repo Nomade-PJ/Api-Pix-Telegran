@@ -17,14 +17,20 @@ function createBot(token) {
 
   bot.action(/buy:(.+)/, async (ctx) => {
     try {
+      console.log('Botão de compra clicado!');
       const productId = ctx.match[1];
       const chatId = ctx.chat.id;
+      console.log('Product ID:', productId, 'Chat ID:', chatId);
+      
       // Definir preço por produto (exemplo simples)
       const prices = { packA: "30.00", packB: "50.00" };
       const amount = prices[productId] || "10.00";
+      console.log('Valor do produto:', amount);
 
       // Criar cobrança modo manual (B)
+      console.log('Chamando createManualCharge...');
       const resp = await manualPix.createManualCharge({ amount, productId });
+      console.log('Resposta recebida:', resp);
       const charge = resp.charge;
 
       // Salvar mapping txid -> chatId (simples memória) - ideal: usar DB (Supabase/Postgres)
@@ -35,17 +41,25 @@ function createBot(token) {
       global._TXS[txid] = { chatId, productId, amount, charge };
 
       // Enviar QRCode + copia&cola e instruções
-      if (charge.qrcodeDataUrl) {
-        await ctx.replyWithPhoto({ url: charge.qrcodeDataUrl }, {
-          caption: `Pague **R$ ${amount}** usando PIX
-Chave: ${charge.key}
-Copia & Cola:
-\`\`\`${charge.copiaCola}\`\`\`
+      if (charge.qrcodeBuffer) {
+        console.log('Enviando QR Code via buffer...');
+        await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: `💰 Pague R$ ${amount} usando PIX
 
-Após pagar, envie o comprovante (foto) aqui.
-TXID: ${txid}`,
-          parse_mode: 'Markdown'
-        });
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+📸 Após pagar, envie o comprovante (foto) aqui.
+
+🆔 TXID: ${txid}`,
+            parse_mode: 'Markdown'
+          }
+        );
+        console.log('QR Code enviado com sucesso');
       } else {
         await ctx.reply(`Pague R$ ${amount} na chave: ${charge.key}
 Copia & Cola:

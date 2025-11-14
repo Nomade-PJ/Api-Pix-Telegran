@@ -73,28 +73,49 @@ function createPixPayload(pixKey, amount, txid) {
 }
 
 async function createManualCharge({ amount = "10.00", productId }) {
-  const key = process.env.MY_PIX_KEY;
-  if (!key) throw new Error('MY_PIX_KEY não configurada.');
-
-  // Gerar txid
-  const txid = `manual${Date.now()}`;
-
-  // Criar payload PIX (BR Code)
-  const copiaCola = createPixPayload(key, amount, txid);
-
-  // Gerar data URL do QR code (PNG)
-  const qrcodeDataUrl = await QRCode.toDataURL(copiaCola);
-
-  return {
-    mode: 'manual',
-    charge: {
-      txid,
-      key,
-      amount: parseFloat(amount).toFixed(2),
-      copiaCola,
-      qrcodeDataUrl
+  try {
+    console.log('createManualCharge chamado:', { amount, productId });
+    
+    const key = process.env.MY_PIX_KEY;
+    if (!key) {
+      console.error('MY_PIX_KEY não configurada!');
+      throw new Error('MY_PIX_KEY não configurada.');
     }
-  };
+    
+    console.log('PIX Key:', key);
+
+    // Gerar txid
+    const txid = `manual${Date.now()}`;
+    console.log('TXID gerado:', txid);
+
+    // Criar payload PIX (BR Code)
+    console.log('Criando payload PIX...');
+    const copiaCola = createPixPayload(key, amount, txid);
+    console.log('Payload PIX criado:', copiaCola.substring(0, 50) + '...');
+
+    // Gerar QR code como buffer (PNG)
+    console.log('Gerando QR Code...');
+    const qrcodeBuffer = await QRCode.toBuffer(copiaCola, {
+      type: 'png',
+      width: 300,
+      margin: 1
+    });
+    console.log('QR Code gerado com sucesso');
+
+    return {
+      mode: 'manual',
+      charge: {
+        txid,
+        key,
+        amount: parseFloat(amount).toFixed(2),
+        copiaCola,
+        qrcodeBuffer
+      }
+    };
+  } catch (error) {
+    console.error('Erro em createManualCharge:', error);
+    throw error;
+  }
 }
 
 module.exports = { createManualCharge };
