@@ -359,13 +359,13 @@ _Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
         return ctx.reply('📦 Nenhum produto para editar.');
       }
       
-      let message = `📝 *EDITAR PRODUTO*\n\nDigite o ID do produto que deseja editar:\n\n`;
+      let message = `📝 EDITAR PRODUTO\n\nDigite o ID do produto que deseja editar:\n\n`;
       
       for (const product of products) {
         message += `• ${product.product_id} - ${product.name}\n`;
       }
       
-      message += `\n_Exemplo:_ /edit_packA\n_Cancelar:_ /cancelar`;
+      message += `\nExemplo: /edit_packA\nCancelar: /cancelar`;
       
       // Iniciar sessão
       global._SESSIONS = global._SESSIONS || {};
@@ -374,7 +374,7 @@ _Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
         step: 'select_id'
       };
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      return ctx.reply(message);
       
     } catch (err) {
       console.error('Erro ao editar:', err);
@@ -402,7 +402,7 @@ _Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
         data: { productId, product }
       };
       
-      return ctx.reply(`📝 *EDITAR: ${product.name}*
+      return ctx.reply(`📝 EDITAR: ${product.name}
 
 O que deseja editar?
 
@@ -412,7 +412,7 @@ O que deseja editar?
 4️⃣ /edit_url - URL de entrega
 5️⃣ /edit_status - Ativar/Desativar
 
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+Cancelar: /cancelar`);
       
     } catch (err) {
       console.error('Erro ao selecionar produto:', err);
@@ -431,7 +431,7 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
         return ctx.reply('📦 Nenhum produto para remover.');
       }
       
-      let message = `🗑️ *REMOVER PRODUTO*\n\n⚠️ Isso desativará o produto (não deleta do banco).\n\nDigite o ID do produto:\n\n`;
+      let message = `🗑️ REMOVER PRODUTO\n\n⚠️ Isso desativará o produto (não deleta do banco).\n\nDigite o ID do produto:\n\n`;
       
       for (const product of products) {
         if (product.is_active) {
@@ -439,9 +439,9 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
         }
       }
       
-      message += `\n_Exemplo:_ /delete_packA\n_Cancelar:_ /cancelar`;
+      message += `\nExemplo: /delete_packA\nCancelar: /cancelar`;
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      return ctx.reply(message);
       
     } catch (err) {
       console.error('Erro ao deletar:', err);
