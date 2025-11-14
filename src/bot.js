@@ -46,9 +46,10 @@ function createBot(token) {
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
       console.log('Enviando mensagem com', buttons.length, 'botões');
       
-      const result = await ctx.reply(text, {
-        ...Markup.inlineKeyboard(buttons)
-      });
+      const keyboard = Markup.inlineKeyboard(buttons);
+      console.log('Keyboard criado:', JSON.stringify(keyboard, null, 2));
+      
+      const result = await ctx.reply(text, keyboard);
       
       console.log('Mensagem enviada com sucesso:', result.message_id);
       return result;

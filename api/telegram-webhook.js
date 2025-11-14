@@ -30,9 +30,20 @@ module.exports = async (req, res) => {
     console.log('Recebendo update do Telegram');
     console.log('Body:', JSON.stringify(req.body, null, 2));
     
-    await bot.handleUpdate(req.body);
+    // Verificar se é um comando
+    if (req.body.message && req.body.message.text) {
+      console.log('Mensagem de texto recebida:', req.body.message.text);
+    }
     
-    console.log('Update processado com sucesso');
+    try {
+      await bot.handleUpdate(req.body);
+      console.log('Update processado com sucesso');
+    } catch (updateError) {
+      console.error('Erro ao processar update:', updateError);
+      console.error('Stack do update:', updateError.stack);
+      // Não retornar erro aqui, apenas logar, para não quebrar o webhook
+    }
+    
     return res.status(200).json({ ok: true });
     
   } catch (err) {
