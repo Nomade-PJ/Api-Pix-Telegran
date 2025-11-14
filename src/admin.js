@@ -305,7 +305,14 @@ Esta alteração é temporária. Para torná-la permanente, atualize também na 
         message += `💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}\n`;
         if (product.description) message += `📝 ${product.description}\n`;
         message += `📦 Entrega: ${product.delivery_type === 'file' ? '📄 Arquivo' : '🔗 Link'}\n`;
-        if (product.delivery_url) message += `🔗 URL: ${product.delivery_url.substring(0, 50)}...\n`;
+        if (product.delivery_url) {
+          const urlPreview = product.delivery_url.length > 50 
+            ? product.delivery_url.substring(0, 50) + '...' 
+            : product.delivery_url;
+          message += `🔗 URL: ${urlPreview}\n`;
+        } else {
+          message += `🔗 URL: Não configurada\n`;
+        }
         message += `\n`;
       }
       
@@ -491,6 +498,9 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
   // ===== HANDLER DE MENSAGENS (PARA SESSÕES INTERATIVAS) =====
   bot.on('text', async (ctx) => {
     try {
+      // Ignorar comandos (mensagens que começam com /)
+      if (ctx.message.text.startsWith('/')) return;
+      
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
       
