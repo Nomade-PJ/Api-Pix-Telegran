@@ -13,21 +13,29 @@ function createBot(token) {
 
   bot.start(async (ctx) => {
     try {
+      console.log('Comando /start recebido de:', ctx.from.id);
+      
       // Salvar/atualizar usuário no banco
       await db.getOrCreateUser(ctx.from);
+      console.log('Usuário salvo/atualizado no banco');
       
       // Buscar produtos ativos do banco
       const products = await db.getAllProducts();
+      console.log('Produtos encontrados:', products.length);
+      console.log('Produtos:', JSON.stringify(products.map(p => ({ id: p.product_id, name: p.name }))));
       
       if (products.length === 0) {
+        console.log('Nenhum produto encontrado, enviando mensagem de aviso');
         return ctx.reply('🚧 Nenhum produto disponível no momento. Volte mais tarde!');
       }
       
       // Gerar botões dinamicamente
       const buttons = products.map(product => {
         const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
+        const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+        console.log('Criando botão:', buttonText, 'para produto:', product.product_id);
         return [Markup.button.callback(
-          `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`,
+          buttonText,
           `buy:${product.product_id}`
         )];
       });
@@ -35,13 +43,18 @@ function createBot(token) {
       // Adicionar botão do grupo
       buttons.push([Markup.button.url('📢 Entrar no grupo', 'https://t.me/seugrupo')]);
       
-      const text = `👋 Olá! Bem-vindo ao **Bot da Val** 🌶️🔥\n\nEscolha uma opção abaixo:`;
-      return ctx.reply(text, {
-        parse_mode: 'Markdown',
+      const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
+      console.log('Enviando mensagem com', buttons.length, 'botões');
+      
+      const result = await ctx.reply(text, {
         ...Markup.inlineKeyboard(buttons)
       });
+      
+      console.log('Mensagem enviada com sucesso:', result.message_id);
+      return result;
     } catch (err) {
       console.error('Erro no /start:', err);
+      console.error('Stack:', err.stack);
       return ctx.reply('❌ Erro ao carregar menu. Tente novamente.');
     }
   });
