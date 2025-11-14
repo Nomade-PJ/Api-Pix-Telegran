@@ -81,9 +81,12 @@ async function createManualCharge({ amount = "10.00", productId }) {
     
     console.log('PIX Key:', key);
 
-    // Gerar txid
-    const txid = `manual${Date.now()}`;
-    console.log('TXID gerado:', txid);
+    // Gerar txid (máximo 25 caracteres)
+    // Formato: M + timestamp últimos 8 dígitos + random 4 caracteres
+    const timestamp = Date.now().toString().slice(-8);
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const txid = `M${timestamp}${random}`;
+    console.log('TXID gerado:', txid, '- Tamanho:', txid.length);
 
     // Criar payload PIX (BR Code)
     console.log('Criando payload PIX...');
