@@ -649,19 +649,22 @@ Pendentes: ${notifStats?.pending || 0}`;
       
       const logs = await adminLogs.getRecentLogs(10);
       
-      let message = `📜 *ÚLTIMOS 10 LOGS*\n\n`;
+      let message = `📜 ÚLTIMOS 10 LOGS\n\n`;
       
       logs.forEach(log => {
         const date = new Date(log.created_at).toLocaleString('pt-BR');
         const admin = log.admin?.first_name || 'Sistema';
-        message += `${date}\n${admin}: ${log.action}\n\n`;
+        // Substituir underscores por espaços para melhor leitura
+        const actionFormatted = log.action.replace(/_/g, ' ');
+        message += `${date}\n${admin}: ${actionFormatted}\n\n`;
       });
       
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('⬅️ Voltar', 'admin_settings')]
       ]);
       
-      return ctx.editMessageText(message, { parse_mode: 'Markdown', ...keyboard });
+      // Removido parse_mode para evitar erro com underscores
+      return ctx.editMessageText(message, keyboard);
     } catch (err) {
       console.error('Erro:', err);
       return ctx.answerCbQuery('❌ Erro');

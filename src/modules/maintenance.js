@@ -68,6 +68,17 @@ async function getMaintenanceMessage() {
  */
 async function enableMaintenance(adminId, message = null, whitelistUsers = []) {
   try {
+    // Primeiro, buscar o registro existente
+    const { data: existing, error: fetchError } = await db.supabase
+      .from('maintenance_mode')
+      .select('id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (fetchError) throw fetchError;
+    
+    // Agora fazer update com WHERE clause
     const { data, error } = await db.supabase
       .from('maintenance_mode')
       .update({
@@ -78,8 +89,7 @@ async function enableMaintenance(adminId, message = null, whitelistUsers = []) {
         activated_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
-      .order('created_at', { ascending: false })
-      .limit(1);
+      .eq('id', existing.id);
     
     if (error) throw error;
     return true;
@@ -94,6 +104,17 @@ async function enableMaintenance(adminId, message = null, whitelistUsers = []) {
  */
 async function disableMaintenance() {
   try {
+    // Primeiro, buscar o registro existente
+    const { data: existing, error: fetchError } = await db.supabase
+      .from('maintenance_mode')
+      .select('id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (fetchError) throw fetchError;
+    
+    // Agora fazer update com WHERE clause
     const { data, error } = await db.supabase
       .from('maintenance_mode')
       .update({
@@ -101,8 +122,7 @@ async function disableMaintenance() {
         deactivated_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
-      .order('created_at', { ascending: false })
-      .limit(1);
+      .eq('id', existing.id);
     
     if (error) throw error;
     return true;
@@ -119,7 +139,7 @@ async function addToWhitelist(telegramId) {
   try {
     const { data: current, error: fetchError } = await db.supabase
       .from('maintenance_mode')
-      .select('whitelist_users')
+      .select('id, whitelist_users')
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
@@ -137,8 +157,7 @@ async function addToWhitelist(telegramId) {
         whitelist_users: whitelist,
         updated_at: new Date().toISOString()
       })
-      .order('created_at', { ascending: false })
-      .limit(1);
+      .eq('id', current.id);
     
     if (updateError) throw updateError;
     return true;
@@ -155,7 +174,7 @@ async function removeFromWhitelist(telegramId) {
   try {
     const { data: current, error: fetchError } = await db.supabase
       .from('maintenance_mode')
-      .select('whitelist_users')
+      .select('id, whitelist_users')
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
@@ -170,8 +189,7 @@ async function removeFromWhitelist(telegramId) {
         whitelist_users: whitelist,
         updated_at: new Date().toISOString()
       })
-      .order('created_at', { ascending: false })
-      .limit(1);
+      .eq('id', current.id);
     
     if (updateError) throw updateError;
     return true;
