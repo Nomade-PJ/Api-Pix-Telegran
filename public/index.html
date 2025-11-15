@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot da Val 🌶️🔥 - Sistema de Vendas PIX</title>
+    <meta name="description" content="Sistema automatizado de vendas via Telegram com integração PIX. Solução completa para e-commerce e automação de pagamentos.">
+    <title>PIX Payment Bot - Automação de Vendas via Telegram</title>
     <style>
         * {
             margin: 0;
@@ -11,226 +12,503 @@
             box-sizing: border-box;
         }
 
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #1e40af;
+            --accent-color: #3b82f6;
+            --text-dark: #1f2937;
+            --text-gray: #6b7280;
+            --bg-light: #f9fafb;
+            --white: #ffffff;
+            --shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            --shadow-hover: 0 20px 60px rgba(0, 0, 0, 0.15);
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #667eea 100%);
+            background-size: 200% 200%;
+            animation: gradientShift 15s ease infinite;
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-            color: #333;
+            color: var(--text-dark);
+            line-height: 1.6;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
         }
 
         .container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            max-width: 800px;
-            width: 100%;
-            padding: 40px;
-            text-align: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
         }
 
-        .logo {
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+            animation: fadeInDown 0.8s ease;
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .logo-container {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100px;
+            height: 100px;
+            background: var(--white);
+            border-radius: 24px;
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .logo-icon {
             font-size: 48px;
-            margin-bottom: 10px;
         }
 
         h1 {
-            font-size: 32px;
-            color: #667eea;
-            margin-bottom: 10px;
-            font-weight: 700;
+            font-size: 48px;
+            font-weight: 800;
+            color: var(--white);
+            margin-bottom: 16px;
+            text-shadow: 0 2px 20px rgba(0, 0, 0, 0.2);
+            letter-spacing: -0.5px;
         }
 
         .subtitle {
-            font-size: 18px;
-            color: #666;
-            margin-bottom: 30px;
+            font-size: 22px;
+            color: rgba(255, 255, 255, 0.95);
+            font-weight: 300;
+            margin-bottom: 40px;
         }
 
-        .bot-link {
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+        /* Main Card */
+        .main-card {
+            background: var(--white);
+            border-radius: 32px;
+            box-shadow: var(--shadow-hover);
+            padding: 60px 40px;
+            margin-bottom: 40px;
+            animation: fadeInUp 0.8s ease 0.2s both;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .cta-section {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        .cta-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: var(--white);
             text-decoration: none;
-            padding: 15px 40px;
-            border-radius: 50px;
+            padding: 18px 48px;
+            border-radius: 16px;
             font-size: 18px;
             font-weight: 600;
-            margin: 20px 0;
-            transition: transform 0.2s, box-shadow 0.2s;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.4);
+            position: relative;
+            overflow: hidden;
         }
 
-        .bot-link:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        .cta-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s;
         }
 
-        .features {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
+        .cta-button:hover::before {
+            left: 100%;
+        }
+
+        .cta-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 32px rgba(37, 99, 235, 0.5);
+        }
+
+        .cta-button:active {
+            transform: translateY(-1px);
+        }
+
+        /* Tech Stack */
+        .tech-stack {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 12px;
             margin: 40px 0;
         }
 
-        .feature {
-            background: #f8f9fa;
-            padding: 25px;
-            border-radius: 15px;
-            transition: transform 0.2s;
+        .tech-badge {
+            background: var(--bg-light);
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-dark);
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
         }
 
-        .feature:hover {
-            transform: translateY(-5px);
+        .tech-badge:hover {
+            border-color: var(--primary-color);
+            background: var(--white);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+        }
+
+        /* Features Grid */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+            margin: 50px 0;
+        }
+
+        .feature-card {
+            background: var(--bg-light);
+            padding: 35px;
+            border-radius: 20px;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: linear-gradient(180deg, var(--primary-color), var(--accent-color));
+            transform: scaleY(0);
+            transition: transform 0.3s ease;
+        }
+
+        .feature-card:hover::before {
+            transform: scaleY(1);
+        }
+
+        .feature-card:hover {
+            transform: translateY(-8px);
+            box-shadow: var(--shadow);
+            border-color: var(--primary-color);
+            background: var(--white);
         }
 
         .feature-icon {
-            font-size: 36px;
-            margin-bottom: 10px;
+            font-size: 48px;
+            margin-bottom: 20px;
+            display: block;
+            filter: grayscale(0.3);
+            transition: filter 0.3s ease;
         }
 
-        .feature h3 {
-            color: #667eea;
-            margin-bottom: 8px;
-            font-size: 18px;
+        .feature-card:hover .feature-icon {
+            filter: grayscale(0);
         }
 
-        .feature p {
-            color: #666;
-            font-size: 14px;
+        .feature-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-bottom: 12px;
         }
 
-        .stats {
-            display: flex;
-            justify-content: space-around;
-            margin: 40px 0;
-            flex-wrap: wrap;
-            gap: 20px;
+        .feature-description {
+            font-size: 15px;
+            color: var(--text-gray);
+            line-height: 1.6;
         }
 
-        .stat {
+        /* Stats Section */
+        .stats-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 30px;
+            margin: 50px 0;
+            padding: 40px;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            border-radius: 24px;
+            color: var(--white);
+        }
+
+        .stat-item {
             text-align: center;
         }
 
-        .stat-number {
-            font-size: 36px;
-            font-weight: 700;
-            color: #667eea;
-            display: block;
+        .stat-value {
+            font-size: 48px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
         }
 
         .stat-label {
-            font-size: 14px;
-            color: #666;
-            margin-top: 5px;
-        }
-
-        .footer {
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid #eee;
-            color: #999;
-            font-size: 14px;
-        }
-
-        .tech-badges {
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            margin: 30px 0;
-            flex-wrap: wrap;
-        }
-
-        .badge {
-            background: #f0f0f0;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 12px;
-            color: #666;
+            font-size: 16px;
+            opacity: 0.9;
             font-weight: 500;
         }
 
-        @media (max-width: 600px) {
-            .container {
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .footer-text {
+            font-size: 16px;
+            margin-bottom: 12px;
+        }
+
+        .footer-subtext {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 36px;
+            }
+
+            .subtitle {
+                font-size: 18px;
+            }
+
+            .main-card {
+                padding: 40px 24px;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stats-section {
+                grid-template-columns: 1fr;
                 padding: 30px 20px;
             }
 
-            h1 {
-                font-size: 24px;
+            .stat-value {
+                font-size: 36px;
             }
+        }
 
-            .features {
-                grid-template-columns: 1fr;
+        /* Additional Animations */
+        .fade-in {
+            animation: fadeIn 0.6s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .slide-in {
+            animation: slideIn 0.8s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
             }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="logo">🤖</div>
-        <h1>Bot da Val 🌶️🔥</h1>
-        <p class="subtitle">Sistema Completo de Vendas com PIX</p>
-
-        <a href="https://t.me/Apivalhot_bot" class="bot-link" target="_blank">
-            🚀 Iniciar Conversa no Telegram
-        </a>
-
-        <div class="tech-badges">
-            <span class="badge">Telegram Bot</span>
-            <span class="badge">PIX BR Code 2.3</span>
-            <span class="badge">Supabase</span>
-            <span class="badge">Vercel</span>
-            <span class="badge">Node.js</span>
+        <!-- Header -->
+        <div class="header">
+            <div class="logo-container">
+                <span class="logo-icon">🤖</span>
+            </div>
+            <h1>Sistema de Automação de Vendas</h1>
+            <p class="subtitle">Integração completa Telegram + PIX para e-commerce e pagamentos automatizados</p>
         </div>
 
-        <div class="features">
-            <div class="feature">
-                <div class="feature-icon">💳</div>
-                <h3>PIX Automático</h3>
-                <p>QR Code e Cópia & Cola gerados automaticamente</p>
+        <!-- Main Card -->
+        <div class="main-card">
+            <!-- CTA Section -->
+            <div class="cta-section">
+                <a href="https://t.me/Apivalhot_bot" class="cta-button" target="_blank" rel="noopener noreferrer">
+                    <span>🚀</span>
+                    <span>Iniciar Demonstração</span>
+                </a>
             </div>
-            <div class="feature">
-                <div class="feature-icon">🛍️</div>
-                <h3>Produtos Dinâmicos</h3>
-                <p>Gerencie produtos direto pelo bot</p>
+
+            <!-- Tech Stack -->
+            <div class="tech-stack">
+                <span class="tech-badge">Telegram Bot API</span>
+                <span class="tech-badge">PIX BR Code 2.3</span>
+                <span class="tech-badge">Supabase Database</span>
+                <span class="tech-badge">Vercel Serverless</span>
+                <span class="tech-badge">Node.js Runtime</span>
             </div>
-            <div class="feature">
-                <div class="feature-icon">📊</div>
-                <h3>Banco de Dados</h3>
-                <p>Supabase integrado para histórico completo</p>
+
+            <!-- Features Grid -->
+            <div class="features-grid">
+                <div class="feature-card fade-in">
+                    <span class="feature-icon">💳</span>
+                    <h3 class="feature-title">Geração Automática de PIX</h3>
+                    <p class="feature-description">
+                        Sistema integrado que gera QR Codes e payloads PIX em conformidade com o padrão BR Code 2.3 do Banco Central, garantindo compatibilidade com todos os bancos brasileiros.
+                    </p>
+                </div>
+
+                <div class="feature-card fade-in" style="animation-delay: 0.1s;">
+                    <span class="feature-icon">🛍️</span>
+                    <h3 class="feature-title">Gestão Dinâmica de Produtos</h3>
+                    <p class="feature-description">
+                        Painel administrativo completo para criação, edição e gerenciamento de produtos diretamente via interface do Telegram, sem necessidade de acessar painéis externos.
+                    </p>
+                </div>
+
+                <div class="feature-card fade-in" style="animation-delay: 0.2s;">
+                    <span class="feature-icon">📊</span>
+                    <h3 class="feature-title">Banco de Dados Integrado</h3>
+                    <p class="feature-description">
+                        Infraestrutura robusta com Supabase (PostgreSQL) para armazenamento seguro de transações, usuários e histórico completo de vendas com relatórios em tempo real.
+                    </p>
+                </div>
+
+                <div class="feature-card fade-in" style="animation-delay: 0.3s;">
+                    <span class="feature-icon">⚡</span>
+                    <h3 class="feature-title">Entrega Automatizada</h3>
+                    <p class="feature-description">
+                        Fluxo automatizado de validação e entrega de produtos digitais após confirmação de pagamento, com suporte para links, arquivos e integrações externas.
+                    </p>
+                </div>
+
+                <div class="feature-card fade-in" style="animation-delay: 0.4s;">
+                    <span class="feature-icon">🔐</span>
+                    <h3 class="feature-title">Segurança e Compliance</h3>
+                    <p class="feature-description">
+                        Implementação de boas práticas de segurança, validação de webhooks, criptografia de dados e conformidade com regulamentações do Banco Central.
+                    </p>
+                </div>
+
+                <div class="feature-card fade-in" style="animation-delay: 0.5s;">
+                    <span class="feature-icon">📈</span>
+                    <h3 class="feature-title">Analytics e Relatórios</h3>
+                    <p class="feature-description">
+                        Dashboard administrativo com métricas detalhadas de vendas, conversão, ticket médio e análise de performance em tempo real.
+                    </p>
+                </div>
             </div>
-            <div class="feature">
-                <div class="feature-icon">⚡</div>
-                <h3>Entrega Automática</h3>
-                <p>Validação e entrega em 1 clique</p>
+
+            <!-- Stats Section -->
+            <div class="stats-section">
+                <div class="stat-item">
+                    <div class="stat-value">100%</div>
+                    <div class="stat-label">Operacional</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">BR Code</div>
+                    <div class="stat-label">2.3 Compliant</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">Todos</div>
+                    <div class="stat-label">Bancos Suportados</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">24/7</div>
+                    <div class="stat-label">Disponibilidade</div>
+                </div>
             </div>
         </div>
 
-        <div class="stats">
-            <div class="stat">
-                <span class="stat-number">100%</span>
-                <span class="stat-label">Funcional</span>
-            </div>
-            <div class="stat">
-                <span class="stat-number">BR Code</span>
-                <span class="stat-label">2.3</span>
-            </div>
-            <div class="stat">
-                <span class="stat-number">Todos</span>
-                <span class="stat-label">Bancos</span>
-            </div>
-        </div>
-
+        <!-- Footer -->
         <div class="footer">
-            <p>🤖 Bot desenvolvido para automação de vendas via Telegram + PIX</p>
-            <p style="margin-top: 10px; font-size: 12px;">
-                Hospedado na Vercel • Banco de dados Supabase
+            <p class="footer-text">
+                🤖 Plataforma de automação de vendas e pagamentos via Telegram
+            </p>
+            <p class="footer-subtext">
+                Hospedado na Vercel • Banco de dados Supabase • Infraestrutura escalável
             </p>
         </div>
     </div>
+
+    <script>
+        // Smooth scroll and animations
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add fade-in animation to feature cards on scroll
+            const observerOptions = {
+                threshold: 0.1,
+                rootMargin: '0px 0px -50px 0px'
+            };
+
+            const observer = new IntersectionObserver(function(entries) {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.style.opacity = '1';
+                        entry.target.style.transform = 'translateY(0)';
+                    }
+                });
+            }, observerOptions);
+
+            document.querySelectorAll('.feature-card').forEach(card => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+                observer.observe(card);
+            });
+
+            // Add click tracking (optional)
+            document.querySelector('.cta-button').addEventListener('click', function() {
+                if (typeof gtag !== 'undefined') {
+                    gtag('event', 'click', {
+                        'event_category': 'CTA',
+                        'event_label': 'Telegram Bot Link'
+                    });
+                }
+            });
+        });
+    </script>
 </body>
 </html>
-
