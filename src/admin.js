@@ -9,6 +9,7 @@ const notifications = require('./modules/notifications');
 const reviews = require('./modules/reviews');
 const backup = require('./modules/backup');
 const maintenance = require('./modules/maintenance');
+const pixKeys = require('./modules/pixKeys');
 
 // Registrar comandos admin
 function registerAdminCommands(bot) {
@@ -1071,21 +1072,166 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
     }
   });
   
-  // ===== SETPIX =====
+  // ===== SETPIX (ADICIONAR NOVA CHAVE) =====
   bot.command('setpix', async (ctx) => {
     try {
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
       const args = ctx.message.text.split(' ').slice(1);
-      if (args.length === 0) return ctx.reply(`❌ Uso: /setpix [chave]`);
-      const novaChave = args.join(' ').trim();
-      if (novaChave.length < 5) return ctx.reply('❌ Chave PIX muito curta.');
-      process.env.MY_PIX_KEY = novaChave;
-      await adminLogs.logAction(ctx.from.id, 'changed_pix_key', novaChave);
-      await ctx.reply(`✅ *Chave PIX atualizada!*\n\n🔑 Nova chave: ${novaChave}\n\n⚠️ Atualize também na Vercel!`, { parse_mode: 'Markdown' });
+      
+      // Se não passou argumentos, mostrar instruções
+      if (args.length === 0) {
+        return ctx.reply(`❌ *Uso incorreto!*
+
+*Formato:* \`/setpix chave\`
+
+*Exemplos:*
+• \`/setpix seu@email.com\`
+• \`/setpix 11999887766\`
+• \`/setpix 12345678900\`
+
+*Tipos aceitos:*
+Email, Telefone (com DDD, sem +55), CPF/CNPJ ou Chave aleatória
+
+📋 Use \`/chavespix\` para ver todas as chaves cadastradas`, { parse_mode: 'Markdown' });
+      }
+      
+      const novaChave = args[0].trim();
+      
+      // Validar formato
+      if (!pixKeys.validatePixKey(novaChave)) {
+        return ctx.reply('❌ *Chave PIX inválida!*\n\nVerifique o formato e tente novamente.', { parse_mode: 'Markdown' });
+      }
+      
+      // Iniciar sessão para coletar informações
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'add_pix_key',
+        step: 'owner_name',
+        data: { key: novaChave }
+      };
+      
+      const keyType = pixKeys.detectKeyType(novaChave);
+      const keyTypeText = {
+        'email': '📧 Email',
+        'phone': '📱 Telefone',
+        'cpf': '🆔 CPF',
+        'cnpj': '🏢 CNPJ',
+        'random': '🔐 Chave Aleatória'
+      }[keyType] || 'Chave PIX';
+      
+      return ctx.reply(`✅ Chave válida detectada!\n\n🔑 Chave: \`${novaChave}\`\n📝 Tipo: ${keyTypeText}\n\n👤 *Agora, digite o nome do proprietário/criador:*\n(Ex: João Silva, Loja X, etc.)\n\n_Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
+      
     } catch (err) {
       console.error('Erro:', err);
-      return ctx.reply('❌ Erro.');
+      return ctx.reply('❌ Erro ao processar comando.');
+    }
+  });
+  
+  // ===== LISTAR CHAVES PIX =====
+  bot.command('chavespix', async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
+      const keys = await pixKeys.getAllPixKeys();
+      
+      if (keys.length === 0) {
+        return ctx.reply('🔑 *CHAVES PIX*\n\nNenhuma chave cadastrada ainda.\n\nUse `/setpix [chave]` para adicionar uma.', { parse_mode: 'Markdown' });
+      }
+      
+      let message = `🔑 *CHAVES PIX CADASTRADAS:*\n\n`;
+      
+      for (const key of keys) {
+        const status = key.is_active ? '✅ ATIVA' : '⚪ Inativa';
+        const keyTypeIcon = {
+          'email': '📧',
+          'phone': '📱',
+          'cpf': '🆔',
+          'cnpj': '🏢',
+          'random': '🔐'
+        }[key.key_type] || '🔑';
+        
+        message += `${status}\n`;
+        message += `${keyTypeIcon} \`${key.key}\`\n`;
+        message += `👤 ${key.owner_name}\n`;
+        if (key.description) {
+          message += `📝 ${key.description}\n`;
+        }
+        message += `\n`;
+      }
+      
+      message += `\n💡 *Comandos:*\n`;
+      message += `• \`/setpix [chave]\` - Adicionar nova\n`;
+      message += `• \`/ativarpix [chave]\` - Ativar chave\n`;
+      message += `• \`/deletarpix [chave]\` - Remover chave`;
+      
+      await adminLogs.logAction(ctx.from.id, 'viewed_pix_keys');
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro:', err);
+      return ctx.reply('❌ Erro ao listar chaves.');
+    }
+  });
+  
+  // ===== ATIVAR CHAVE PIX =====
+  bot.hears(/^\/ativarpix (.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
+      const keyValue = ctx.match[1].trim();
+      const allKeys = await pixKeys.getAllPixKeys();
+      const keyToActivate = allKeys.find(k => k.key === keyValue);
+      
+      if (!keyToActivate) {
+        return ctx.reply('❌ Chave não encontrada.\n\nUse `/chavespix` para ver as chaves cadastradas.', { parse_mode: 'Markdown' });
+      }
+      
+      if (keyToActivate.is_active) {
+        return ctx.reply('⚠️ Esta chave já está ativa!');
+      }
+      
+      const success = await pixKeys.activatePixKey(keyToActivate.id);
+      
+      if (success) {
+        await adminLogs.logAction(ctx.from.id, 'activated_pix_key', keyValue);
+        return ctx.reply(`✅ *Chave PIX ativada com sucesso!*\n\n🔑 Chave: \`${keyValue}\`\n👤 Proprietário: ${keyToActivate.owner_name}\n\nTodos os novos pagamentos usarão esta chave.`, { parse_mode: 'Markdown' });
+      } else {
+        return ctx.reply('❌ Erro ao ativar chave PIX.');
+      }
+    } catch (err) {
+      console.error('Erro:', err);
+      return ctx.reply('❌ Erro ao ativar chave.');
+    }
+  });
+  
+  // ===== DELETAR CHAVE PIX =====
+  bot.hears(/^\/deletarpix (.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
+      const keyValue = ctx.match[1].trim();
+      const allKeys = await pixKeys.getAllPixKeys();
+      const keyToDelete = allKeys.find(k => k.key === keyValue);
+      
+      if (!keyToDelete) {
+        return ctx.reply('❌ Chave não encontrada.\n\nUse `/chavespix` para ver as chaves cadastradas.', { parse_mode: 'Markdown' });
+      }
+      
+      const result = await pixKeys.deletePixKey(keyToDelete.id);
+      
+      if (result.success) {
+        await adminLogs.logAction(ctx.from.id, 'deleted_pix_key', keyValue);
+        return ctx.reply(`✅ *Chave PIX removida com sucesso!*\n\n🔑 Chave: \`${keyValue}\``, { parse_mode: 'Markdown' });
+      } else {
+        return ctx.reply(`❌ ${result.error || 'Erro ao remover chave PIX.'}`);
+      }
+    } catch (err) {
+      console.error('Erro:', err);
+      return ctx.reply('❌ Erro ao remover chave.');
     }
   });
   
@@ -1252,6 +1398,43 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
         delete global._SESSIONS[ctx.from.id];
         await adminLogs.logAction(ctx.from.id, 'updated_product', productId);
         return ctx.reply(`✅ Produto atualizado!`, { parse_mode: 'Markdown' });
+      }
+      
+      // ADICIONAR CHAVE PIX
+      if (session.type === 'add_pix_key') {
+        if (session.step === 'owner_name') {
+          session.data.ownerName = ctx.message.text.trim();
+          session.step = 'description';
+          return ctx.reply(`✅ Proprietário: *${session.data.ownerName}*\n\n📝 *Descrição (opcional):*\nDigite uma descrição ou "-" para pular\n(Ex: "Loja principal", "Vendas de cursos", etc.)\n\n_Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
+        }
+        if (session.step === 'description') {
+          const desc = ctx.message.text.trim();
+          session.data.description = desc === '-' ? null : desc;
+          session.step = 'set_as_active';
+          return ctx.reply(`📝 Descrição salva!\n\n⚡ *Ativar esta chave agora?*\nDigite:\n• *SIM* - Ativar imediatamente\n• *NÃO* - Manter inativa\n\n_Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
+        }
+        if (session.step === 'set_as_active') {
+          const response = ctx.message.text.trim().toUpperCase();
+          const setAsActive = response === 'SIM' || response === 'S';
+          
+          const user = await db.getOrCreateUser(ctx.from);
+          const result = await pixKeys.createPixKey({
+            key: session.data.key,
+            ownerName: session.data.ownerName,
+            description: session.data.description,
+            createdBy: user.id,
+            setAsActive
+          });
+          
+          delete global._SESSIONS[ctx.from.id];
+          
+          if (result.success) {
+            await adminLogs.logAction(ctx.from.id, 'added_pix_key', session.data.key);
+            return ctx.reply(`🎉 *CHAVE PIX ADICIONADA COM SUCESSO!*\n\n🔑 Chave: \`${session.data.key}\`\n👤 Proprietário: ${session.data.ownerName}\n${session.data.description ? `📝 ${session.data.description}\n` : ''}\n${setAsActive ? '✅ Status: ATIVA' : '⚪ Status: Inativa'}\n\n💡 Use \`/chavespix\` para gerenciar as chaves.`, { parse_mode: 'Markdown' });
+          } else {
+            return ctx.reply(`❌ Erro ao adicionar chave PIX:\n${result.error}`);
+          }
+        }
       }
       
       // CRIAR CUPOM

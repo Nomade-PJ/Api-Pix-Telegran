@@ -1,5 +1,6 @@
 // src/pix/manual.js
 const QRCode = require('qrcode');
+const pixKeys = require('../modules/pixKeys');
 
 // ============================================
 // GERADOR OFICIAL + CORRIGIDO DE PIX
@@ -116,13 +117,16 @@ async function createManualCharge({ amount = "10.00", productId }) {
   try {
     console.log('createManualCharge chamado:', { amount, productId });
     
-    const key = process.env.MY_PIX_KEY;
-    if (!key) {
-      console.error('MY_PIX_KEY não configurada!');
-      throw new Error('MY_PIX_KEY não configurada.');
+    // Buscar chave PIX ativa do banco de dados
+    const pixKeyData = await pixKeys.getActivePixKey();
+    
+    if (!pixKeyData || !pixKeyData.key) {
+      console.error('Nenhuma chave PIX ativa encontrada!');
+      throw new Error('Nenhuma chave PIX configurada. Use /setpix para configurar.');
     }
     
-    console.log('PIX Key:', key);
+    const key = pixKeyData.key;
+    console.log('PIX Key ativa:', key, '(Proprietário:', pixKeyData.owner_name + ')');
 
     // Gerar txid (máximo 25 caracteres)
     // Formato: M + timestamp últimos 8 dígitos + random 4 caracteres
