@@ -100,6 +100,22 @@ function createBot(token) {
     }
   });
 
+  // ============================================
+  // COMANDO: /cancelar - Cancelar qualquer sessão
+  // ============================================
+  bot.command('cancelar', async (ctx) => {
+    try {
+      global._SESSIONS = global._SESSIONS || {};
+      if (global._SESSIONS[ctx.from.id]) {
+        delete global._SESSIONS[ctx.from.id];
+        return ctx.reply('✅ Operação cancelada.');
+      }
+      return ctx.reply('ℹ️ Nenhuma operação em andamento.');
+    } catch (err) {
+      console.error('Erro em /cancelar:', err);
+    }
+  });
+
   // Registrar comandos admin DEPOIS do /start
   admin.registerAdminCommands(bot);
   
@@ -272,9 +288,15 @@ TXID: ${txid}`);
   
   // ============================================
   // HANDLER DE SESSÕES - REGISTRO DE BOTS
+  // IMPORTANTE: Este handler deve vir DEPOIS dos comandos
   // ============================================
   bot.on('text', async (ctx, next) => {
     try {
+      // Ignorar comandos (eles já foram processados)
+      if (ctx.message.text && ctx.message.text.startsWith('/')) {
+        return next();
+      }
+      
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
       

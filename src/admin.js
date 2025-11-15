@@ -10,6 +10,7 @@ const reviews = require('./modules/reviews');
 const backup = require('./modules/backup');
 const maintenance = require('./modules/maintenance');
 const pixKeys = require('./modules/pixKeys');
+const botManager = require('./modules/botManager');
 
 // Registrar comandos admin
 function registerAdminCommands(bot) {
@@ -19,19 +20,23 @@ function registerAdminCommands(bot) {
   // ============================================
   bot.command('admin', async (ctx) => {
     try {
+      const isSuperAdmin = await db.isUserSuperAdmin(ctx.from.id);
       const isAdmin = await db.isUserAdmin(ctx.from.id);
-      if (!isAdmin) {
-        return ctx.reply('❌ Acesso negado.');
-      }
       
-      // Buscar dados para o dashboard
-      const [todayReport, monthReport, stats] = await Promise.all([
-        reports.getTodayReport(),
-        reports.getMonthReport(),
-        db.getStats()
-      ]);
-      
-      const message = `🔐 *PAINEL ADMINISTRATIVO*
+      // ============================================
+      // SUPER ADMIN - PAINEL COMPLETO
+      // ============================================
+      if (isSuperAdmin) {
+        // Buscar dados para o dashboard
+        const [todayReport, monthReport, stats] = await Promise.all([
+          reports.getTodayReport(),
+          reports.getMonthReport(),
+          db.getStats()
+        ]);
+        
+        const globalStats = await botManager.getGlobalStats();
+        
+        const message = `🏢 *PAINEL SUPER ADMINISTRADOR*
 
 📈 *HOJE:*
 💰 R$ ${todayReport?.totalRevenue || '0.00'} em vendas (${todayReport?.totalSales || 0} transações)
@@ -43,46 +48,154 @@ function registerAdminCommands(bot) {
 🛍️ ${monthReport?.totalSales || 0} vendas
 📦 ${monthReport?.topProduct || 'N/A'} (mais vendido)
 
+🌍 *PLATAFORMA:*
+🤖 ${globalStats.totalBots} bots cadastrados
+✅ ${globalStats.activeBots} bots ativos
+⏳ ${globalStats.pendingBots} aguardando aprovação
+💰 R$ ${globalStats.totalRevenue} em vendas globais
+
 👥 Total de usuários: ${stats.totalUsers}
 💳 Total de transações: ${stats.totalTransactions}`;
-      
-      const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('📊 Estatísticas', 'admin_stats'),
-          Markup.button.callback('📈 Relatórios', 'admin_reports')
-        ],
-        [
-          Markup.button.callback('💼 Vendas', 'admin_sales'),
-          Markup.button.callback('🛍️ Produtos', 'admin_products')
-        ],
-        [
-          Markup.button.callback('👥 Usuários', 'admin_users'),
-          Markup.button.callback('📢 Broadcast', 'admin_broadcast')
-        ],
-        [
-          Markup.button.callback('🎟️ Cupons', 'admin_coupons'),
-          Markup.button.callback('⭐ Avaliações', 'admin_reviews')
-        ],
-        [
-          Markup.button.callback('💾 Backup', 'admin_backup'),
-          Markup.button.callback('⚙️ Configurações', 'admin_settings')
-        ],
+        
+        const keyboard = Markup.inlineKeyboard([
+          [
+            Markup.button.callback('🤖 Gerenciar Bots', 'admin_manage_bots'),
+            Markup.button.callback('📊 Estatísticas', 'admin_stats')
+          ],
+          [
+            Markup.button.callback('📈 Relatórios', 'admin_reports'),
+            Markup.button.callback('💼 Vendas', 'admin_sales')
+          ],
+          [
+            Markup.button.callback('🛍️ Produtos', 'admin_products'),
+            Markup.button.callback('👥 Usuários', 'admin_users')
+          ],
+          [
+            Markup.button.callback('📢 Broadcast', 'admin_broadcast'),
+            Markup.button.callback('🎟️ Cupons', 'admin_coupons')
+          ],
+          [
+            Markup.button.callback('⭐ Avaliações', 'admin_reviews'),
+            Markup.button.callback('💾 Backup', 'admin_backup')
+          ],
+          [
+            Markup.button.callback('⚙️ Configurações', 'admin_settings')
+          ],
         [
           Markup.button.callback('🔄 Atualizar', 'admin_refresh')
         ]
       ]);
       
-      await adminLogs.logAction(ctx.from.id, 'admin_panel_accessed');
+      await adminLogs.logAction(ctx.from.id, 'super_admin_panel_accessed');
       return ctx.reply(message, { parse_mode: 'Markdown', ...keyboard });
-    } catch (err) {
-      console.error('Erro no comando admin:', err);
-      return ctx.reply('❌ Erro ao carregar painel.');
+      
+      // ============================================
+      // CRIADOR - PAINEL SIMPLIFICADO
+      // ============================================
+    } else if (isAdmin) {
+      // Admin normal (não super admin) - ver seus bots
+      const userBots = await botManager.getUserBots(ctx.from.id);
+      const activeBots = userBots.filter(b => b.status === 'active');
+      
+      let message = `🤖 *MEU PAINEL DE CRIADOR*\n\n`;
+      
+      if (activeBots.length === 0) {
+        message += `📦 Você ainda não tem bots ativos.\n\n`;
+        message += `Use \`/criarbot\` para criar seu primeiro bot!\n`;
+        message += `Use \`/meusbots\` para ver o status dos seus bots.`;
+      } else {
+        message += `✅ *BOTS ATIVOS:* ${activeBots.length}\n\n`;
+        
+        let totalRevenue = 0;
+        let totalSales = 0;
+        
+        for (const bot of activeBots) {
+          message += `🤖 *@${bot.bot_username}*\n`;
+          message += `💰 R$ ${bot.total_revenue || '0.00'} | 🛍️ ${bot.total_sales || 0} vendas\n\n`;
+          totalRevenue += parseFloat(bot.total_revenue || 0);
+          totalSales += (bot.total_sales || 0);
+        }
+        
+        message += `📊 *TOTAL:*\n`;
+        message += `💰 R$ ${totalRevenue.toFixed(2)} em vendas\n`;
+        message += `🛍️ ${totalSales} vendas realizadas`;
+      }
+      
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🤖 Meus Bots', 'creator_my_bots'),
+          Markup.button.callback('📊 Estatísticas', 'admin_stats')
+        ],
+        [
+          Markup.button.callback('🛍️ Produtos', 'admin_products'),
+          Markup.button.callback('💼 Vendas', 'admin_sales')
+        ],
+        [
+          Markup.button.callback('⚙️ Configurações', 'admin_settings')
+        ]
+      ]);
+      
+      await adminLogs.logAction(ctx.from.id, 'creator_panel_accessed');
+      return ctx.reply(message, { parse_mode: 'Markdown', ...keyboard });
+      
+      // ============================================
+      // SEM PERMISSÃO
+      // ============================================
+    } else {
+      return ctx.reply(`❌ *Acesso negado.*\n\nVocê não tem permissão para acessar este painel.\n\n💡 *Dica:* Use \`/criarbot\` para criar seu bot de vendas!`, { parse_mode: 'Markdown' });
     }
-  });
+  } catch (err) {
+    console.error('Erro no comando admin:', err);
+    return ctx.reply('❌ Erro ao carregar painel.');
+  }
+});
   
   // ============================================
   // CALLBACKS DO MENU PRINCIPAL
   // ============================================
+  
+  // Gerenciar Bots (Super Admin)
+  bot.action('admin_manage_bots', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      
+      const isSuperAdmin = await db.isUserSuperAdmin(ctx.from.id);
+      if (!isSuperAdmin) {
+        return ctx.answerCbQuery('❌ Acesso negado');
+      }
+      
+      // Redirecionar para o comando /gerenciarbots
+      return bot.handleUpdate({
+        message: {
+          text: '/gerenciarbots',
+          from: ctx.from,
+          chat: ctx.chat
+        }
+      });
+    } catch (err) {
+      console.error('Erro em admin_manage_bots:', err);
+      return ctx.answerCbQuery('❌ Erro');
+    }
+  });
+  
+  // Meus Bots (Criador)
+  bot.action('creator_my_bots', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      
+      // Redirecionar para o comando /meusbots
+      return bot.handleUpdate({
+        message: {
+          text: '/meusbots',
+          from: ctx.from,
+          chat: ctx.chat
+        }
+      });
+    } catch (err) {
+      console.error('Erro em creator_my_bots:', err);
+      return ctx.answerCbQuery('❌ Erro');
+    }
+  });
   
   // Refresh do painel
   bot.action('admin_refresh', async (ctx) => {
