@@ -3,13 +3,30 @@ const db = require('../database');
 
 /**
  * Registra uma ação administrativa
+ * @param {number} telegramId - Telegram ID do admin (não UUID!)
+ * @param {string} action - Ação realizada
+ * @param {string} target - Alvo da ação (opcional)
+ * @param {object} details - Detalhes adicionais (opcional)
  */
-async function logAction(adminId, action, target = null, details = null) {
+async function logAction(telegramId, action, target = null, details = null) {
   try {
+    // Buscar o UUID do usuário pelo telegram_id
+    const { data: user, error: userError } = await db.supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (userError || !user) {
+      console.error('Usuário não encontrado para log:', telegramId);
+      return null;
+    }
+    
+    // Inserir log com o UUID correto
     const { data, error } = await db.supabase
       .from('admin_logs')
       .insert([{
-        admin_id: adminId,
+        admin_id: user.id, // UUID do usuário
         action,
         target,
         details,
