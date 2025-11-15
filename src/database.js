@@ -71,6 +71,21 @@ async function isUserAdmin(telegramId) {
   }
 }
 
+async function isUserSuperAdmin(telegramId) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('is_super_admin, is_admin')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (error) return false;
+    return data?.is_super_admin || false;
+  } catch (err) {
+    return false;
+  }
+}
+
 // ===== PRODUTOS =====
 
 async function getProduct(productId) {
@@ -373,6 +388,7 @@ module.exports = {
   supabase,
   getOrCreateUser,
   isUserAdmin,
+  isUserSuperAdmin,
   getProduct,
   getAllProducts,
   createProduct,

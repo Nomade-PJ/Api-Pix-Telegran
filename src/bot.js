@@ -7,6 +7,9 @@ const admin = require('./admin');
 const maintenance = require('./modules/maintenance');
 const notifications = require('./modules/notifications');
 const reviews = require('./modules/reviews');
+const multitenantCommands = require('./modules/multitenantCommands');
+const botManager = require('./modules/botManager');
+const adminLogs = require('./modules/adminLogs');
 
 function createBot(token) {
   const bot = new Telegraf(token);
@@ -99,6 +102,9 @@ function createBot(token) {
 
   // Registrar comandos admin DEPOIS do /start
   admin.registerAdminCommands(bot);
+  
+  // Registrar comandos multi-tenant
+  multitenantCommands.registerMultitenantCommands(bot);
 
   // ============================================
   // SISTEMA DE AVALIAÇÕES
@@ -261,6 +267,147 @@ TXID: ${txid}`);
     } catch (err) {
       console.error('Error receiving proof:', err);
       await ctx.reply('❌ Erro ao receber comprovante. Tente novamente.');
+    }
+  });
+  
+  // ============================================
+  // HANDLER DE SESSÕES - REGISTRO DE BOTS
+  // ============================================
+  bot.on('text', async (ctx, next) => {
+    try {
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      
+      if (!session) return next();
+      
+      // REGISTRO DE NOVO BOT
+      if (session.type === 'register_bot') {
+        if (session.step === 'token') {
+          const token = ctx.message.text.trim();
+          
+          // Validar formato básico do token
+          if (!/^\d+:[A-Za-z0-9_-]+$/.test(token)) {
+            return ctx.reply('❌ Token inválido. O formato deve ser:\n`123456789:ABCdefGHIjklMNOpqrsTUVwxyz123456789`\n\nTente novamente:', { parse_mode: 'Markdown' });
+          }
+          
+          ctx.reply('⏳ Validando token...');
+          
+          // Validar token no Telegram
+          const validation = await botManager.validateBotToken(token);
+          
+          if (!validation.success) {
+            return ctx.reply(`❌ ${validation.error}\n\nVerifique o token e tente novamente:`);
+          }
+          
+          session.data.token = token;
+          session.data.botInfo = validation;
+          session.step = 'pix_key';
+          
+          return ctx.reply(`✅ Bot validado com sucesso!\n\n🤖 *${validation.first_name}* (@${validation.username})\n\n🔑 Agora, digite sua *chave PIX*:\n\n_Pode ser: email, telefone, CPF, CNPJ ou chave aleatória_\n\nDigite /cancelar para cancelar`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'pix_key') {
+          const pixKey = ctx.message.text.trim();
+          
+          // Validação básica
+          if (pixKey.length < 5) {
+            return ctx.reply('❌ Chave PIX muito curta. Tente novamente:');
+          }
+          
+          session.data.pixKey = pixKey;
+          session.step = 'confirm';
+          
+          return ctx.reply(`📋 *CONFIRME OS DADOS:*\n\n🤖 Bot: *${session.data.botInfo.first_name}*\n📱 Username: @${session.data.botInfo.username}\n🔑 Chave PIX: \`${pixKey}\`\n\n✅ Digite *SIM* para confirmar\n❌ Digite *NÃO* para cancelar`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'confirm') {
+          const response = ctx.message.text.trim().toUpperCase();
+          
+          if (response === 'NÃO' || response === 'NAO' || response === 'N') {
+            delete global._SESSIONS[ctx.from.id];
+            return ctx.reply('❌ Registro cancelado.');
+          }
+          
+          if (response !== 'SIM' && response !== 'S') {
+            return ctx.reply('Por favor, digite *SIM* ou *NÃO*:', { parse_mode: 'Markdown' });
+          }
+          
+          ctx.reply('⏳ Criando registro...');
+          
+          // Criar solicitação de bot
+          const result = await botManager.createBotRequest({
+            ownerTelegramId: ctx.from.id,
+            botToken: session.data.token,
+            pixKey: session.data.pixKey,
+            botName: session.data.botInfo.first_name
+          });
+          
+          delete global._SESSIONS[ctx.from.id];
+          
+          if (!result.success) {
+            return ctx.reply(`❌ Erro ao criar registro:\n${result.error}`);
+          }
+          
+          // Notificar super admins
+          try {
+            const { data: superAdmins } = await db.supabase
+              .from('users')
+              .select('telegram_id')
+              .eq('is_super_admin', true);
+            
+            if (superAdmins && superAdmins.length > 0) {
+              for (const admin of superAdmins) {
+                try {
+                  await ctx.telegram.sendMessage(
+                    admin.telegram_id,
+                    `🔔 *NOVO BOT PENDENTE DE APROVAÇÃO*\n\n🤖 Bot: @${session.data.botInfo.username}\n👤 Criador: ${ctx.from.first_name}${ctx.from.username ? ` (@${ctx.from.username})` : ''}\n🔑 PIX: \`${session.data.pixKey}\`\n\nUse /gerenciarbots para aprovar.`,
+                    { parse_mode: 'Markdown' }
+                  );
+                } catch (err) {
+                  console.error('Erro ao notificar admin:', err);
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Erro ao buscar super admins:', err);
+          }
+          
+          return ctx.reply(`🎉 *BOT REGISTRADO COM SUCESSO!*\n\n🤖 @${session.data.botInfo.username}\n\n⏳ Seu bot está aguardando aprovação do administrador.\n\nVocê receberá uma notificação quando for aprovado!\n\nUse /meusbots para acompanhar o status.`, { parse_mode: 'Markdown' });
+        }
+      }
+      
+      // REJEITAR BOT (Super admin)
+      if (session.type === 'reject_bot' && session.step === 'reason') {
+        const reason = ctx.message.text.trim();
+        
+        const result = await botManager.rejectBot(session.botInstanceId, reason);
+        
+        delete global._SESSIONS[ctx.from.id];
+        
+        if (!result.success) {
+          return ctx.reply(`❌ Erro: ${result.error}`);
+        }
+        
+        // Notificar o criador
+        try {
+          await ctx.telegram.sendMessage(
+            result.data.owner_telegram_id,
+            `❌ *BOT REJEITADO*\n\n🤖 Bot: @${result.data.bot_username}\n\n📝 Motivo: ${reason}\n\nVocê pode tentar criar um novo bot com /criarbot`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (err) {
+          console.error('Erro ao notificar criador:', err);
+        }
+        
+        await adminLogs.logAction(ctx.from.id, 'rejected_bot', result.data.bot_username);
+        
+        return ctx.reply(`✅ Bot @${result.data.bot_username} rejeitado.\n\nMotivo: ${reason}`);
+      }
+      
+      return next();
+    } catch (err) {
+      console.error('Erro no handler de sessões multi-tenant:', err);
+      return next();
     }
   });
 
