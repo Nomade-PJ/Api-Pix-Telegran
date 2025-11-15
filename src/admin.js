@@ -142,28 +142,31 @@ Pendentes: ${notifStats?.pending || 0}`;
     try {
       await ctx.answerCbQuery();
       
-      // Buscar estatísticas para o dashboard
-      const todayReport = await reports.getTodayReport();
-      const monthReport = await reports.getMonthReport();
-      const totalUsers = await db.getTotalUsersCount();
-      const pendingCount = await db.getPendingPaymentsCount();
+      // Buscar dados para o dashboard
+      const [todayReport, monthReport, stats] = await Promise.all([
+        reports.getTodayReport(),
+        reports.getMonthReport(),
+        db.getStats()
+      ]);
       
-      // Montar mensagem do dashboard
-      let message = `🔐 *PAINEL ADMINISTRATIVO*\n\n`;
-      message += `📊 *HOJE:*\n`;
-      message += `💰 R$ ${todayReport.total.toFixed(2)} em vendas (${todayReport.count} transações)\n`;
-      message += `👥 ${todayReport.newUsers} novos usuários\n`;
-      message += `⏳ ${pendingCount} pagamentos pendentes\n\n`;
-      message += `📈 *ESTE MÊS:*\n`;
-      message += `💵 R$ ${monthReport.total.toFixed(2)} (total)\n`;
-      message += `🛍️ ${monthReport.count} vendas\n`;
-      message += `📦 ${monthReport.topProduct || 'N/A'} (mais vendido)\n\n`;
-      message += `👥 Total de usuários: ${totalUsers}\n`;
-      message += `🧾 Total de transações: ${monthReport.totalTransactions || 0}`;
+      const message = `🔐 *PAINEL ADMINISTRATIVO*
+
+📈 *HOJE:*
+💰 R$ ${todayReport?.totalRevenue || '0.00'} em vendas (${todayReport?.totalSales || 0} transações)
+👥 ${todayReport?.newUsers || 0} novos usuários
+⏳ ${todayReport?.pendingPayments || 0} pagamentos pendentes
+
+📊 *ESTE MÊS:*
+💵 R$ ${monthReport?.totalRevenue || '0.00'} (total)
+🛍️ ${monthReport?.totalSales || 0} vendas
+📦 ${monthReport?.topProduct || 'N/A'} (mais vendido)
+
+👥 Total de usuários: ${stats.totalUsers}
+💳 Total de transações: ${stats.totalTransactions}`;
       
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Estatísticas', 'admin_stats'), Markup.button.callback('📈 Relatórios', 'admin_reports')],
-        [Markup.button.callback('📦 Vendas', 'admin_sales'), Markup.button.callback('🛍️ Produtos', 'admin_products')],
+        [Markup.button.callback('💼 Vendas', 'admin_sales'), Markup.button.callback('🛍️ Produtos', 'admin_products')],
         [Markup.button.callback('👥 Usuários', 'admin_users'), Markup.button.callback('📢 Broadcast', 'admin_broadcast')],
         [Markup.button.callback('🎟️ Cupons', 'admin_coupons'), Markup.button.callback('⭐ Avaliações', 'admin_reviews')],
         [Markup.button.callback('💾 Backup', 'admin_backup'), Markup.button.callback('⚙️ Configurações', 'admin_settings')],
