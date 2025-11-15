@@ -1,7 +1,12 @@
 // src/pix/manual.js
 const QRCode = require('qrcode');
 
-// Função para calcular CRC16-CCITT
+// ============================================
+// GERADOR OFICIAL + CORRIGIDO DE PIX
+// Baseado na especificação EMV/BCB BR Code 2.3
+// ============================================
+
+// CRC16-CCITT (corrigido)
 function crc16(str) {
   let crc = 0xFFFF;
   for (let i = 0; i < str.length; i++) {
@@ -12,72 +17,72 @@ function crc16(str) {
       } else {
         crc = crc << 1;
       }
+      crc &= 0xFFFF;
     }
   }
-  return (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+  return crc.toString(16).toUpperCase().padStart(4, '0');
 }
 
-// Função para criar payload PIX (BR Code)
+// Função para criar payload PIX (BR Code) - CORRIGIDA
 function createPixPayload(pixKey, amount, txid) {
-  console.log('=== CRIANDO PAYLOAD PIX ===');
+  console.log('=== CRIANDO PAYLOAD PIX (VERSÃO CORRIGIDA) ===');
   console.log('Chave recebida:', pixKey);
   console.log('Tamanho da chave:', pixKey.length);
   console.log('Valor:', amount);
   console.log('TXID:', txid);
   
+  // CORREÇÃO 1: GUI em MAIÚSCULAS (obrigatório)
+  const gui = "BR.GOV.BCB.PIX";
+  console.log('GUI (corrigido):', gui);
+  
+  // CORREÇÃO 2: Merchant Account Info montado corretamente
+  // Estrutura: 00 + tamanho + GUI + 01 + tamanho + chave
+  const guiField = "00" + gui.length.toString().padStart(2, '0') + gui;
+  const keyField = "01" + pixKey.length.toString().padStart(2, '0') + pixKey;
+  const merchantAccountInfo = guiField + keyField;
+  console.log('Merchant Account Info:', merchantAccountInfo);
+  
   // ID 00: Payload Format Indicator
-  const payloadFormat = '000201';
-  console.log('00 - Payload Format:', payloadFormat);
+  const payloadFormat = "000201";
   
-  // ID 01: Point of Initiation Method (static = 11, dynamic = 12)
-  const initiationMethod = '010212';
-  console.log('01 - Initiation Method:', initiationMethod);
+  // ID 01: Point of Initiation Method (12 = dynamic)
+  const initiationMethod = "010212";
   
-  // ID 26: Merchant Account Information (PIX)
-  // Estrutura: 26 + tamanho + (00 + tamanho + "br.gov.bcb.pix" + 01 + tamanho + chave)
-  const gui = '0014br.gov.bcb.pix';
-  console.log('GUI:', gui);
-  
-  const keyField = '01' + String(pixKey.length).padStart(2, '0') + pixKey;
-  console.log('Key Field completo:', keyField);
-  console.log('Tamanho do Key Field:', keyField.length);
-  
-  const merchantAccountContent = gui + keyField;
-  console.log('Merchant Account Content:', merchantAccountContent);
-  console.log('Tamanho do Merchant Account Content:', merchantAccountContent.length);
-  
-  const merchantAccount = '26' + String(merchantAccountContent.length).padStart(2, '0') + merchantAccountContent;
-  console.log('26 - Merchant Account completo:', merchantAccount);
+  // ID 26: Merchant Account Information
+  const merchantAccount = "26" + merchantAccountInfo.length.toString().padStart(2, '0') + merchantAccountInfo;
+  console.log('26 - Merchant Account:', merchantAccount);
   
   // ID 52: Merchant Category Code
-  const merchantCategory = '52040000';
-  console.log('52 - Merchant Category:', merchantCategory);
+  const merchantCategory = "52040000";
   
   // ID 53: Transaction Currency (986 = BRL)
-  const currency = '5303986';
-  console.log('53 - Currency:', currency);
+  const currency = "5303986";
   
-  // ID 54: Transaction Amount (se houver)
-  let amountField = '';
-  if (amount && parseFloat(amount) > 0) {
-    const amountStr = parseFloat(amount).toFixed(2);
-    amountField = '54' + String(amountStr.length).padStart(2, '0') + amountStr;
-    console.log('54 - Amount Field:', amountField);
-  }
+  // ID 54: Transaction Amount
+  const amountStr = parseFloat(amount).toFixed(2);
+  const amountField = "54" + amountStr.length.toString().padStart(2, '0') + amountStr;
+  console.log('54 - Amount:', amountField);
   
   // ID 58: Country Code
-  const countryCode = '5802BR';
-  console.log('58 - Country:', countryCode);
+  const countryCode = "5802BR";
   
-  // ID 62: Additional Data Field Template (txid)
-  const txidField = '05' + String(txid.length).padStart(2, '0') + txid;
-  console.log('TXID Field:', txidField);
-  console.log('Tamanho TXID Field:', txidField.length);
+  // CORREÇÃO 3: Campos obrigatórios 59 e 60 (Nome e Cidade)
+  // ID 59: Merchant Name (obrigatório - mínimo 1 caractere)
+  const merchantName = "N"; // Nome mínimo (pode ser alterado)
+  const nameField = "59" + merchantName.length.toString().padStart(2, '0') + merchantName;
+  console.log('59 - Merchant Name:', nameField);
   
-  const additionalData = '62' + String(txidField.length).padStart(2, '0') + txidField;
+  // ID 60: Merchant City (obrigatório - mínimo 1 caractere)
+  const merchantCity = "C"; // Cidade mínima (pode ser alterado)
+  const cityField = "60" + merchantCity.length.toString().padStart(2, '0') + merchantCity;
+  console.log('60 - Merchant City:', cityField);
+  
+  // ID 62: Additional Data Field Template (TXID)
+  const txidField = "05" + txid.length.toString().padStart(2, '0') + txid;
+  const additionalData = "62" + txidField.length.toString().padStart(2, '0') + txidField;
   console.log('62 - Additional Data:', additionalData);
   
-  // Montar payload sem CRC
+  // Montar payload sem CRC (ordem correta dos TLVs)
   const payloadWithoutCRC = 
     payloadFormat + 
     initiationMethod +
@@ -86,18 +91,21 @@ function createPixPayload(pixKey, amount, txid) {
     currency + 
     amountField + 
     countryCode + 
+    nameField +      // CORREÇÃO: Campo 59 adicionado
+    cityField +      // CORREÇÃO: Campo 60 adicionado
     additionalData + 
-    '6304';
+    "6304";          // ID 63: CRC placeholder
   
   console.log('Payload SEM CRC:', payloadWithoutCRC);
   console.log('Tamanho payload sem CRC:', payloadWithoutCRC.length);
   
-  // Calcular e adicionar CRC
+  // Calcular CRC
   const crcValue = crc16(payloadWithoutCRC);
   console.log('CRC calculado:', crcValue);
   
+  // Payload final
   const payloadFinal = payloadWithoutCRC + crcValue;
-  console.log('=== PAYLOAD FINAL ===');
+  console.log('=== PAYLOAD FINAL (CORRIGIDO) ===');
   console.log(payloadFinal);
   console.log('Tamanho total:', payloadFinal.length);
   
