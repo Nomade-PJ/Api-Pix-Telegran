@@ -1,41 +1,44 @@
 // api/trigger-delivery.js
+// Endpoint para integrações externas (n8n, Zapier, etc) triggerar entrega
 const deliver = require('../src/deliver');
+const db = require('../src/database');
 
 module.exports = async (req, res) => {
   try {
-    // Segurança: adicionar secret header se desejar
     const secret = req.headers['x-trigger-secret'];
     if (process.env.TRIGGER_SECRET && secret !== process.env.TRIGGER_SECRET) {
-      return res.status(403).send('Forbidden');
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     const { txid, action } = req.body;
-    if (!txid) return res.status(400).send('txid required');
+    if (!txid) return res.status(400).json({ error: 'txid required' });
 
-    // recuperar mapping (no exemplo, usamos memória)
-    const txs = global._TXS || {};
-    if (!txs[txid]) return res.status(404).send('txid not found');
-
-    const record = txs[txid];
-    const chatId = record.chatId;
-    const productId = record.productId;
-
-    // Ex.: se preferir enviar link
-    if (action === 'link') {
-      const link = `${process.env.DELIVERY_BASE_URL}/${productId}`; // ajustar
-      await deliver.deliverByLink(chatId, link, 'Acesso liberado! Seu link:');
-    } else {
-      // enviar arquivo
-      const fileUrl = `${process.env.DELIVERY_BASE_URL}/${productId}.zip`;
-      await deliver.deliverFile(chatId, fileUrl, `${productId}.zip`);
+    // Buscar transação no Supabase
+    const transaction = await db.getTransactionByTxid(txid);
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
     }
 
-    // marcar como entregue
-    record.delivered = true;
-    return res.status(200).send({ ok: true });
+    if (transaction.status === 'delivered') {
+      return res.status(200).json({ ok: true, message: 'Already delivered' });
+    }
+
+    // Buscar produto
+    const product = await db.getProduct(transaction.product_id);
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    // Entregar conteúdo
+    await deliver.deliverContent(transaction.telegram_id, product);
+
+    // Marcar como entregue
+    await db.markAsDelivered(txid);
+
+    return res.status(200).json({ ok: true, message: 'Delivered successfully' });
   } catch (err) {
     console.error('trigger deliver err', err);
-    return res.status(500).send('error');
+    return res.status(500).json({ error: 'Internal error', message: err.message });
   }
 };
 

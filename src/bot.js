@@ -180,8 +180,6 @@ TXID: ${txid}`);
     }
   });
 
-  // Endpoint auxiliar para trigger delivery via HTTP (usado por operador/n8n)
-  // NOTA: a chamada para envio final será feita via api/trigger-delivery.js
   return bot;
 }
 

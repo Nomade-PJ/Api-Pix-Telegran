@@ -1,7 +1,7 @@
 // api/webhook-pix.js
-// Webhook para receber notificações de pagamento PIX (de PSPs ou bancos)
-
+// Webhook para receber notificações de pagamento PIX (de PSPs como Mercado Pago, PagSeguro, etc)
 const deliver = require('../src/deliver');
+const db = require('../src/database');
 
 module.exports = async (req, res) => {
   try {
@@ -24,45 +24,38 @@ module.exports = async (req, res) => {
 
     // Verificar se o pagamento foi aprovado
     if (status === 'approved' || status === 'paid' || status === 'CONCLUIDA') {
-      // Buscar transação no banco de dados
-      const txs = global._TXS || {};
-      const transaction = txs[txid];
-
+      // Buscar transação no Supabase
+      const transaction = await db.getTransactionByTxid(txid);
+      
       if (!transaction) {
         console.log('Transação não encontrada:', txid);
         return res.status(404).json({ error: 'Transaction not found' });
       }
 
-      if (transaction.delivered) {
+      if (transaction.status === 'delivered') {
         console.log('Já foi entregue:', txid);
         return res.status(200).json({ message: 'Already delivered' });
       }
 
-      // Marcar como pago
-      transaction.paid = true;
-      transaction.paidAt = new Date().toISOString();
+      // Buscar produto
+      const product = await db.getProduct(transaction.product_id);
+      if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+
+      // Validar transação
+      const adminUser = await db.getOrCreateUser({ id: 0 }); // Sistema
+      await db.validateTransaction(txid, adminUser.id);
 
       // Entregar automaticamente
-      const chatId = transaction.chatId;
-      const productId = transaction.productId;
+      console.log('Entregando automaticamente para:', transaction.telegram_id);
+      await deliver.deliverContent(transaction.telegram_id, product);
+      
+      // Marcar como entregue
+      await db.markAsDelivered(txid);
 
-      console.log('Entregando automaticamente para:', chatId);
-
-      try {
-        // Enviar link ou arquivo
-        const link = `${process.env.DELIVERY_BASE_URL || 'https://exemplo.com'}/${productId}`;
-        await deliver.deliverByLink(chatId, link, '✅ Pagamento confirmado! Seu acesso:');
-        
-        // Marcar como entregue
-        transaction.delivered = true;
-        transaction.deliveredAt = new Date().toISOString();
-
-        console.log('Entregue com sucesso!');
-        return res.status(200).json({ ok: true, message: 'Delivered successfully' });
-      } catch (err) {
-        console.error('Erro ao entregar:', err);
-        return res.status(500).json({ error: 'Failed to deliver', details: err.message });
-      }
+      console.log('Entregue com sucesso!');
+      return res.status(200).json({ ok: true, message: 'Delivered successfully' });
     }
 
     // Pagamento pendente ou rejeitado

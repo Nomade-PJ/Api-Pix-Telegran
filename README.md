@@ -281,8 +281,7 @@ SELECT * FROM products WHERE is_active = TRUE;
   "telegraf": "^4.12.2",
   "@supabase/supabase-js": "^2.39.0",
   "qrcode": "^1.5.1",
-  "axios": "^1.4.0",
-  "form-data": "^4.0.0"
+  "axios": "^1.4.0"
 }
 ```
 
@@ -303,14 +302,9 @@ npm start
 
 ---
 
-## 📚 Documentação Adicional
+## 📚 Documentação
 
-- **`GUIA-ADMIN-COMPLETO.md`** - Guia completo de comandos admin
-- **`SUPABASE-CONFIG.md`** - Configuração do banco de dados
-- **`CONFIGURAR-ENTREGA.md`** - Como configurar entrega de produtos
-- **`COMANDOS-RAPIDOS.md`** - Referência rápida de comandos
-- **`Solucao-Pix.md`** - Detalhes técnicos do gerador PIX corrigido
-- **`VERIFICACAO-AUTOMATICA.md`** - Guia para verificação automática (futuro)
+Toda a documentação está consolidada neste README.md para facilitar a manutenção.
 
 ---
 
