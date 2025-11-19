@@ -1,5 +1,6 @@
 // src/pix/manual.js
 const QRCode = require('qrcode');
+const db = require('../database');
 
 // ============================================
 // GERADOR OFICIAL + CORRIGIDO DE PIX
@@ -66,10 +67,12 @@ function createPixPayload(key, amount, txid) {
 
 async function createManualCharge({ amount = "10.00", productId }) {
   try {
-    const key = process.env.MY_PIX_KEY;
-    if (!key) {
-      console.error('MY_PIX_KEY não configurada!');
-      throw new Error('MY_PIX_KEY não configurada.');
+    // Buscar chave PIX do banco de dados (PERMANENTE)
+    const key = await db.getPixKey();
+    
+    if (!key || key === 'CONFIGURAR') {
+      console.error('Chave PIX não configurada!');
+      throw new Error('Chave PIX não configurada. Use /setpix [chave] para configurar.');
     }
 
     // Formatar valor com 2 casas decimais (CORREÇÃO CRÍTICA)

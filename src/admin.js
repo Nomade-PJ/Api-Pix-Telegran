@@ -235,7 +235,11 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
       
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length === 0) {
+        // Mostrar chave atual
+        const currentKey = await db.getPixKey();
         return ctx.reply(`❌ *Uso incorreto!*
+
+🔑 *Chave atual:* ${currentKey || 'Não configurada'}
 
 *Formato:* /setpix [chave]
 
@@ -255,24 +259,24 @@ Email, Telefone (com DDD, sem +55), CPF/CNPJ ou Chave aleatória`, { parse_mode:
         return ctx.reply('❌ Chave PIX muito curta. Verifique e tente novamente.');
       }
       
-      // Atualizar variável de ambiente (nota: isso só funciona durante execução)
+      // Salvar no banco de dados (PERMANENTE!)
+      const user = await db.getOrCreateUser(ctx.from);
+      await db.setPixKey(novaChave, user.id);
+      
+      // Também atualizar variável de ambiente em memória
       process.env.MY_PIX_KEY = novaChave;
       
       await ctx.reply(`✅ *Chave PIX atualizada com sucesso!*
 
 🔑 Nova chave: ${novaChave}
 
-⚠️ *IMPORTANTE:* 
-Esta alteração é temporária. Para torná-la permanente, atualize também na Vercel:
+✅ *Alteração PERMANENTE salva no banco de dados!*
 
-1. Acesse: Settings → Environment Variables
-2. Edite MY_PIX_KEY
-3. Valor: ${novaChave}
-4. Salve e redeploy`, { parse_mode: 'Markdown' });
+Todos os novos pagamentos usarão esta chave automaticamente.`, { parse_mode: 'Markdown' });
       
     } catch (err) {
-      console.error('Erro ao alterar PIX:', err);
-      return ctx.reply('❌ Erro ao alterar chave PIX.');
+      console.error('Erro ao alterar PIX:', err.message);
+      return ctx.reply('❌ Erro ao alterar chave PIX. Tente novamente.');
     }
   });
   
@@ -431,7 +435,7 @@ Cancelar: /cancelar`);
         return ctx.reply('📦 Nenhum produto para remover.');
       }
       
-      let message = `🗑️ REMOVER PRODUTO\n\n⚠️ Isso desativará o produto (não deleta do banco).\n\nDigite o ID do produto:\n\n`;
+      let message = `🗑️ REMOVER PRODUTO\n\n⚠️ *ATENÇÃO:* Isso DELETARÁ PERMANENTEMENTE o produto do banco!\n\nDigite o ID do produto:\n\n`;
       
       for (const product of products) {
         if (product.is_active) {
@@ -464,13 +468,13 @@ Cancelar: /cancelar`);
       
       await db.deleteProduct(productId);
       
-      return ctx.reply(`✅ *Produto desativado com sucesso!*
+      return ctx.reply(`✅ *Produto deletado permanentemente!*
 
 🛍️ ${product.name}
 🆔 ID: ${productId}
 
-O produto não aparecerá mais no menu de compras.
-Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
+O produto foi removido completamente do banco de dados.
+Use /produtos para ver os restantes.`, { parse_mode: 'Markdown' });
       
     } catch (err) {
       console.error('Erro ao deletar produto:', err);
