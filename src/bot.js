@@ -81,6 +81,61 @@ function createBot(token) {
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
       const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       
+      // Agendar lembretes de pagamento
+      // Lembrete aos 15 minutos (15 minutos restantes)
+      setTimeout(async () => {
+        try {
+          const trans = await db.getTransactionByTxid(txid);
+          // Verificar se ainda está pendente e não paga
+          if (trans && trans.status === 'pending') {
+            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *LEMBRETE DE PAGAMENTO*
+
+⚠️ *Faltam 15 minutos* para expirar!
+
+💰 Valor: R$ ${amount}
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+⏰ *Expira às:* ${expirationStr}
+
+📸 Após pagar, envie o comprovante.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+          }
+        } catch (err) {
+          console.error('Erro no lembrete 15 min:', err);
+        }
+      }, 15 * 60 * 1000); // 15 minutos
+      
+      // Aviso de expiração e cancelamento automático aos 30 minutos
+      setTimeout(async () => {
+        try {
+          const trans = await db.getTransactionByTxid(txid);
+          // Se ainda está pendente, cancelar
+          if (trans && trans.status === 'pending') {
+            await db.cancelTransaction(txid);
+            
+            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
+
+❌ O prazo de 30 minutos foi atingido.
+Esta transação foi cancelada automaticamente.
+
+🔄 *Para comprar novamente:*
+1. Use o comando /start
+2. Selecione o produto desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+💰 Valor: R$ ${amount}
+🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+          }
+        } catch (err) {
+          console.error('Erro no cancelamento automático:', err);
+        }
+      }, 30 * 60 * 1000); // 30 minutos
+      
       // Enviar QR Code imediatamente
       if (charge.qrcodeBuffer) {
         return await ctx.replyWithPhoto(
