@@ -17,32 +17,43 @@ function registerAdminCommands(bot) {
       const stats = await db.getStats();
       
       const message = `🔐 *PAINEL ADMINISTRATIVO*
+━━━━━━━━━━━━━━━━━━━━━
 
-📊 *Estatísticas:*
-👥 Usuários: ${stats.totalUsers}
-💳 Transações: ${stats.totalTransactions}
-⏳ Pendentes: ${stats.pendingTransactions}
-💰 Total em vendas: R$ ${stats.totalSales}
+📊 *Estatísticas em Tempo Real:*
+👥 Usuários: *${stats.totalUsers}*
+💳 Transações: *${stats.totalTransactions}*
+⏳ Pendentes: *${stats.pendingTransactions}*
+💰 Vendas: *R$ ${stats.totalSales}*
 
-*📋 Gerenciar Vendas:*
-• /pendentes - Ver transações pendentes
-• /validar [txid] - Validar e entregar
-• /stats - Estatísticas detalhadas
+Selecione uma opção abaixo:`;
 
-*🛍️ Gerenciar Produtos:*
-• /produtos - Listar todos os produtos
-• /novoproduto - Criar novo produto
-• /editarproduto - Editar produto
-• /deletarproduto - Remover produto
-
-*⚙️ Configurações:*
-• /setpix [chave] - Alterar chave PIX
-• /users - Listar usuários
-• /broadcast [mensagem] - Enviar para todos`;
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('⏳ Pendentes (' + stats.pendingTransactions + ')', 'admin_pendentes'),
+          Markup.button.callback('📊 Estatísticas', 'admin_stats')
+        ],
+        [
+          Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos'),
+          Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
+        ],
+        [
+          Markup.button.callback('🔑 Alterar PIX', 'admin_setpix'),
+          Markup.button.callback('👥 Usuários', 'admin_users')
+        ],
+        [
+          Markup.button.callback('📢 Broadcast', 'admin_broadcast')
+        ],
+        [
+          Markup.button.callback('🔄 Atualizar', 'admin_refresh')
+        ]
+      ]);
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...keyboard
+      });
     } catch (err) {
-      console.error('Erro no comando admin:', err);
+      console.error('Erro no comando admin:', err.message);
       return ctx.reply('❌ Erro ao carregar painel.');
     }
   });
@@ -286,7 +297,7 @@ Todos os novos pagamentos usarão esta chave automaticamente.`, { parse_mode: 'M
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return ctx.reply('❌ Acesso negado.');
       
-      const products = await db.getAllProducts(true); // incluir inativos
+      const products = await db.getAllProducts(false); // APENAS ATIVOS
       
       if (products.length === 0) {
         return ctx.reply('📦 Nenhum produto cadastrado ainda.\n\nUse /novoproduto para criar um.');
@@ -719,6 +730,90 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
       console.error('Erro:', err);
     }
   }
+
+  // ===== HANDLERS DOS BOTÕES DO PAINEL ADMIN =====
+  
+  bot.action('admin_refresh', async (ctx) => {
+    await ctx.answerCbQuery('🔄 Atualizando...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    const stats = await db.getStats();
+    const message = `🔐 *PAINEL ADMINISTRATIVO*
+━━━━━━━━━━━━━━━━━━━━━
+
+📊 *Estatísticas em Tempo Real:*
+👥 Usuários: *${stats.totalUsers}*
+💳 Transações: *${stats.totalTransactions}*
+⏳ Pendentes: *${stats.pendingTransactions}*
+💰 Vendas: *R$ ${stats.totalSales}*
+
+Selecione uma opção abaixo:`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('⏳ Pendentes (' + stats.pendingTransactions + ')', 'admin_pendentes'),
+        Markup.button.callback('📊 Estatísticas', 'admin_stats')
+      ],
+      [
+        Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos'),
+        Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
+      ],
+      [
+        Markup.button.callback('🔑 Alterar PIX', 'admin_setpix'),
+        Markup.button.callback('👥 Usuários', 'admin_users')
+      ],
+      [
+        Markup.button.callback('📢 Broadcast', 'admin_broadcast')
+      ],
+      [
+        Markup.button.callback('🔄 Atualizar', 'admin_refresh')
+      ]
+    ]);
+    
+    return ctx.editMessageText(message, {
+      parse_mode: 'Markdown',
+      ...keyboard
+    });
+  });
+
+  bot.action('admin_pendentes', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply('Para ver pendentes, use: /pendentes');
+  });
+
+  bot.action('admin_stats', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply('Para ver estatísticas detalhadas, use: /stats');
+  });
+
+  bot.action('admin_produtos', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply('Para ver produtos, use: /produtos');
+  });
+
+  bot.action('admin_novoproduto', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply('Para criar produto, use: /novoproduto');
+  });
+
+  bot.action('admin_setpix', async (ctx) => {
+    await ctx.answerCbQuery();
+    const currentKey = await db.getPixKey();
+    return ctx.reply(`🔑 *Chave PIX atual:* ${currentKey || 'Não configurada'}\n\nPara alterar, use: /setpix [nova_chave]`, {
+      parse_mode: 'Markdown'
+    });
+  });
+
+  bot.action('admin_users', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply('Para ver usuários, use: /users');
+  });
+
+  bot.action('admin_broadcast', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply('Para enviar broadcast, use: /broadcast [mensagem]');
+  });
 }
 
 module.exports = { registerAdminCommands };
