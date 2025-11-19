@@ -182,6 +182,24 @@ async function deleteProduct(productId) {
   }
 }
 
+async function productHasTransactions(productId) {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('product_id', productId);
+    
+    if (error) throw error;
+    
+    // Se count for maior que 0, o produto tem transações
+    return data && data.length > 0;
+  } catch (err) {
+    console.error('Erro ao verificar transações do produto:', err.message);
+    // Em caso de erro, retornar true para evitar deleção acidental
+    return true;
+  }
+}
+
 // ===== TRANSAÇÕES =====
 
 async function createTransaction({ txid, userId, telegramId, productId, amount, pixKey, pixPayload }) {
@@ -447,6 +465,7 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
+  productHasTransactions,
   createTransaction,
   getTransactionByTxid,
   getLastPendingTransaction,
