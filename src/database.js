@@ -167,13 +167,29 @@ async function updateProduct(productId, updates) {
 
 async function deleteProduct(productId) {
   try {
-    // DELETAR PERMANENTEMENTE (não apenas desativar)
-    const { error } = await supabase
+    // DELETAR EM CASCATA: Primeiro as transações, depois o produto
+    
+    // 1. Deletar todas as transações associadas ao produto
+    const { error: transError } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('product_id', productId);
+    
+    if (transError) {
+      console.error('Erro ao deletar transações do produto:', transError.message);
+      throw transError;
+    }
+    
+    console.log(`Transações do produto ${productId} deletadas`);
+    
+    // 2. Deletar o produto
+    const { error: prodError } = await supabase
       .from('products')
       .delete()
       .eq('product_id', productId);
     
-    if (error) throw error;
+    if (prodError) throw prodError;
+    
     console.log('Produto deletado permanentemente:', productId);
     return true;
   } catch (err) {

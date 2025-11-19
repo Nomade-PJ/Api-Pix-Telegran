@@ -480,12 +480,13 @@ Cancelar: /cancelar`);
         return ctx.reply('📦 Nenhum produto para remover.');
       }
       
-      let message = `🗑️ *REMOVER PRODUTO*
+      let message = `🗑️ *DELETAR PRODUTO*
 
-⚠️ *IMPORTANTE:*
-• Produtos *sem vendas*: Deletados permanentemente ❌
-• Produtos *com vendas*: Apenas desativados 🔒
-  (mantém histórico de transações)
+⚠️ *ATENÇÃO:*
+• Isso *DELETARÁ PERMANENTEMENTE* o produto ❌
+• *TODAS as transações* associadas serão removidas 🗑️
+• *Histórico de vendas* será perdido 📊
+• *Esta ação NÃO pode ser desfeita!* ⚠️
 
 Digite o ID do produto:
 
@@ -520,47 +521,34 @@ Digite o ID do produto:
         return ctx.reply('❌ Produto não encontrado.');
       }
       
-      // Verificar se há transações associadas
+      // Verificar se há transações associadas para informar o usuário
       const hasTransactions = await db.productHasTransactions(productId);
       
-      if (hasTransactions) {
-        // Se tem transações, apenas desativar (soft delete)
-        await db.updateProduct(productId, { is_active: false });
-        
-        return ctx.reply(`⚠️ *Produto desativado!*
-
-🛍️ ${product.name}
-🆔 ID: ${productId}
-
-❌ **Não foi possível deletar permanentemente** porque este produto possui transações (vendas) associadas no histórico.
-
-✅ O produto foi **desativado** e não aparecerá mais no menu de compras.
-
-📊 Para reativar: /editarproduto → /edit_${productId} → /edit_status
-
-💡 **Por quê?** Manter produtos com vendas garante integridade do histórico financeiro e rastreabilidade.`, { parse_mode: 'Markdown' });
-      }
-      
-      // Se não tem transações, pode deletar permanentemente
+      // Deletar permanentemente (deletará transações em cascata)
       const deleted = await db.deleteProduct(productId);
       
       if (deleted) {
-        return ctx.reply(`✅ *Produto deletado permanentemente!*
+        let message = `✅ *Produto deletado permanentemente!*
 
 🛍️ ${product.name}
 🆔 ID: ${productId}
 
-O produto foi removido completamente do banco de dados.
-Use /produtos para ver os restantes.`, { parse_mode: 'Markdown' });
+🗑️ O produto foi removido completamente do banco de dados.`;
+
+        if (hasTransactions) {
+          message += `\n\n⚠️ **Atenção:** As transações (vendas) associadas a este produto também foram removidas do histórico.`;
+        }
+
+        message += `\n\nUse /produtos para ver os restantes.`;
+        
+        return ctx.reply(message, { parse_mode: 'Markdown' });
       } else {
         return ctx.reply('❌ Erro ao remover produto. Tente novamente.');
       }
       
     } catch (err) {
       console.error('Erro ao deletar produto:', err);
-      return ctx.reply(`❌ Erro ao remover produto.
-
-💡 Se o produto possui vendas no histórico, ele será apenas desativado para manter a integridade dos dados.`);
+      return ctx.reply('❌ Erro ao remover produto. Verifique os logs e tente novamente.');
     }
   });
   
