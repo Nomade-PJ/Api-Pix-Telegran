@@ -256,11 +256,16 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
 
 *Exemplos:*
 • /setpix seu@email.com
+• /setpix +55 11 99988-7766
 • /setpix 11999887766
 • /setpix 12345678900
+• /setpix 6f2a2e5d-5308-4588-ad31-ee81a67807d6
 
 *Tipos aceitos:*
-Email, Telefone (com DDD, sem +55), CPF/CNPJ ou Chave aleatória`, { parse_mode: 'Markdown' });
+✅ Email
+✅ Telefone (com ou sem formatação)
+✅ CPF/CNPJ
+✅ Chave aleatória (UUID)`, { parse_mode: 'Markdown' });
       }
       
       const novaChave = args.join(' ').trim();
@@ -270,20 +275,49 @@ Email, Telefone (com DDD, sem +55), CPF/CNPJ ou Chave aleatória`, { parse_mode:
         return ctx.reply('❌ Chave PIX muito curta. Verifique e tente novamente.');
       }
       
-      // Salvar no banco de dados (PERMANENTE!)
-      const user = await db.getOrCreateUser(ctx.from);
-      await db.setPixKey(novaChave, user.id);
-      
-      // Também atualizar variável de ambiente em memória
-      process.env.MY_PIX_KEY = novaChave;
-      
-      await ctx.reply(`✅ *Chave PIX atualizada com sucesso!*
+      // Validar formato da chave usando a função sanitizePixKey
+      // Importar a função temporariamente para validação
+      try {
+        // Testar se a chave é válida (sem salvar ainda)
+        const { sanitizePixKey } = require('./pix/manual');
+        const sanitizedKey = sanitizePixKey(novaChave);
+        
+        // Se chegou aqui, a chave é válida
+        // Salvar no banco de dados (PERMANENTE!)
+        const user = await db.getOrCreateUser(ctx.from);
+        await db.setPixKey(novaChave, user.id);
+        
+        // Também atualizar variável de ambiente em memória
+        process.env.MY_PIX_KEY = novaChave;
+        
+        // Mostrar tanto a chave original quanto a normalizada (se diferentes)
+        let message = `✅ *Chave PIX atualizada com sucesso!*
 
-🔑 Nova chave: ${novaChave}
+🔑 *Chave configurada:* ${novaChave}`;
+        
+        if (sanitizedKey !== novaChave) {
+          message += `\n🔧 *Será normalizada para:* ${sanitizedKey}`;
+        }
+        
+        message += `\n\n✅ *Alteração PERMANENTE salva no banco de dados!*
 
-✅ *Alteração PERMANENTE salva no banco de dados!*
+Todos os novos pagamentos usarão esta chave automaticamente.`;
+        
+        await ctx.reply(message, { parse_mode: 'Markdown' });
+        
+      } catch (validationError) {
+        // Chave inválida
+        return ctx.reply(`❌ *Chave PIX inválida!*
 
-Todos os novos pagamentos usarão esta chave automaticamente.`, { parse_mode: 'Markdown' });
+📋 Erro: ${validationError.message}
+
+*Formatos aceitos:*
+✅ Email: exemplo@email.com
+✅ Telefone: +55 11 99988-7766 ou 11999887766
+✅ CPF: 123.456.789-00 ou 12345678900
+✅ CNPJ: 12.345.678/0001-00 ou 12345678000100
+✅ Chave aleatória: 6f2a2e5d-5308-4588-ad31-ee81a67807d6`, { parse_mode: 'Markdown' });
+      }
       
     } catch (err) {
       console.error('Erro ao alterar PIX:', err.message);

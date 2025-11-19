@@ -6,6 +6,77 @@ const db = require('../database');
 // GERADOR OFICIAL + CORRIGIDO DE PIX
 // ============================================
 
+// Função para sanitizar e normalizar chave PIX
+function sanitizePixKey(key) {
+  if (!key || typeof key !== 'string') {
+    throw new Error('Chave PIX inválida');
+  }
+
+  const cleanKey = key.trim();
+
+  // Detectar tipo de chave PIX
+  
+  // 1. Telefone (contém +, parênteses, hífens, espaços misturados com números)
+  // Exemplos: +(55) 98 9 8540-0784, +55 98 98540-0784, (98) 98540-0784
+  const phoneRegex = /[\+\(\)\-\s]/;
+  if (phoneRegex.test(cleanKey)) {
+    // Extrair apenas os dígitos
+    const digits = cleanKey.replace(/\D/g, '');
+    
+    // Validar quantidade de dígitos
+    // Telefone com código país: 13 dígitos (55 + 11 + 9XXXX-XXXX)
+    // Telefone sem código país: 11 dígitos (11 + 9XXXX-XXXX) ou 10 dígitos
+    if (digits.length >= 10 && digits.length <= 13) {
+      // Se tiver 13 dígitos, já tem código do país
+      if (digits.length === 13) {
+        return `+${digits}`;
+      }
+      // Se tiver 11-12 dígitos, adicionar código do Brasil
+      if (digits.length === 11 || digits.length === 12) {
+        return `+55${digits}`;
+      }
+      // Se tiver 10 dígitos (telefone fixo ou sem DDD completo)
+      if (digits.length === 10) {
+        return `+55${digits}`;
+      }
+    }
+    throw new Error(`Telefone inválido: deve ter entre 10 e 13 dígitos (recebido: ${digits.length} dígitos)`);
+  }
+
+  // 2. Email (contém @)
+  if (cleanKey.includes('@')) {
+    // Email não precisa sanitização, apenas validar formato básico
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanKey)) {
+      throw new Error('Email inválido');
+    }
+    return cleanKey.toLowerCase();
+  }
+
+  // 3. CPF/CNPJ (apenas dígitos ou com pontuação)
+  const onlyDigits = cleanKey.replace(/\D/g, '');
+  if (onlyDigits.length === 11 || onlyDigits.length === 14) {
+    // CPF (11) ou CNPJ (14) - retornar apenas números
+    return onlyDigits;
+  }
+
+  // 4. Chave aleatória (UUID format ou string alfanumérica)
+  // Validar formato UUID: 8-4-4-4-12 ou string com letras e números
+  const uuidRegex = /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$/;
+  if (uuidRegex.test(cleanKey)) {
+    return cleanKey.toLowerCase();
+  }
+
+  // Se chegou aqui, é uma chave que não reconhecemos
+  // mas pode ser válida (ex: chave EVP do banco)
+  // Retornar como está se tiver formato razoável
+  if (cleanKey.length >= 8 && /^[a-zA-Z0-9\-]+$/.test(cleanKey)) {
+    return cleanKey;
+  }
+
+  throw new Error(`Formato de chave PIX não reconhecido: ${cleanKey}`);
+}
+
 // CRC16-CCITT (função corrigida)
 function crc16(str) {
   let crc = 0xFFFF;
@@ -68,11 +139,21 @@ function createPixPayload(key, amount, txid) {
 async function createManualCharge({ amount = "10.00", productId }) {
   try {
     // Buscar chave PIX do banco de dados (PERMANENTE)
-    const key = await db.getPixKey();
+    const rawKey = await db.getPixKey();
     
-    if (!key || key === 'CONFIGURAR') {
+    if (!rawKey || rawKey === 'CONFIGURAR') {
       console.error('Chave PIX não configurada!');
       throw new Error('Chave PIX não configurada. Use /setpix [chave] para configurar.');
+    }
+
+    // SANITIZAR E NORMALIZAR a chave PIX
+    let key;
+    try {
+      key = sanitizePixKey(rawKey);
+      console.log(`✅ Chave PIX sanitizada: "${rawKey}" -> "${key}"`);
+    } catch (sanitizeError) {
+      console.error(`❌ Erro ao sanitizar chave PIX: ${sanitizeError.message}`);
+      throw new Error(`Chave PIX inválida: ${sanitizeError.message}`);
     }
 
     // Formatar valor com 2 casas decimais (CORREÇÃO CRÍTICA)
@@ -84,7 +165,7 @@ async function createManualCharge({ amount = "10.00", productId }) {
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
     const txid = `M${timestamp}${random}`;
 
-    // Criar payload PIX (BR Code) com valor formatado
+    // Criar payload PIX (BR Code) com chave sanitizada
     const copiaCola = createPixPayload(key, amountFormatted, txid);
 
     // Gerar QR code como buffer (PNG)
@@ -98,7 +179,8 @@ async function createManualCharge({ amount = "10.00", productId }) {
       mode: 'manual',
       charge: {
         txid,
-        key,
+        key, // Chave sanitizada que vai para o payload
+        rawKey, // Chave original do banco (para referência)
         amount: amountFormatted,
         copiaCola,
         qrcodeBuffer
@@ -110,5 +192,5 @@ async function createManualCharge({ amount = "10.00", productId }) {
   }
 }
 
-module.exports = { createManualCharge };
+module.exports = { createManualCharge, sanitizePixKey };
 
