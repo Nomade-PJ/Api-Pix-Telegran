@@ -836,42 +836,195 @@ Selecione uma opção abaixo:`;
     });
   });
 
+  // ===== ACTIONS DO PAINEL ADMIN =====
+  
   bot.action('admin_pendentes', async (ctx) => {
-    await ctx.answerCbQuery();
-    return ctx.reply('Para ver pendentes, use: /pendentes');
+    await ctx.answerCbQuery('⏳ Carregando pendentes...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const pending = await db.getPendingTransactions(10);
+      
+      if (pending.length === 0) {
+        return ctx.reply('✅ Nenhuma transação pendente!');
+      }
+      
+      let message = `⏳ *${pending.length} TRANSAÇÕES PENDENTES:*\n\n`;
+      
+      for (const tx of pending) {
+        message += `🆔 TXID: ${tx.txid}\n`;
+        message += `👤 User: ${tx.user?.first_name || 'N/A'} (@${tx.user?.username || 'N/A'})\n`;
+        message += `📦 Produto: ${tx.product?.name || tx.product_id}\n`;
+        message += `💵 Valor: R$ ${tx.amount}\n`;
+        message += `📅 Recebido: ${new Date(tx.proof_received_at).toLocaleString('pt-BR')}\n`;
+        message += `\n/validar_${tx.txid}\n`;
+        message += `——————————\n\n`;
+      }
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao listar pendentes:', err);
+      return ctx.reply('❌ Erro ao buscar pendentes.');
+    }
   });
 
   bot.action('admin_stats', async (ctx) => {
-    await ctx.answerCbQuery();
-    return ctx.reply('Para ver estatísticas detalhadas, use: /stats');
+    await ctx.answerCbQuery('📊 Carregando estatísticas...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const stats = await db.getStats();
+      
+      const message = `📊 *ESTATÍSTICAS COMPLETAS*
+━━━━━━━━━━━━━━━━━━━━━
+
+👥 *Usuários:* ${stats.totalUsers}
+💳 *Transações:* ${stats.totalTransactions}
+⏳ *Pendentes:* ${stats.pendingTransactions}
+✅ *Validadas:* ${stats.validatedTransactions || 0}
+📦 *Entregues:* ${stats.deliveredTransactions || 0}
+
+💰 *Total em vendas:* R$ ${stats.totalSales}
+💵 *Ticket médio:* R$ ${stats.avgTicket || '0.00'}
+
+📅 *Atualizado:* ${new Date().toLocaleString('pt-BR')}`;
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao buscar stats:', err);
+      return ctx.reply('❌ Erro ao buscar estatísticas.');
+    }
   });
 
   bot.action('admin_produtos', async (ctx) => {
-    await ctx.answerCbQuery();
-    return ctx.reply('Para ver produtos, use: /produtos');
+    await ctx.answerCbQuery('🛍️ Carregando produtos...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const products = await db.getAllProducts(true);
+      
+      if (products.length === 0) {
+        return ctx.reply('📦 Nenhum produto cadastrado.\n\nUse /novoproduto para criar o primeiro produto.');
+      }
+      
+      let message = `🛍️ *PRODUTOS CADASTRADOS:*\n\n`;
+      
+      for (const product of products) {
+        const status = product.is_active ? '✅' : '❌';
+        message += `${status} *${product.name}*\n`;
+        message += `🆔 ID: ${product.product_id}\n`;
+        message += `💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}\n`;
+        message += `📝 Descrição: ${product.description || 'Não tem'}\n`;
+        message += `📦 Entrega: ${product.delivery_type === 'link' ? '🔗 Link' : '📄 Arquivo'}\n`;
+        message += `🔗 ${product.delivery_url || 'Não configurada'}\n`;
+        message += `——————————\n\n`;
+      }
+      
+      message += `\n*Comandos disponíveis:*\n`;
+      message += `➕ /novoproduto - Criar novo\n`;
+      message += `✏️ /editarproduto - Editar\n`;
+      message += `🗑️ /deletarproduto - Remover`;
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao listar produtos:', err);
+      return ctx.reply('❌ Erro ao buscar produtos.');
+    }
   });
 
   bot.action('admin_novoproduto', async (ctx) => {
-    await ctx.answerCbQuery();
-    return ctx.reply('Para criar produto, use: /novoproduto');
+    await ctx.answerCbQuery('➕ Iniciando criação...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    return ctx.reply(`➕ *CRIAR NOVO PRODUTO*
+
+Vamos criar um novo produto passo a passo.
+
+*Passo 1:* Digite o *NOME* do produto:
+
+Exemplo: Pack Premium VIP
+
+Cancelar: /cancelar`, { parse_mode: 'Markdown' });
   });
 
   bot.action('admin_setpix', async (ctx) => {
     await ctx.answerCbQuery();
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
     const currentKey = await db.getPixKey();
-    return ctx.reply(`🔑 *Chave PIX atual:* ${currentKey || 'Não configurada'}\n\nPara alterar, use: /setpix [nova_chave]`, {
-      parse_mode: 'Markdown'
-    });
+    
+    const message = `🔑 *ALTERAR CHAVE PIX*
+
+🔑 *Chave atual:* ${currentKey || 'Não configurada'}
+
+*Como alterar:*
+Digite /setpix seguido da nova chave
+
+*Exemplos:*
+• /setpix seu@email.com
+• /setpix +55 11 99988-7766
+• /setpix 11999887766
+• /setpix 12345678900
+• /setpix 6f2a2e5d-5308-4588-ad31-ee81a67807d6
+
+*Tipos aceitos:*
+✅ Email
+✅ Telefone (com ou sem formatação)
+✅ CPF/CNPJ
+✅ Chave aleatória (UUID)`;
+    
+    return ctx.reply(message, { parse_mode: 'Markdown' });
   });
 
   bot.action('admin_users', async (ctx) => {
-    await ctx.answerCbQuery();
-    return ctx.reply('Para ver usuários, use: /users');
+    await ctx.answerCbQuery('👥 Carregando usuários...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const users = await db.getRecentUsers(20);
+      
+      if (!users || users.length === 0) {
+        return ctx.reply('👥 Nenhum usuário cadastrado ainda.');
+      }
+      
+      let message = `👥 *ÚLTIMOS ${users.length} USUÁRIOS:*\n\n`;
+      
+      for (const user of users) {
+        message += `👤 ${user.first_name || 'Sem nome'}\n`;
+        message += `🆔 @${user.username || 'Sem username'}\n`;
+        message += `🔢 ID: ${user.telegram_id}\n`;
+        message += `📅 Entrou: ${new Date(user.created_at).toLocaleDateString('pt-BR')}\n`;
+        message += `——————————\n\n`;
+      }
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao buscar usuários:', err);
+      return ctx.reply('❌ Erro ao buscar usuários.');
+    }
   });
 
   bot.action('admin_broadcast', async (ctx) => {
-    await ctx.answerCbQuery();
-    return ctx.reply('Para enviar broadcast, use: /broadcast [mensagem]');
+    await ctx.answerCbQuery('📢 Modo broadcast...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    return ctx.reply(`📢 *ENVIAR MENSAGEM EM MASSA*
+
+Para enviar uma mensagem para todos os usuários, use:
+
+/broadcast [sua mensagem]
+
+*Exemplo:*
+/broadcast 🎉 Novidade! Novo produto disponível com 50% de desconto!
+
+⚠️ *Atenção:* A mensagem será enviada para TODOS os usuários cadastrados no bot.`, { parse_mode: 'Markdown' });
   });
 }
 

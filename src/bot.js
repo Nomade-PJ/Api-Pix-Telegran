@@ -77,6 +77,10 @@ function createBot(token) {
         pixPayload: charge.copiaCola
       }).catch(err => console.error('Erro ao salvar transação:', err));
 
+      // Calcular tempo de expiração (30 minutos)
+      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      
       // Enviar QR Code imediatamente
       if (charge.qrcodeBuffer) {
         return await ctx.replyWithPhoto(
@@ -89,6 +93,9 @@ function createBot(token) {
 📋 Cópia & Cola:
 \`${charge.copiaCola}\`
 
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+
 📸 Após pagar, envie o comprovante (foto) aqui.
 
 🆔 TXID: ${txid}`,
@@ -96,11 +103,19 @@ function createBot(token) {
           }
         );
       } else {
-        return await ctx.reply(`Pague R$ ${amount} na chave: ${charge.key}
-Copia & Cola:
-${charge.copiaCola}
-Envie o comprovante quando pagar.
-TXID: ${txid}`);
+        return await ctx.reply(`💰 Pague R$ ${amount} usando PIX
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+
+📸 Envie o comprovante quando pagar.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
       }
     } catch (err) {
       console.error('Erro na compra:', err.message);
@@ -117,6 +132,30 @@ TXID: ${txid}`);
         return ctx.reply('❌ Não localizei uma cobrança pendente.\n\nSe acabou de pagar, aguarde alguns segundos e tente novamente.');
       }
 
+      // Verificar se a transação está expirada (30 minutos)
+      const createdAt = new Date(transaction.created_at);
+      const now = new Date();
+      const diffMinutes = (now - createdAt) / (1000 * 60);
+      
+      if (diffMinutes > 30) {
+        // Cancelar transação expirada
+        await db.cancelTransaction(transaction.txid);
+        
+        return ctx.reply(`⏰ *Transação expirada!*
+
+❌ Esta transação ultrapassou o prazo de 30 minutos para pagamento.
+
+🔄 *Para comprar novamente:*
+1. Use o comando /start
+2. Selecione o produto desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+🆔 Transação expirada: ${transaction.txid}`, {
+          parse_mode: 'Markdown'
+        });
+      }
+
       const fileId = ctx.message.photo 
         ? ctx.message.photo.slice(-1)[0].file_id 
         : (ctx.message.document?.file_id || null);
@@ -125,8 +164,18 @@ TXID: ${txid}`);
         return ctx.reply('❌ Erro ao processar comprovante. Envie uma foto ou documento válido.');
       }
 
+      // Calcular tempo restante
+      const minutesElapsed = Math.floor(diffMinutes);
+      const minutesRemaining = 30 - minutesElapsed;
+
       // Responder usuário imediatamente (OTIMIZAÇÃO #7)
-      ctx.reply('✅ **Comprovante recebido com sucesso!**\n\nEstamos validando seu pagamento.\nVocê será notificado em breve! ⏳', {
+      ctx.reply(`✅ *Comprovante recebido com sucesso!*
+
+✅ Recebido dentro do prazo (${minutesElapsed} min)
+⏰ Tempo restante era: ${minutesRemaining} min
+
+Estamos validando seu pagamento.
+Você será notificado em breve! ⏳`, {
         parse_mode: 'Markdown'
       });
 
@@ -138,7 +187,14 @@ TXID: ${txid}`);
           if (operatorId) {
             try {
               await ctx.telegram.sendPhoto(operatorId, fileId, {
-                caption: `🔔 **NOVO COMPROVANTE**\n\n🆔 TXID: \`${transaction.txid}\`\n👤 ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})\n💰 R$ ${transaction.amount}\n\n/validar_${transaction.txid}`,
+                caption: `🔔 *NOVO COMPROVANTE*
+
+🆔 TXID: \`${transaction.txid}\`
+👤 ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+💰 R$ ${transaction.amount}
+⏰ Enviado: ${minutesElapsed} min após geração
+
+/validar_${transaction.txid}`,
                 parse_mode: 'Markdown'
               });
             } catch (err) {

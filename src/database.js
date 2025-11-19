@@ -345,6 +345,26 @@ async function markAsDelivered(txid) {
   }
 }
 
+async function cancelTransaction(txid) {
+  try {
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        status: 'expired',
+        notes: 'Transação expirada - prazo de 30 minutos ultrapassado',
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+    
+    if (error) throw error;
+    console.log('Transação cancelada por expiração:', txid);
+    return true;
+  } catch (err) {
+    console.error('Erro ao cancelar transação:', err);
+    return false;
+  }
+}
+
 // ===== ADMIN =====
 
 async function getPendingTransactions(limit = 10) {
@@ -408,6 +428,24 @@ async function getStats() {
       pendingTransactions: 0,
       totalSales: '0.00'
     };
+  }
+}
+
+// ===== USUÁRIOS =====
+
+async function getRecentUsers(limit = 20) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar usuários recentes:', err.message);
+    return [];
   }
 }
 
@@ -476,6 +514,7 @@ module.exports = {
   supabase,
   getOrCreateUser,
   isUserAdmin,
+  getRecentUsers,
   getProduct,
   getAllProducts,
   createProduct,
@@ -488,6 +527,7 @@ module.exports = {
   updateTransactionProof,
   validateTransaction,
   markAsDelivered,
+  cancelTransaction,
   getPendingTransactions,
   getStats,
   getSetting,
