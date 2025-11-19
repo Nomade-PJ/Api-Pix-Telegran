@@ -35,11 +35,20 @@ function createPixPayload(key, amount, txid) {
     "00" + gui.length.toString().padStart(2,'0') + gui +
     "01" + key.length.toString().padStart(2,'0') + key;
 
-  // Campo 62: Additional Data (com TXID)
-  const txidContent = "01" + txid.length.toString().padStart(2,'0') + txid;
+  // Campo 62: Additional Data Field Template (com TXID)
+  // Sub-campo 05 = Reference Label (TXID)
+  const txidContent = "05" + txid.length.toString().padStart(2,'0') + txid;
   const additionalData = "62" + txidContent.length.toString().padStart(2,'0') + txidContent;
   
-  // Montar payload completo com campos obrigatórios (fix #3)
+  // Campo 59: Merchant Name (obrigatório)
+  const merchantName = "PAGAMENTO";
+  const field59 = "59" + merchantName.length.toString().padStart(2,'0') + merchantName;
+  
+  // Campo 60: Merchant City (obrigatório)
+  const merchantCity = "SAO PAULO";
+  const field60 = "60" + merchantCity.length.toString().padStart(2,'0') + merchantCity;
+  
+  // Montar payload completo com campos obrigatórios
   const payload =
     "000201" +  // ID 00: Payload Format Indicator
     "26" + merchantAccountInfo.length.toString().padStart(2,'0') + merchantAccountInfo +  // ID 26: Merchant Account
@@ -47,8 +56,8 @@ function createPixPayload(key, amount, txid) {
     "5303986" +  // ID 53: Transaction Currency (BRL)
     "54" + amount.length.toString().padStart(2,'0') + amount +  // ID 54: Transaction Amount
     "5802BR" +  // ID 58: Country Code
-    "5901N" +  // ID 59: Merchant Name (obrigatório - fix #3)
-    "6001C" +  // ID 60: Merchant City (obrigatório - fix #3)
+    field59 +  // ID 59: Merchant Name
+    field60 +  // ID 60: Merchant City
     additionalData;  // ID 62: Additional Data Field Template
 
   // Adicionar placeholder para CRC
@@ -77,6 +86,10 @@ async function createManualCharge({ amount = "10.00", productId }) {
     
     console.log('PIX Key:', key);
 
+    // Formatar valor com 2 casas decimais (CORREÇÃO CRÍTICA)
+    const amountFormatted = parseFloat(amount).toFixed(2);
+    console.log('Valor formatado:', amountFormatted);
+
     // Gerar txid (máximo 25 caracteres)
     // Formato: M + timestamp últimos 8 dígitos + random 4 caracteres
     const timestamp = Date.now().toString().slice(-8);
@@ -84,12 +97,12 @@ async function createManualCharge({ amount = "10.00", productId }) {
     const txid = `M${timestamp}${random}`;
     console.log('TXID gerado:', txid, '- Tamanho:', txid.length);
 
-    // Criar payload PIX (BR Code)
+    // Criar payload PIX (BR Code) com valor formatado
     console.log('Criando payload PIX...');
     console.log('Chave PIX usada:', key);
-    console.log('Valor:', amount);
+    console.log('Valor:', amountFormatted);
     console.log('TXID:', txid);
-    const copiaCola = createPixPayload(key, amount, txid);
+    const copiaCola = createPixPayload(key, amountFormatted, txid);
     console.log('Payload PIX COMPLETO:', copiaCola);
     console.log('Tamanho do payload:', copiaCola.length);
 
