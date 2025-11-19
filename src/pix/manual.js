@@ -36,12 +36,12 @@ function createPixPayload(key, amount, txid) {
   const txidContent = "05" + txid.length.toString().padStart(2,'0') + txid;
   const additionalData = "62" + txidContent.length.toString().padStart(2,'0') + txidContent;
   
-  // Campo 59: Merchant Name (obrigatório)
-  const merchantName = "PAGAMENTO";
+  // Campo 59: Merchant Name (obrigatório) - sem acentos/caracteres especiais
+  const merchantName = "LOJA";
   const field59 = "59" + merchantName.length.toString().padStart(2,'0') + merchantName;
   
-  // Campo 60: Merchant City (obrigatório)
-  const merchantCity = "SAO PAULO";
+  // Campo 60: Merchant City (obrigatório) - sem espaços/acentos
+  const merchantCity = "SAOPAULO";
   const field60 = "60" + merchantCity.length.toString().padStart(2,'0') + merchantCity;
   
   // Montar payload completo com campos obrigatórios
