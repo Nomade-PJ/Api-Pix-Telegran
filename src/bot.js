@@ -10,53 +10,31 @@ function createBot(token) {
 
   // Registrar handler do /start PRIMEIRO (antes dos comandos admin)
   bot.start(async (ctx) => {
-    console.log('=== HANDLER /start CHAMADO ===');
-    console.log('Chat ID:', ctx.chat.id);
-    console.log('User ID:', ctx.from.id);
     try {
-      console.log('Comando /start recebido de:', ctx.from.id);
-      
-      // Salvar/atualizar usuário no banco
-      await db.getOrCreateUser(ctx.from);
-      console.log('Usuário salvo/atualizado no banco');
-      
-      // Buscar produtos ativos do banco
-      const products = await db.getAllProducts();
-      console.log('Produtos encontrados:', products.length);
-      console.log('Produtos:', JSON.stringify(products.map(p => ({ id: p.product_id, name: p.name }))));
+      // Paralelizar queries (OTIMIZAÇÃO #4)
+      const [user, products] = await Promise.all([
+        db.getOrCreateUser(ctx.from),
+        db.getAllProducts()
+      ]);
       
       if (products.length === 0) {
-        console.log('Nenhum produto encontrado, enviando mensagem de aviso');
         return ctx.reply('🚧 Nenhum produto disponível no momento. Volte mais tarde!');
       }
       
-      // Gerar botões dinamicamente
+      // Gerar botões dinamicamente (sem logs pesados)
       const buttons = products.map(product => {
         const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
         const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
-        console.log('Criando botão:', buttonText, 'para produto:', product.product_id);
-        return [Markup.button.callback(
-          buttonText,
-          `buy:${product.product_id}`
-        )];
+        return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
       });
       
-      // Adicionar botão do grupo
       buttons.push([Markup.button.url('📢 Entrar no grupo', 'https://t.me/seugrupo')]);
       
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
-      console.log('Enviando mensagem com', buttons.length, 'botões');
       
-      const keyboard = Markup.inlineKeyboard(buttons);
-      console.log('Keyboard criado:', JSON.stringify(keyboard, null, 2));
-      
-      const result = await ctx.reply(text, keyboard);
-      
-      console.log('Mensagem enviada com sucesso:', result.message_id);
-      return result;
+      return await ctx.reply(text, Markup.inlineKeyboard(buttons));
     } catch (err) {
-      console.error('Erro no /start:', err);
-      console.error('Stack:', err.stack);
+      console.error('Erro no /start:', err.message);
       return ctx.reply('❌ Erro ao carregar menu. Tente novamente.');
     }
   });
@@ -66,45 +44,42 @@ function createBot(token) {
 
   bot.action(/buy:(.+)/, async (ctx) => {
     try {
-      console.log('Botão de compra clicado!');
       const productId = ctx.match[1];
-      const chatId = ctx.chat.id;
-      console.log('Product ID:', productId, 'Chat ID:', chatId);
       
-      // Buscar produto no banco de dados
-      const product = await db.getProduct(productId);
+      // OTIMIZAÇÃO #1: Responder imediatamente ao clique (feedback visual instantâneo)
+      await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
+      
+      // OTIMIZAÇÃO #4: Paralelizar busca de produto e usuário
+      const [product, user] = await Promise.all([
+        db.getProduct(productId),
+        db.getOrCreateUser(ctx.from)
+      ]);
+      
       if (!product) {
         return ctx.reply('❌ Produto não encontrado.');
       }
       
       const amount = product.price.toString();
-      console.log('Valor do produto:', amount);
 
-      // Criar usuário se não existe
-      const user = await db.getOrCreateUser(ctx.from);
-
-      // Criar cobrança PIX
-      console.log('Chamando createManualCharge...');
+      // Gerar cobrança PIX e salvar transação em paralelo
       const resp = await manualPix.createManualCharge({ amount, productId });
-      console.log('Resposta recebida:', resp);
       const charge = resp.charge;
-
-      // Salvar transação no banco de dados
       const txid = charge.txid;
-      await db.createTransaction({
+      
+      // Salvar no banco (não precisa aguardar para enviar QR Code)
+      db.createTransaction({
         txid,
         userId: user.id,
-        telegramId: chatId,
+        telegramId: ctx.chat.id,
         productId,
         amount,
         pixKey: charge.key,
         pixPayload: charge.copiaCola
-      });
+      }).catch(err => console.error('Erro ao salvar transação:', err));
 
-      // Enviar QRCode + copia&cola e instruções
+      // Enviar QR Code imediatamente
       if (charge.qrcodeBuffer) {
-        console.log('Enviando QR Code via buffer...');
-        await ctx.replyWithPhoto(
+        return await ctx.replyWithPhoto(
           { source: charge.qrcodeBuffer },
           {
             caption: `💰 Pague R$ ${amount} usando PIX
@@ -120,33 +95,28 @@ function createBot(token) {
             parse_mode: 'Markdown'
           }
         );
-        console.log('QR Code enviado com sucesso');
       } else {
-        await ctx.reply(`Pague R$ ${amount} na chave: ${charge.key}
+        return await ctx.reply(`Pague R$ ${amount} na chave: ${charge.key}
 Copia & Cola:
 ${charge.copiaCola}
 Envie o comprovante quando pagar.
 TXID: ${txid}`);
       }
     } catch (err) {
-      console.error('Error on buy:', err);
-      await ctx.reply('Ocorreu um erro ao gerar a cobrança. Tente novamente mais tarde.');
+      console.error('Erro na compra:', err.message);
+      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
     }
   });
 
   // Receber comprovante (foto ou documento)
   bot.on(['photo', 'document'], async (ctx) => {
     try {
-      const chatId = ctx.chat.id;
-      
-      // Buscar última transação pendente do usuário no banco de dados
-      const transaction = await db.getLastPendingTransaction(chatId);
+      const transaction = await db.getLastPendingTransaction(ctx.chat.id);
       
       if (!transaction) {
         return ctx.reply('❌ Não localizei uma cobrança pendente.\n\nSe acabou de pagar, aguarde alguns segundos e tente novamente.');
       }
 
-      // Pegar fileId do comprovante
       const fileId = ctx.message.photo 
         ? ctx.message.photo.slice(-1)[0].file_id 
         : (ctx.message.document?.file_id || null);
@@ -155,28 +125,31 @@ TXID: ${txid}`);
         return ctx.reply('❌ Erro ao processar comprovante. Envie uma foto ou documento válido.');
       }
 
-      // Salvar comprovante no banco de dados
-      await db.updateTransactionProof(transaction.txid, fileId);
-
-      // Notificar operador
-      const operatorId = process.env.OPERATOR_CHAT_ID;
-      if (operatorId) {
-        try {
-          await ctx.telegram.sendPhoto(operatorId, fileId, {
-            caption: `🔔 **NOVO COMPROVANTE RECEBIDO**\n\n🆔 TXID: \`${transaction.txid}\`\n👤 Cliente: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})\n💰 Valor: R$ ${transaction.amount}\n\n**Para validar:**\n/validar_${transaction.txid}`,
-            parse_mode: 'Markdown'
-          });
-        } catch (notifyErr) {
-          console.error('Erro ao notificar operador:', notifyErr);
-        }
-      }
-
-      await ctx.reply('✅ **Comprovante recebido com sucesso!**\n\nEstamos validando seu pagamento.\nVocê será notificado em breve! ⏳', {
+      // Responder usuário imediatamente (OTIMIZAÇÃO #7)
+      ctx.reply('✅ **Comprovante recebido com sucesso!**\n\nEstamos validando seu pagamento.\nVocê será notificado em breve! ⏳', {
         parse_mode: 'Markdown'
       });
+
+      // Salvar e notificar em paralelo (não bloqueia resposta ao usuário)
+      await Promise.all([
+        db.updateTransactionProof(transaction.txid, fileId),
+        (async () => {
+          const operatorId = process.env.OPERATOR_CHAT_ID;
+          if (operatorId) {
+            try {
+              await ctx.telegram.sendPhoto(operatorId, fileId, {
+                caption: `🔔 **NOVO COMPROVANTE**\n\n🆔 TXID: \`${transaction.txid}\`\n👤 ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})\n💰 R$ ${transaction.amount}\n\n/validar_${transaction.txid}`,
+                parse_mode: 'Markdown'
+              });
+            } catch (err) {
+              console.error('Erro notificar operador:', err.message);
+            }
+          }
+        })()
+      ]);
     } catch (err) {
-      console.error('Error receiving proof:', err);
-      await ctx.reply('❌ Erro ao receber comprovante. Tente novamente.');
+      console.error('Erro receber comprovante:', err.message);
+      await ctx.reply('❌ Erro ao processar. Tente novamente.');
     }
   });
 

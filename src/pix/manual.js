@@ -22,12 +22,7 @@ function crc16(str) {
 // Gera o payload PIX correto (BR Code)
 // Corrigido conforme especificação EMV/BCB
 function createPixPayload(key, amount, txid) {
-  console.log('=== CRIANDO PAYLOAD PIX (VERSÃO CORRIGIDA) ===');
-  console.log('Chave:', key);
-  console.log('Valor:', amount);
-  console.log('TXID:', txid);
-
-  // GUI CORRETO em MAIÚSCULAS (fix #1)
+  // GUI CORRETO em MAIÚSCULAS
   const gui = "BR.GOV.BCB.PIX";
 
   // Merchant Account Information (ID 26) - corrigido
@@ -63,70 +58,51 @@ function createPixPayload(key, amount, txid) {
   // Adicionar placeholder para CRC
   const parcial = payload + "6304";
   
-  // Calcular CRC sobre payload completo (fix #5)
+  // Calcular CRC sobre payload completo
   const crc = crc16(parcial);
 
-  const payloadFinal = parcial + crc;
-  
-  console.log('PAYLOAD FINAL (CORRIGIDO):', payloadFinal);
-  console.log('Tamanho:', payloadFinal.length);
-  
-  return payloadFinal;
+  return parcial + crc;
 }
 
 async function createManualCharge({ amount = "10.00", productId }) {
   try {
-    console.log('createManualCharge chamado:', { amount, productId });
-    
     const key = process.env.MY_PIX_KEY;
     if (!key) {
       console.error('MY_PIX_KEY não configurada!');
       throw new Error('MY_PIX_KEY não configurada.');
     }
-    
-    console.log('PIX Key:', key);
 
     // Formatar valor com 2 casas decimais (CORREÇÃO CRÍTICA)
     const amountFormatted = parseFloat(amount).toFixed(2);
-    console.log('Valor formatado:', amountFormatted);
 
     // Gerar txid (máximo 25 caracteres)
     // Formato: M + timestamp últimos 8 dígitos + random 4 caracteres
     const timestamp = Date.now().toString().slice(-8);
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
     const txid = `M${timestamp}${random}`;
-    console.log('TXID gerado:', txid, '- Tamanho:', txid.length);
 
     // Criar payload PIX (BR Code) com valor formatado
-    console.log('Criando payload PIX...');
-    console.log('Chave PIX usada:', key);
-    console.log('Valor:', amountFormatted);
-    console.log('TXID:', txid);
     const copiaCola = createPixPayload(key, amountFormatted, txid);
-    console.log('Payload PIX COMPLETO:', copiaCola);
-    console.log('Tamanho do payload:', copiaCola.length);
 
     // Gerar QR code como buffer (PNG)
-    console.log('Gerando QR Code...');
     const qrcodeBuffer = await QRCode.toBuffer(copiaCola, {
       type: 'png',
       width: 300,
       margin: 1
     });
-    console.log('QR Code gerado com sucesso');
 
     return {
       mode: 'manual',
       charge: {
         txid,
         key,
-        amount: parseFloat(amount).toFixed(2),
+        amount: amountFormatted,
         copiaCola,
         qrcodeBuffer
       }
     };
   } catch (error) {
-    console.error('Erro em createManualCharge:', error);
+    console.error('Erro createManualCharge:', error.message);
     throw error;
   }
 }

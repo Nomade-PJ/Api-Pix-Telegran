@@ -39,19 +39,29 @@ async function getOrCreateUser(telegramUser) {
     
     if (error) throw error;
     
-    // Atualizar informações se mudaram
-    await supabase
-      .from('users')
-      .update({
-        username,
-        first_name,
-        updated_at: new Date().toISOString()
-      })
-      .eq('telegram_id', id);
+    // OTIMIZAÇÃO #3: Só atualizar se realmente mudou algo
+    const needsUpdate = 
+      user.username !== username || 
+      user.first_name !== first_name;
+    
+    if (needsUpdate) {
+      await supabase
+        .from('users')
+        .update({
+          username,
+          first_name,
+          updated_at: new Date().toISOString()
+        })
+        .eq('telegram_id', id);
+      
+      // Atualizar objeto local
+      user.username = username;
+      user.first_name = first_name;
+    }
     
     return user;
   } catch (err) {
-    console.error('Erro ao get/create user:', err);
+    console.error('Erro get/create user:', err.message);
     throw err;
   }
 }
