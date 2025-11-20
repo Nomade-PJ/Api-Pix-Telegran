@@ -4,6 +4,7 @@ const manualPix = require('./pix/manual');
 const deliver = require('./deliver');
 const db = require('./database');
 const admin = require('./admin');
+const proofAnalyzer = require('./proofAnalyzer');
 
 function createBot(token) {
   const bot = new Telegraf(token);
@@ -12,13 +13,14 @@ function createBot(token) {
   bot.start(async (ctx) => {
     try {
       // Paralelizar queries (OTIMIZAÇÃO #4)
-      const [user, products] = await Promise.all([
+      const [user, products, groups] = await Promise.all([
         db.getOrCreateUser(ctx.from),
-        db.getAllProducts()
+        db.getAllProducts(),
+        db.getAllGroups()
       ]);
       
-      if (products.length === 0) {
-        return ctx.reply('🚧 Nenhum produto disponível no momento. Volte mais tarde!');
+      if (products.length === 0 && groups.length === 0) {
+        return ctx.reply('🚧 Nenhum produto ou grupo disponível no momento. Volte mais tarde!');
       }
       
       // Gerar botões dinamicamente (sem logs pesados)
@@ -28,7 +30,12 @@ function createBot(token) {
         return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
       });
       
-      buttons.push([Markup.button.url('📢 Entrar no grupo', 'https://t.me/seugrupo')]);
+      // Adicionar botão de grupo se houver grupos ativos
+      const activeGroups = groups.filter(g => g.is_active);
+      if (activeGroups.length > 0) {
+        const group = activeGroups[0]; // Usar o primeiro grupo ativo
+        buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
+      }
       
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
       
@@ -223,41 +230,155 @@ Esta transação foi cancelada automaticamente.
       const minutesElapsed = Math.floor(diffMinutes);
       const minutesRemaining = 30 - minutesElapsed;
 
-      // Responder usuário imediatamente (OTIMIZAÇÃO #7)
-      ctx.reply(`✅ *Comprovante recebido com sucesso!*
-
-✅ Recebido dentro do prazo (${minutesElapsed} min)
-⏰ Tempo restante era: ${minutesRemaining} min
-
-Estamos validando seu pagamento.
-Você será notificado em breve! ⏳`, {
-        parse_mode: 'Markdown'
-      });
-
-      // Salvar e notificar em paralelo (não bloqueia resposta ao usuário)
-      await Promise.all([
-        db.updateTransactionProof(transaction.txid, fileId),
-        (async () => {
-          const operatorId = process.env.OPERATOR_CHAT_ID;
-          if (operatorId) {
-            try {
-              await ctx.telegram.sendPhoto(operatorId, fileId, {
-                caption: `🔔 *NOVO COMPROVANTE*
-
-🆔 TXID: \`${transaction.txid}\`
-👤 ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
-💰 R$ ${transaction.amount}
-⏰ Enviado: ${minutesElapsed} min após geração
-
-/validar_${transaction.txid}`,
-                parse_mode: 'Markdown'
+      // 🆕 ANÁLISE AUTOMÁTICA DE COMPROVANTE
+      await ctx.reply('🔍 *Analisando comprovante automaticamente...*', { parse_mode: 'Markdown' });
+      
+      // Salvar comprovante primeiro
+      await db.updateTransactionProof(transaction.txid, fileId);
+      
+      // Obter URL do arquivo para análise
+      let fileUrl = null;
+      try {
+        const file = await ctx.telegram.getFile(fileId);
+        fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      } catch (err) {
+        console.error('Erro ao obter URL do arquivo:', err);
+      }
+      
+      // Analisar com IA (se URL disponível)
+      let analysis = null;
+      if (fileUrl) {
+        try {
+          analysis = await proofAnalyzer.analyzeProof(
+            fileUrl,
+            transaction.amount,
+            transaction.pix_key
+          );
+        } catch (err) {
+          console.error('Erro na análise automática:', err);
+        }
+      }
+      
+      // Processar resultado da análise
+      if (analysis && analysis.isValid === true && analysis.confidence >= 80) {
+        // ✅ APROVAÇÃO AUTOMÁTICA
+        try {
+          await db.validateTransaction(transaction.txid, transaction.user_id);
+          
+          // Verificar se é assinatura de grupo
+          if (transaction.product_id && transaction.product_id.startsWith('group_')) {
+            const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+            const group = await db.getGroupById(groupTelegramId);
+            
+            if (group) {
+              // Adicionar membro ao grupo (groupId é o UUID da tabela groups)
+              await db.addGroupMember({
+                telegramId: ctx.chat.id,
+                userId: transaction.user_id,
+                groupId: group.id, // UUID da tabela groups
+                days: group.subscription_days
               });
-            } catch (err) {
-              console.error('Erro notificar operador:', err.message);
+              
+              // Adicionar ao grupo do Telegram
+              try {
+                await ctx.telegram.unbanChatMember(group.group_id, ctx.chat.id, { only_if_banned: true });
+                await ctx.telegram.sendMessage(ctx.chat.id, `✅ *ASSINATURA APROVADA AUTOMATICAMENTE!*
+
+🤖 Análise de IA: ${analysis.confidence}% de confiança
+💰 Valor confirmado: ${analysis.details.amount || transaction.amount}
+
+👥 *Grupo:* ${group.group_name}
+📅 *Acesso válido por:* ${group.subscription_days} dias
+🔗 *Link:* ${group.group_link}
+
+✅ Você foi adicionado ao grupo!
+
+🆔 TXID: ${transaction.txid}`, {
+                  parse_mode: 'Markdown'
+                });
+              } catch (err) {
+                console.error('Erro ao adicionar ao grupo:', err);
+                await ctx.reply(`✅ *PAGAMENTO APROVADO!*
+
+⚠️ Erro ao adicionar ao grupo automaticamente.
+Entre manualmente: ${group.group_link}
+
+🆔 TXID: ${transaction.txid}`, {
+                  parse_mode: 'Markdown'
+                });
+              }
+              
+              await db.markAsDelivered(transaction.txid);
+              return;
             }
           }
-        })()
-      ]);
+          
+          // Entregar produto normal
+          const product = await db.getProduct(transaction.product_id);
+          if (product && product.delivery_url) {
+            await deliver.deliverByLink(ctx.chat.id, product.delivery_url, `✅ *Produto entregue!*\n\n${product.delivery_url}`);
+          }
+          
+          await db.markAsDelivered(transaction.txid);
+          
+          return ctx.reply(`✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+
+🤖 Análise de IA: ${analysis.confidence}% de confiança
+💰 Valor confirmado: ${analysis.details.amount || transaction.amount}
+✅ Produto entregue com sucesso!
+
+🆔 TXID: ${transaction.txid}`, {
+            parse_mode: 'Markdown'
+          });
+        } catch (err) {
+          console.error('Erro ao aprovar automaticamente:', err);
+        }
+      } else if (analysis && analysis.isValid === false) {
+        // ❌ REJEIÇÃO AUTOMÁTICA
+        await db.cancelTransaction(transaction.txid);
+        
+        return ctx.reply(`❌ *COMPROVANTE INVÁLIDO*
+
+🤖 Análise automática detectou problemas:
+${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado'}
+
+🔄 *O que fazer:*
+1. Verifique se pagou o valor correto (R$ ${transaction.amount})
+2. Verifique se pagou para a chave correta
+3. Tente enviar outro comprovante
+4. Ou faça uma nova compra: /start
+
+🆔 TXID: ${transaction.txid}`, {
+          parse_mode: 'Markdown'
+        });
+      } else {
+        // ⚠️ VALIDAÇÃO MANUAL NECESSÁRIA
+        await ctx.reply(`⚠️ *Comprovante recebido!*
+
+${analysis ? `🤖 A análise automática precisa de confirmação manual.\n📊 Confiança da IA: ${analysis.confidence}%\n` : '🤖 Análise automática não disponível.\n'}⏳ Um admin irá validar em breve.
+
+🆔 TXID: ${transaction.txid}`, {
+          parse_mode: 'Markdown'
+        });
+        
+        // Notificar admin
+        const operatorId = process.env.OPERATOR_CHAT_ID;
+        if (operatorId) {
+          try {
+            await ctx.telegram.sendPhoto(operatorId, fileId, {
+              caption: `🔔 *COMPROVANTE PARA VALIDAÇÃO MANUAL*
+
+${analysis ? `⚠️ IA não conseguiu validar automaticamente\n📊 Confiança: ${analysis.confidence}%\n` : '⚠️ Análise automática não disponível\n'}💰 Valor: R$ ${transaction.amount}
+👤 ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+
+/validar_${transaction.txid}`,
+              parse_mode: 'Markdown'
+            });
+          } catch (err) {
+            console.error('Erro notificar operador:', err.message);
+          }
+        }
+      }
     } catch (err) {
       console.error('Erro receber comprovante:', err.message);
       await ctx.reply('❌ Erro ao processar. Tente novamente.');
@@ -266,6 +387,155 @@ Você será notificado em breve! ⏳`, {
 
   // Endpoint auxiliar para trigger delivery via HTTP (usado por operador/n8n)
   // NOTA: a chamada para envio final será feita via api/trigger-delivery.js
+  // ===== ASSINATURA DE GRUPO =====
+  bot.action(/subscribe:(.+)/, async (ctx) => {
+    try {
+      const groupId = parseInt(ctx.match[1]);
+      
+      await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
+      
+      const group = await db.getGroupById(groupId);
+      
+      if (!group || !group.is_active) {
+        return ctx.reply('❌ Grupo não encontrado ou inativo.');
+      }
+      
+      // Verificar se já é membro ativo
+      const existingMember = await db.getGroupMember(ctx.from.id, group.id);
+      if (existingMember) {
+        const expiresAt = new Date(existingMember.expires_at);
+        const now = new Date();
+        if (expiresAt > now) {
+          return ctx.reply(`✅ *Você já é membro!*
+
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+
+🔗 Acesse: ${group.group_link}`, {
+            parse_mode: 'Markdown'
+          });
+        }
+      }
+      
+      const [user] = await Promise.all([
+        db.getOrCreateUser(ctx.from)
+      ]);
+      
+      const amount = group.subscription_price.toString();
+      const productId = `group_${group.group_id}`;
+      
+      // Gerar cobrança PIX
+      const resp = await manualPix.createManualCharge({ amount, productId });
+      const charge = resp.charge;
+      const txid = charge.txid;
+      
+      // Salvar transação com referência ao grupo
+      await db.createTransaction({
+        txid,
+        userId: user.id,
+        telegramId: ctx.chat.id,
+        productId,
+        amount,
+        pixKey: charge.key,
+        pixPayload: charge.copiaCola
+      }).catch(err => console.error('Erro ao salvar transação:', err));
+      
+      // Calcular tempo de expiração (30 minutos)
+      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      
+      // Enviar QR Code
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: `👥 *ASSINATURA DE GRUPO*
+
+💰 Pague R$ ${amount} para acessar o grupo
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+📅 *Duração:* ${group.subscription_days} dias de acesso
+
+📸 Após pagar, envie o comprovante (foto) aqui.
+
+🆔 TXID: ${txid}`,
+            parse_mode: 'Markdown'
+          }
+        );
+      }
+    } catch (err) {
+      console.error('Erro na assinatura:', err.message);
+      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
+    }
+  });
+
+  // ===== RENOVAR ASSINATURA =====
+  bot.command('renovar', async (ctx) => {
+    try {
+      const user = await db.getOrCreateUser(ctx.from);
+      const groups = await db.getAllGroups();
+      const activeGroups = groups.filter(g => g.is_active);
+      
+      if (activeGroups.length === 0) {
+        return ctx.reply('📦 Nenhum grupo disponível para renovação.');
+      }
+      
+      // Verificar se tem assinatura ativa
+      let hasActiveSubscription = false;
+      for (const group of activeGroups) {
+        const member = await db.getGroupMember(ctx.chat.id, group.id);
+        if (member) {
+          const expiresAt = new Date(member.expires_at);
+          const now = new Date();
+          if (expiresAt > now) {
+            hasActiveSubscription = true;
+            const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+            
+            return ctx.reply(`✅ *Você já tem assinatura ativa!*
+
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+⏰ Faltam: ${daysLeft} dias
+
+🔗 Acesse: ${group.group_link}`, {
+              parse_mode: 'Markdown'
+            });
+          }
+        }
+      }
+      
+      // Se não tem assinatura ativa, mostrar opção para renovar
+      const group = activeGroups[0];
+      return ctx.reply(`🔄 *RENOVAR ASSINATURA*
+
+👥 Grupo: ${group.group_name}
+💰 Preço: R$ ${group.subscription_price.toFixed(2)}/mês
+📅 Duração: ${group.subscription_days} dias
+
+Clique no botão abaixo para renovar:`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `👥 Renovar Assinatura (R$${group.subscription_price.toFixed(2)})`, callback_data: `subscribe:${group.group_id}` }]
+          ]
+        }
+      });
+    } catch (err) {
+      console.error('Erro no comando renovar:', err);
+      return ctx.reply('❌ Erro ao processar renovação.');
+    }
+  });
+
+  // Integrar controle de grupos
+  const groupControl = require('./groupControl');
+  groupControl.startGroupControl(bot);
+
   return bot;
 }
 

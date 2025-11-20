@@ -37,10 +37,11 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
         ],
         [
-          Markup.button.callback('🔑 Alterar PIX', 'admin_setpix'),
-          Markup.button.callback('👥 Usuários', 'admin_users')
+          Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),
+          Markup.button.callback('🔑 Alterar PIX', 'admin_setpix')
         ],
         [
+          Markup.button.callback('👤 Usuários', 'admin_users'),
           Markup.button.callback('📢 Broadcast', 'admin_broadcast')
         ],
         [
@@ -690,6 +691,112 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
 
 Use /produtos para ver as alterações.`, { parse_mode: 'Markdown' });
       }
+
+      // ===== CRIAR GRUPO =====
+      if (session.type === 'create_group') {
+        if (session.step === 'group_id') {
+          const groupId = parseInt(ctx.message.text.trim());
+          if (isNaN(groupId)) {
+            return ctx.reply('❌ ID inválido. Digite apenas números (ex: -1001234567890)');
+          }
+          session.data.groupId = groupId;
+          session.step = 'group_name';
+          return ctx.reply(`✅ ID: *${groupId}*
+
+*Passo 2/5:* Digite o *nome do grupo*:
+
+Exemplo: Grupo Premium VIP
+
+_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'group_name') {
+          session.data.groupName = ctx.message.text.trim();
+          session.step = 'group_link';
+          return ctx.reply(`✅ Nome: *${session.data.groupName}*
+
+*Passo 3/5:* Envie o *link do grupo*:
+
+Exemplo: https://t.me/seugrupo
+
+_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'group_link') {
+          const link = ctx.message.text.trim();
+          if (!link.startsWith('http')) {
+            return ctx.reply('❌ Link inválido. Deve começar com http:// ou https://');
+          }
+          session.data.groupLink = link;
+          session.step = 'price';
+          return ctx.reply(`✅ Link: *${link}*
+
+*Passo 4/5:* Digite o *preço da assinatura* (mensal):
+
+Exemplo: 30.00 ou 50
+
+_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'price') {
+          const price = parseFloat(ctx.message.text.replace(',', '.'));
+          if (isNaN(price) || price <= 0) {
+            return ctx.reply('❌ Preço inválido. Digite apenas números (ex: 30.00)');
+          }
+          session.data.price = price;
+          session.step = 'days';
+          return ctx.reply(`✅ Preço: *R$ ${price.toFixed(2)}/mês*
+
+*Passo 5/5:* Digite a *duração da assinatura* (em dias):
+
+Exemplo: 30 (para 30 dias)
+
+_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'days') {
+          const days = parseInt(ctx.message.text.trim());
+          if (isNaN(days) || days <= 0) {
+            return ctx.reply('❌ Número de dias inválido. Digite apenas números (ex: 30)');
+          }
+          session.data.days = days;
+          
+          // Criar grupo
+          try {
+            await db.createGroup({
+              groupId: session.data.groupId,
+              groupName: session.data.groupName,
+              groupLink: session.data.groupLink,
+              price: session.data.price,
+              days: session.data.days
+            });
+            
+            delete global._SESSIONS[ctx.from.id];
+            
+            return ctx.reply(`🎉 *GRUPO CADASTRADO COM SUCESSO!*
+
+👥 *Nome:* ${session.data.groupName}
+🆔 *ID:* ${session.data.groupId}
+🔗 *Link:* ${session.data.groupLink}
+💰 *Preço:* R$ ${session.data.price.toFixed(2)}/mês
+📅 *Duração:* ${session.data.days} dias
+
+✅ O grupo está pronto para receber assinaturas!
+
+⚠️ *IMPORTANTE:*
+1. Adicione o bot ao grupo como administrador
+2. Dê permissão para banir/remover membros
+3. O bot controlará automaticamente as assinaturas
+
+Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
+            
+          } catch (err) {
+            delete global._SESSIONS[ctx.from.id];
+            console.error('Erro ao criar grupo:', err);
+            return ctx.reply(`❌ Erro ao criar grupo: ${err.message}`);
+          }
+        }
+      }
       
     } catch (err) {
       console.error('Erro no handler de texto:', err);
@@ -1025,6 +1132,198 @@ Para enviar uma mensagem para todos os usuários, use:
 /broadcast 🎉 Novidade! Novo produto disponível com 50% de desconto!
 
 ⚠️ *Atenção:* A mensagem será enviada para TODOS os usuários cadastrados no bot.`, { parse_mode: 'Markdown' });
+  });
+
+  // ===== GERENCIAR GRUPOS =====
+  bot.action('admin_groups', async (ctx) => {
+    await ctx.answerCbQuery('👥 Carregando grupos...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const groups = await db.getAllGroups();
+      
+      let message = `👥 *GERENCIAR GRUPOS*
+
+*Grupos cadastrados:* ${groups.length}
+
+`;
+
+      if (groups.length === 0) {
+        message += `📦 Nenhum grupo cadastrado ainda.
+
+*Para cadastrar:*
+➕ /novogrupo - Cadastrar novo grupo`;
+      } else {
+        for (const group of groups) {
+          const status = group.is_active ? '✅' : '❌';
+          message += `${status} *${group.group_name || 'Sem nome'}*
+🆔 ID: ${group.group_id}
+💰 Preço: R$ ${group.subscription_price}/mês
+📅 Dias: ${group.subscription_days}
+🔗 ${group.group_link}
+──────────────
+
+`;
+        }
+        
+        message += `*Comandos:*
+➕ /novogrupo - Cadastrar grupo
+✏️ /editargrupo - Editar grupo
+🗑️ /deletargrupo - Remover grupo`;
+      }
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao listar grupos:', err);
+      return ctx.reply('❌ Erro ao buscar grupos.');
+    }
+  });
+
+  bot.command('novogrupo', async (ctx) => {
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+    
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'create_group',
+      step: 'group_id',
+      data: {}
+    };
+    
+    return ctx.reply(`➕ *CADASTRAR NOVO GRUPO*
+
+*Passo 1/5:* Envie o *ID do grupo*
+
+📝 *Como obter o ID:*
+1. Adicione o bot @userinfobot ao grupo
+2. Copie o ID que aparece (ex: -1001234567890)
+3. Cole aqui
+
+_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+  });
+
+  bot.command('editargrupo', async (ctx) => {
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+    
+    const groups = await db.getAllGroups();
+    
+    if (groups.length === 0) {
+      return ctx.reply('📦 Nenhum grupo cadastrado.\n\nUse /novogrupo para criar o primeiro.');
+    }
+    
+    let message = `✏️ *EDITAR GRUPO*
+
+Digite o ID do grupo que deseja editar:
+
+`;
+    
+    for (const group of groups) {
+      message += `• ${group.group_id} - ${group.group_name || 'Sem nome'}\n`;
+    }
+    
+    message += `\nExemplo: /edit_${groups[0].group_id}\nCancelar: /cancelar`;
+    
+    return ctx.reply(message, { parse_mode: 'Markdown' });
+  });
+
+  bot.command('deletargrupo', async (ctx) => {
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+    
+    const groups = await db.getAllGroups();
+    
+    if (groups.length === 0) {
+      return ctx.reply('📦 Nenhum grupo para remover.');
+    }
+    
+    let message = `🗑️ *DELETAR GRUPO*
+
+⚠️ *ATENÇÃO:* Isso deletará permanentemente o grupo e todas as assinaturas associadas!
+
+Digite o ID do grupo:
+
+`;
+    
+    for (const group of groups) {
+      message += `• ${group.group_id} - ${group.group_name || 'Sem nome'}\n`;
+    }
+    
+    message += `\nExemplo: /delete_group_${groups[0].group_id}\nCancelar: /cancelar`;
+    
+    return ctx.reply(message, { parse_mode: 'Markdown' });
+  });
+
+  // Handler para /edit_[groupId]
+  bot.hears(/^\/edit_(-?\d+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const groupId = parseInt(ctx.match[1]);
+      const group = await db.getGroupById(groupId);
+      
+      if (!group) {
+        return ctx.reply('❌ Grupo não encontrado.');
+      }
+      
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'edit_group',
+        step: 'field',
+        data: { groupId }
+      };
+      
+      return ctx.reply(`✏️ *EDITAR GRUPO*
+
+*Grupo:* ${group.group_name || 'Sem nome'}
+🆔 ID: ${group.group_id}
+
+*O que deseja editar?*
+
+1️⃣ /edit_group_name - Nome
+2️⃣ /edit_group_link - Link
+3️⃣ /edit_group_price - Preço
+4️⃣ /edit_group_days - Dias de assinatura
+5️⃣ /edit_group_status - Ativar/Desativar
+
+_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao editar grupo:', err);
+      return ctx.reply('❌ Erro ao editar grupo.');
+    }
+  });
+
+  // Handler para /delete_group_[groupId]
+  bot.hears(/^\/delete_group_(-?\d+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const groupId = parseInt(ctx.match[1]);
+      const group = await db.getGroupById(groupId);
+      
+      if (!group) {
+        return ctx.reply('❌ Grupo não encontrado.');
+      }
+      
+      const deleted = await db.deleteGroup(groupId);
+      
+      if (deleted) {
+        return ctx.reply(`✅ *Grupo deletado permanentemente!*
+
+👥 ${group.group_name || 'Sem nome'}
+🆔 ID: ${groupId}
+
+O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown' });
+      } else {
+        return ctx.reply('❌ Erro ao remover grupo.');
+      }
+    } catch (err) {
+      console.error('Erro ao deletar grupo:', err);
+      return ctx.reply('❌ Erro ao remover grupo.');
+    }
   });
 }
 

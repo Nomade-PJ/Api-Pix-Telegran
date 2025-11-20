@@ -510,6 +510,225 @@ async function setPixKey(pixKey, updatedBy = null) {
   return await setSetting('pix_key', pixKey, updatedBy);
 }
 
+// ===== GRUPOS =====
+
+async function getAllGroups() {
+  try {
+    const { data, error } = await supabase
+      .from('groups')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar grupos:', err.message);
+    return [];
+  }
+}
+
+async function getGroupById(groupId) {
+  try {
+    const { data, error } = await supabase
+      .from('groups')
+      .select('*')
+      .eq('group_id', groupId)
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao buscar grupo:', err.message);
+    return null;
+  }
+}
+
+async function createGroup({ groupId, groupName, groupLink, price, days }) {
+  try {
+    const { data, error } = await supabase
+      .from('groups')
+      .insert([{
+        group_id: groupId,
+        group_name: groupName,
+        group_link: groupLink,
+        subscription_price: price,
+        subscription_days: days
+      }])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    console.log('Grupo criado:', groupId);
+    return data;
+  } catch (err) {
+    console.error('Erro ao criar grupo:', err.message);
+    throw err;
+  }
+}
+
+async function updateGroup(groupId, updates) {
+  try {
+    const { data, error } = await supabase
+      .from('groups')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString()
+      })
+      .eq('group_id', groupId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao atualizar grupo:', err.message);
+    throw err;
+  }
+}
+
+async function deleteGroup(groupId) {
+  try {
+    const { error } = await supabase
+      .from('groups')
+      .delete()
+      .eq('group_id', groupId);
+    
+    if (error) throw error;
+    console.log('Grupo deletado:', groupId);
+    return true;
+  } catch (err) {
+    console.error('Erro ao deletar grupo:', err.message);
+    return false;
+  }
+}
+
+async function addGroupMember({ telegramId, userId, groupId, days = 30 }) {
+  try {
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + days);
+    
+    const { data, error } = await supabase
+      .from('group_members')
+      .insert([{
+        telegram_id: telegramId,
+        user_id: userId,
+        group_id: groupId,
+        expires_at: expiresAt.toISOString(),
+        status: 'active'
+      }])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    console.log('Membro adicionado:', telegramId);
+    return data;
+  } catch (err) {
+    console.error('Erro ao adicionar membro:', err.message);
+    throw err;
+  }
+}
+
+async function getExpiringMembers() {
+  try {
+    // Buscar membros que expiram em até 3 dias
+    const threeDaysFromNow = new Date();
+    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+    
+    const { data, error } = await supabase
+      .from('group_members')
+      .select(`
+        *,
+        user:user_id(first_name, telegram_id),
+        group:group_id(group_name, group_id, subscription_price)
+      `)
+      .eq('status', 'active')
+      .lte('expires_at', threeDaysFromNow.toISOString())
+      .is('reminded_at', null);
+    
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar membros expirando:', err.message);
+    return [];
+  }
+}
+
+async function getExpiredMembers() {
+  try {
+    const now = new Date().toISOString();
+    
+    const { data, error } = await supabase
+      .from('group_members')
+      .select(`
+        *,
+        user:user_id(telegram_id),
+        group:group_id(group_id)
+      `)
+      .eq('status', 'active')
+      .lt('expires_at', now);
+    
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar membros expirados:', err.message);
+    return [];
+  }
+}
+
+async function markMemberReminded(memberId) {
+  try {
+    const { error } = await supabase
+      .from('group_members')
+      .update({
+        reminded_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', memberId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('Erro ao marcar lembrado:', err.message);
+    return false;
+  }
+}
+
+async function expireMember(memberId) {
+  try {
+    const { error } = await supabase
+      .from('group_members')
+      .update({
+        status: 'expired',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', memberId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('Erro ao expirar membro:', err.message);
+    return false;
+  }
+}
+
+async function getGroupMember(telegramId, groupId) {
+  try {
+    const { data, error } = await supabase
+      .from('group_members')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .eq('group_id', groupId)
+      .eq('status', 'active')
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error; // PGRST116 = not found
+    return data;
+  } catch (err) {
+    console.error('Erro ao buscar membro:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
   supabase,
   getOrCreateUser,
@@ -533,6 +752,17 @@ module.exports = {
   getSetting,
   setSetting,
   getPixKey,
-  setPixKey
+  setPixKey,
+  getAllGroups,
+  getGroupById,
+  createGroup,
+  updateGroup,
+  deleteGroup,
+  addGroupMember,
+  getExpiringMembers,
+  getExpiredMembers,
+  markMemberReminded,
+  expireMember,
+  getGroupMember
 };
 
