@@ -517,15 +517,24 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           hasAnalysis: !!analysis, 
           hasError: !!analysisError,
           isValid: analysis?.isValid,
-          confidence: analysis?.confidence 
+          confidence: analysis?.confidence,
+          method: analysis?.details?.method
         });
         
-        // Atualizar status para proof_sent (se ainda não foi atualizado)
+        // 🆕 GARANTIR QUE COMPROVANTE SEJA SALVO NO BANCO
         try {
-          await db.updateTransactionProof(transaction.txid, fileId);
-          console.log('✅ Comprovante salvo no banco:', transaction.txid);
+          const updateResult = await db.updateTransactionProof(transaction.txid, fileId);
+          console.log('✅ Comprovante salvo no banco:', transaction.txid, 'Resultado:', updateResult);
         } catch (updateErr) {
           console.error('❌ Erro ao salvar comprovante:', updateErr.message);
+          console.error('Stack:', updateErr.stack);
+          // Tentar novamente
+          try {
+            await db.updateTransactionProof(transaction.txid, fileId);
+            console.log('✅ Comprovante salvo na segunda tentativa');
+          } catch (retryErr) {
+            console.error('❌ Erro ao salvar comprovante (retry):', retryErr.message);
+          }
         }
         
         // Mensagem para o usuário
@@ -554,21 +563,85 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
         }
         
         // 🆕 NOTIFICAR ADMIN (validação manual necessária) - SEMPRE notificar, mesmo sem análise
-        console.log('📤 Notificando admins...');
-        try {
-          await notifyAdmins('pending', analysis);
-          console.log('✅ Admins notificados com sucesso');
-        } catch (notifyErr) {
-          console.error('❌ Erro ao notificar admins:', notifyErr.message);
-          console.error('Stack:', notifyErr.stack);
-          // Tentar novamente sem análise
+        // CRÍTICO: Esta notificação DEVE funcionar sempre, mesmo se tudo mais falhar
+        console.log('📤 Notificando admins (CRÍTICO - deve sempre funcionar)...');
+        
+        let notificationSuccess = false;
+        let lastError = null;
+        
+        // Tentar notificar até 3 vezes
+        for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            console.log('🔄 Tentando notificar novamente sem dados de análise...');
-            await notifyAdmins('pending', null);
-            console.log('✅ Notificação de retry enviada');
-          } catch (retryErr) {
-            console.error('❌ Erro ao notificar admins (retry):', retryErr.message);
-            console.error('Stack:', retryErr.stack);
+            console.log(`🔄 Tentativa ${attempt}/3 de notificar admins...`);
+            await notifyAdmins('pending', analysis);
+            console.log(`✅ Admins notificados com sucesso na tentativa ${attempt}`);
+            notificationSuccess = true;
+            break;
+          } catch (notifyErr) {
+            lastError = notifyErr;
+            console.error(`❌ Erro na tentativa ${attempt} de notificar admins:`, notifyErr.message);
+            console.error('Stack:', notifyErr.stack);
+            
+            // Aguardar antes de tentar novamente (exceto na última tentativa)
+            if (attempt < 3) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // 1s, 2s
+            }
+          }
+        }
+        
+        // Se todas as tentativas falharam, tentar método alternativo simples
+        if (!notificationSuccess) {
+          console.error('❌ Todas as tentativas de notificação falharam, tentando método alternativo...');
+          try {
+            const admins = await db.getAllAdmins();
+            const product = await db.getProduct(transaction.product_id);
+            const productName = product ? product.name : transaction.product_id;
+            
+            for (const admin of admins) {
+              try {
+                // Enviar mensagem simples primeiro
+                await ctx.telegram.sendMessage(admin.telegram_id, 
+                  `⚠️ *COMPROVANTE RECEBIDO - VALIDAÇÃO MANUAL NECESSÁRIA*
+
+💰 Valor: R$ ${transaction.amount}
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 ID Usuário: ${ctx.from.id}
+📦 Produto: ${productName}
+📄 Tipo: ${fileType === 'pdf' ? 'PDF' : 'Imagem'}
+📅 Enviado: ${new Date().toLocaleString('pt-BR')}
+
+🆔 TXID: ${transaction.txid}
+
+⚠️ *Erro ao enviar arquivo anexado. Verifique manualmente.*`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                      inline_keyboard: [
+                        [
+                          { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
+                          { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
+                        ],
+                        [
+                          { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
+                        ]
+                      ]
+                    }
+                  });
+                
+                // Tentar enviar arquivo separadamente
+                if (fileType === 'pdf') {
+                  await ctx.telegram.sendDocument(admin.telegram_id, fileId);
+                } else {
+                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId);
+                }
+                
+                console.log(`✅ Método alternativo funcionou para admin ${admin.telegram_id}`);
+              } catch (altErr) {
+                console.error(`❌ Erro no método alternativo para admin ${admin.telegram_id}:`, altErr.message);
+              }
+            }
+          } catch (altErr) {
+            console.error('❌ Erro crítico no método alternativo:', altErr.message);
+            console.error('Stack:', altErr.stack);
           }
         }
       }

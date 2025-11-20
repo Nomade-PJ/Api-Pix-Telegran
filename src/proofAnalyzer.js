@@ -7,41 +7,70 @@ const FormData = require('form-data');
 /**
  * Analisa comprovante PIX usando múltiplos métodos
  * 1. Tenta OpenAI (se configurada) - suporta imagens e PDFs
- * 2. Tenta OCR gratuito (Tesseract via API) - suporta imagens e PDFs
- * 3. Fallback para validação manual
+ * 2. Tenta OCR.space (upload direto) - suporta imagens e PDFs
+ * 3. Tenta OCR.space (URL) - fallback
+ * 4. Tenta método alternativo de OCR
+ * 5. Fallback para validação manual
  */
 async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image') {
   try {
+    console.log(`🔍 Iniciando análise - Tipo: ${fileType}, Valor esperado: R$ ${expectedAmount}, Chave: ${pixKey}`);
+    
     // MÉTODO 1: Tentar OpenAI primeiro (mais preciso)
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     
     if (OPENAI_API_KEY) {
       try {
-        return await analyzeWithOpenAI(fileUrl, expectedAmount, pixKey, OPENAI_API_KEY);
+        console.log('🤖 Tentando análise com OpenAI...');
+        const result = await analyzeWithOpenAI(fileUrl, expectedAmount, pixKey, OPENAI_API_KEY);
+        if (result && result.isValid !== null) {
+          console.log('✅ OpenAI retornou resultado válido');
+          return result;
+        }
       } catch (err) {
         console.warn('⚠️ Erro com OpenAI, tentando método alternativo:', err.message);
       }
     }
     
-    // MÉTODO 2: OCR gratuito usando Tesseract (via API pública) - suporta PDFs
+    // MÉTODO 2: OCR.space com upload direto (melhor para PDFs)
     try {
-      return await analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType);
+      console.log('📄 Tentando OCR.space (upload direto)...');
+      const result = await analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType);
+      if (result && result.isValid !== null) {
+        console.log('✅ OCR.space (upload) retornou resultado válido');
+        return result;
+      }
     } catch (err) {
-      console.warn('⚠️ Erro com OCR gratuito:', err.message);
+      console.warn('⚠️ Erro com OCR.space (upload), tentando URL:', err.message);
     }
     
-    // MÉTODO 3: Validação básica por padrões
+    // MÉTODO 3: OCR.space com URL (fallback)
+    try {
+      console.log('📄 Tentando OCR.space (URL)...');
+      const result = await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
+      if (result && result.isValid !== null) {
+        console.log('✅ OCR.space (URL) retornou resultado válido');
+        return result;
+      }
+    } catch (err) {
+      console.warn('⚠️ Erro com OCR.space (URL):', err.message);
+    }
+    
+    // MÉTODO 4: Validação básica por padrões (sempre retorna para validação manual)
+    console.log('⚠️ Todos os métodos de OCR falharam, enviando para validação manual');
     return await analyzeWithPatterns(fileUrl, expectedAmount, pixKey);
     
   } catch (error) {
-    console.error('❌ Erro na análise automática:', error.message);
+    console.error('❌ Erro crítico na análise automática:', error.message);
+    console.error('Stack:', error.stack);
     
     return {
       isValid: null,
       confidence: 0,
       details: {
         error: error.message,
-        needsManualReview: true
+        needsManualReview: true,
+        method: 'Erro crítico'
       }
     };
   }
