@@ -2,6 +2,7 @@
 // Análise automática de comprovantes PIX usando múltiplos métodos
 
 const axios = require('axios');
+const FormData = require('form-data');
 
 /**
  * Analisa comprovante PIX usando múltiplos métodos
@@ -125,6 +126,7 @@ Responda APENAS em formato JSON com esta estrutura:
 /**
  * Análise usando OCR gratuito (Tesseract via API)
  * Suporta imagens (JPG, PNG) e PDFs
+ * Baixa o arquivo do Telegram e faz upload direto para evitar erro 405
  */
 async function analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType = 'image') {
   // Usar API gratuita de OCR (ex: OCR.space)
@@ -133,13 +135,42 @@ async function analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType = 'i
   try {
     const isPDF = fileType === 'pdf' || fileUrl.toLowerCase().includes('.pdf');
     
-    // OCR.space endpoint único para imagens e PDFs
-    const endpoint = 'https://api.ocr.space/parse/imageurl';
+    console.log(`🔍 Analisando ${isPDF ? 'PDF' : 'imagem'} com OCR.space...`);
+    console.log(`📎 Baixando arquivo do Telegram...`);
     
-    // Preparar parâmetros como form-data (formato correto para OCR.space)
-    const formData = new URLSearchParams();
+    // 🆕 BAIXAR ARQUIVO DO TELEGRAM PRIMEIRO
+    // Isso resolve o problema do erro 405 (URL não aceita)
+    let fileBuffer;
+    let fileName;
+    
+    try {
+      const fileResponse = await axios.get(fileUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        maxRedirects: 5
+      });
+      
+      fileBuffer = Buffer.from(fileResponse.data);
+      fileName = isPDF ? 'comprovante.pdf' : 'comprovante.jpg';
+      
+      console.log(`✅ Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
+    } catch (downloadErr) {
+      console.error('❌ Erro ao baixar arquivo:', downloadErr.message);
+      // Fallback: tentar com URL mesmo (pode funcionar para alguns casos)
+      console.log('⚠️ Tentando com URL direta como fallback...');
+      return await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
+    }
+    
+    // OCR.space endpoint para upload de arquivo
+    const endpoint = 'https://api.ocr.space/parse/image';
+    
+    // Preparar form-data com arquivo
+    const formData = new FormData();
     formData.append('apikey', OCR_API_KEY);
-    formData.append('url', fileUrl);
+    formData.append('file', fileBuffer, {
+      filename: fileName,
+      contentType: isPDF ? 'application/pdf' : 'image/jpeg'
+    });
     formData.append('language', 'por');
     formData.append('isOverlayRequired', 'false');
     formData.append('detectOrientation', 'true');
@@ -155,21 +186,18 @@ async function analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType = 'i
       formData.append('OCREngine', '1'); // Engine 1 para imagens
     }
     
-    console.log(`🔍 Analisando ${isPDF ? 'PDF' : 'imagem'} com OCR.space...`);
-    console.log(`📎 URL: ${fileUrl.substring(0, 100)}...`);
-    
-    // Tentar requisição com formato correto
+    // Fazer upload e análise
     const ocrResponse = await axios.post(
       endpoint,
-      formData.toString(),
+      formData,
       {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0'
+          ...formData.getHeaders(),
+          'Accept': 'application/json'
         },
-        timeout: 30000, // 30 segundos de timeout
-        maxRedirects: 5
+        timeout: 60000, // 60 segundos para PDFs (podem ser maiores)
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity
       }
     );
     
@@ -259,13 +287,17 @@ async function analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType = 'i
     console.error('❌ Erro detalhado do OCR:', {
       message: err.message,
       status: errorStatus,
-      data: errorData,
-      url: fileUrl?.substring(0, 100)
+      data: errorData
     });
     
-    // Se for erro 405, pode ser que a URL do Telegram não seja aceita diretamente
-    if (errorStatus === 405) {
-      throw new Error(`OCR.space não aceita este tipo de URL. Tente enviar o arquivo diretamente ou use OpenAI.`);
+    // Se for erro 405, tentar método alternativo com URL
+    if (errorStatus === 405 || err.message.includes('405')) {
+      console.log('⚠️ Erro 405 detectado, tentando método alternativo com URL...');
+      try {
+        return await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
+      } catch (fallbackErr) {
+        throw new Error(`OCR falhou: ${err.message}. Método alternativo também falhou: ${fallbackErr.message}`);
+      }
     }
     
     // Se for erro de rate limit ou similar
@@ -275,6 +307,91 @@ async function analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType = 'i
     
     throw new Error(`OCR falhou: ${err.message}${errorStatus ? ` (Status: ${errorStatus})` : ''}`);
   }
+}
+
+/**
+ * Método alternativo: análise via URL (fallback)
+ */
+async function analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType = 'image') {
+  const OCR_API_KEY = process.env.OCR_API_KEY || 'helloworld';
+  const isPDF = fileType === 'pdf' || fileUrl.toLowerCase().includes('.pdf');
+  const endpoint = 'https://api.ocr.space/parse/imageurl';
+  
+  const params = new URLSearchParams();
+  params.append('apikey', OCR_API_KEY);
+  params.append('url', fileUrl);
+  params.append('language', 'por');
+  params.append('isOverlayRequired', 'false');
+  params.append('detectOrientation', 'true');
+  params.append('scale', 'true');
+  
+  if (isPDF) {
+    params.append('filetype', 'PDF');
+    params.append('OCREngine', '2');
+  } else {
+    params.append('OCREngine', '1');
+  }
+  
+  const ocrResponse = await axios.post(
+    endpoint,
+    params.toString(),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json'
+      },
+      timeout: 30000
+    }
+  );
+  
+  if (!ocrResponse.data || ocrResponse.data.OCRExitCode !== 1) {
+    throw new Error(`OCR retornou código de saída: ${ocrResponse.data?.OCRExitCode}`);
+  }
+  
+  if (!ocrResponse.data.ParsedResults || ocrResponse.data.ParsedResults.length === 0) {
+    throw new Error('OCR não retornou resultados');
+  }
+  
+  const extractedText = ocrResponse.data.ParsedResults[0].ParsedText || '';
+  
+  if (!extractedText || extractedText.trim().length === 0) {
+    throw new Error('OCR não conseguiu extrair texto do documento');
+  }
+  
+  // Mesma lógica de extração do método principal
+  const amountRegex = /R\$\s*([\d.,]+)|([\d.,]+)\s*reais?/gi;
+  const amountMatches = extractedText.match(amountRegex);
+  let foundAmount = null;
+  
+  if (amountMatches) {
+    const match = amountMatches[0];
+    foundAmount = match.replace(/[R$\sreais]/gi, '').replace(',', '.').trim();
+  }
+  
+  const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  const keyFound = pixKeyRegex.test(extractedText);
+  const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado|transferido|enviado)/i;
+  const isPaid = paymentKeywords.test(extractedText);
+  
+  let confidence = 0;
+  if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) confidence += 50;
+  if (keyFound) confidence += 30;
+  if (isPaid) confidence += 20;
+  
+  const isValid = confidence >= 70 && foundAmount && keyFound;
+  
+  return {
+    isValid,
+    confidence,
+    details: {
+      amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
+      pixKey: keyFound ? pixKey : 'Não encontrada',
+      status: isPaid ? 'Pago' : 'Indeterminado',
+      extractedText: extractedText.substring(0, 300),
+      method: `OCR Gratuito (URL - ${isPDF ? 'PDF' : 'Imagem'})`,
+      fileType: isPDF ? 'PDF' : 'Imagem'
+    }
+  };
 }
 
 /**
