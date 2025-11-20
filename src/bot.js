@@ -259,11 +259,64 @@ Esta transação foi cancelada automaticamente.
         }
       }
       
+      // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE
+      const notifyAdmins = async (status, analysisData = null) => {
+        try {
+          const admins = await db.getAllAdmins();
+          const product = await db.getProduct(transaction.product_id);
+          const productName = product ? product.name : transaction.product_id;
+          
+          if (admins.length === 0) {
+            console.warn('⚠️ Nenhum admin encontrado para notificar');
+            return;
+          }
+          
+          const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
+          const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
+          
+          for (const admin of admins) {
+            try {
+              await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                caption: `${statusEmoji} *COMPROVANTE RECEBIDO - ${statusText}*
+
+${analysisData ? `🤖 Análise automática: ${analysisData.confidence}% de confiança\n` : ''}💰 Valor: R$ ${transaction.amount}
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 ID Usuário: ${ctx.from.id}
+📦 Produto: ${productName}
+📅 Enviado: ${new Date().toLocaleString('pt-BR')}
+
+🆔 TXID: ${transaction.txid}`,
+                parse_mode: 'Markdown',
+                reply_markup: status === 'pending' ? {
+                  inline_keyboard: [
+                    [
+                      { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
+                      { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
+                    ],
+                    [
+                      { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
+                    ]
+                  ]
+                } : undefined
+              });
+              console.log(`✅ Notificação enviada para admin ${admin.telegram_id} - Status: ${status}`);
+            } catch (err) {
+              console.error(`❌ Erro ao notificar admin ${admin.telegram_id}:`, err.message);
+            }
+          }
+        } catch (err) {
+          console.error('❌ Erro ao buscar admins:', err.message);
+        }
+      };
+      
       // Processar resultado da análise
       if (analysis && analysis.isValid === true && analysis.confidence >= 80) {
         // ✅ APROVAÇÃO AUTOMÁTICA
         try {
           await db.validateTransaction(transaction.txid, transaction.user_id);
+          
+          // 🆕 NOTIFICAR ADMIN (mesmo sendo aprovado automaticamente)
+          await notifyAdmins('approved', analysis);
           
           // Verificar se é assinatura de grupo
           if (transaction.product_id && transaction.product_id.startsWith('group_')) {
@@ -337,6 +390,9 @@ Entre manualmente: ${group.group_link}
         // ❌ REJEIÇÃO AUTOMÁTICA
         await db.cancelTransaction(transaction.txid);
         
+        // 🆕 NOTIFICAR ADMIN (mesmo sendo rejeitado)
+        await notifyAdmins('rejected', analysis);
+        
         return ctx.reply(`❌ *COMPROVANTE INVÁLIDO*
 
 🤖 Análise automática detectou problemas:
@@ -353,6 +409,9 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
         });
       } else {
         // ⚠️ VALIDAÇÃO MANUAL NECESSÁRIA
+        // Atualizar status para proof_sent
+        await db.updateTransactionProof(transaction.txid, fileId);
+        
         await ctx.reply(`⚠️ *Comprovante recebido!*
 
 ${analysis ? `🤖 A análise automática precisa de confirmação manual.\n📊 Confiança da IA: ${analysis.confidence}%\n` : '🤖 Análise automática não disponível.\n'}⏳ Um admin irá validar em breve.
@@ -361,23 +420,8 @@ ${analysis ? `🤖 A análise automática precisa de confirmação manual.\n📊
           parse_mode: 'Markdown'
         });
         
-        // Notificar admin
-        const operatorId = process.env.OPERATOR_CHAT_ID;
-        if (operatorId) {
-          try {
-            await ctx.telegram.sendPhoto(operatorId, fileId, {
-              caption: `🔔 *COMPROVANTE PARA VALIDAÇÃO MANUAL*
-
-${analysis ? `⚠️ IA não conseguiu validar automaticamente\n📊 Confiança: ${analysis.confidence}%\n` : '⚠️ Análise automática não disponível\n'}💰 Valor: R$ ${transaction.amount}
-👤 ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
-
-/validar_${transaction.txid}`,
-              parse_mode: 'Markdown'
-            });
-          } catch (err) {
-            console.error('Erro notificar operador:', err.message);
-          }
-        }
+        // 🆕 NOTIFICAR ADMIN (validação manual necessária)
+        await notifyAdmins('pending', analysis);
       }
     } catch (err) {
       console.error('Erro receber comprovante:', err.message);

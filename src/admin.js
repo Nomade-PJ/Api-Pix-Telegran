@@ -1089,28 +1089,75 @@ Digite /setpix seguido da nova chave
   });
 
   bot.action('admin_users', async (ctx) => {
-    await ctx.answerCbQuery('👥 Carregando usuários...');
+    await ctx.answerCbQuery('👥 Carregando usuários e transações...');
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) return;
     
     try {
-      const users = await db.getRecentUsers(20);
+      const [users, pending] = await Promise.all([
+        db.getRecentUsers(10),
+        db.getPendingTransactions(10)
+      ]);
       
-      if (!users || users.length === 0) {
-        return ctx.reply('👥 Nenhum usuário cadastrado ainda.');
+      let message = `👥 *GERENCIAR USUÁRIOS E TRANSAÇÕES*\n\n`;
+      
+      // Seção de transações pendentes
+      if (pending && pending.length > 0) {
+        message += `⏳ *TRANSAÇÕES PENDENTES: ${pending.length}*\n\n`;
+        
+        for (const tx of pending) {
+          const user = tx.user || {};
+          message += `🆔 TXID: ${tx.txid}\n`;
+          message += `👤 ${user.first_name || 'N/A'} (@${user.username || 'N/A'})\n`;
+          message += `📦 ${tx.product?.name || tx.product_id}\n`;
+          message += `💵 R$ ${tx.amount}\n`;
+          message += `📅 ${tx.proof_received_at ? new Date(tx.proof_received_at).toLocaleString('pt-BR') : 'Aguardando'}\n`;
+          message += `\n`;
+        }
+        
+        message += `\n*Use os botões abaixo para aprovar/rejeitar:*\n\n`;
+      } else {
+        message += `✅ Nenhuma transação pendente no momento.\n\n`;
       }
       
-      let message = `👥 *ÚLTIMOS ${users.length} USUÁRIOS:*\n\n`;
+      // Seção de usuários
+      message += `👥 *ÚLTIMOS USUÁRIOS: ${users.length}*\n\n`;
       
-      for (const user of users) {
-        message += `👤 ${user.first_name || 'Sem nome'}\n`;
-        message += `🆔 @${user.username || 'Sem username'}\n`;
-        message += `🔢 ID: ${user.telegram_id}\n`;
-        message += `📅 Entrou: ${new Date(user.created_at).toLocaleDateString('pt-BR')}\n`;
-        message += `——————————\n\n`;
+      if (users && users.length > 0) {
+        for (const user of users) {
+          message += `👤 ${user.first_name || 'Sem nome'}\n`;
+          message += `🆔 @${user.username || 'Sem username'}\n`;
+          message += `🔢 ID: ${user.telegram_id}\n`;
+          message += `📅 ${new Date(user.created_at).toLocaleDateString('pt-BR')}\n`;
+          message += `——————————\n\n`;
+        }
+      } else {
+        message += `📦 Nenhum usuário cadastrado ainda.\n\n`;
       }
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      // Criar botões para transações pendentes
+      const buttons = [];
+      if (pending && pending.length > 0) {
+        for (const tx of pending.slice(0, 5)) { // Máximo 5 botões
+          buttons.push([
+            Markup.button.callback(
+              `✅ Aprovar ${tx.txid.substring(0, 8)}`,
+              `approve_${tx.txid}`
+            ),
+            Markup.button.callback(
+              `❌ Rejeitar ${tx.txid.substring(0, 8)}`,
+              `reject_${tx.txid}`
+            )
+          ]);
+        }
+      }
+      
+      buttons.push([Markup.button.callback('🔄 Atualizar', 'admin_users')]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
     } catch (err) {
       console.error('Erro ao buscar usuários:', err);
       return ctx.reply('❌ Erro ao buscar usuários.');
@@ -1323,6 +1370,203 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
     } catch (err) {
       console.error('Erro ao deletar grupo:', err);
       return ctx.reply('❌ Erro ao remover grupo.');
+    }
+  });
+
+  // ===== APROVAR/REJEITAR TRANSAÇÕES VIA BOTÕES =====
+  
+  bot.action(/^approve_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('✅ Aprovando...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      if (transaction.status !== 'proof_sent') {
+        return ctx.reply(`⚠️ Esta transação já foi processada.\n\nStatus: ${transaction.status}`);
+      }
+      
+      // Validar transação
+      await db.validateTransaction(txid, transaction.user_id);
+      
+      // Verificar se é assinatura de grupo
+      if (transaction.product_id && transaction.product_id.startsWith('group_')) {
+        const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+        const group = await db.getGroupById(groupTelegramId);
+        
+        if (group) {
+          // Adicionar membro ao grupo
+          await db.addGroupMember({
+            telegramId: transaction.telegram_id,
+            userId: transaction.user_id,
+            groupId: group.id,
+            days: group.subscription_days
+          });
+          
+          // Notificar usuário
+          try {
+            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
+
+👥 *Grupo:* ${group.group_name}
+📅 *Acesso válido por:* ${group.subscription_days} dias
+🔗 *Link:* ${group.group_link}
+
+✅ Você foi adicionado ao grupo!
+
+🆔 TXID: ${txid}`, {
+              parse_mode: 'Markdown'
+            });
+          } catch (err) {
+            console.error('Erro ao notificar usuário:', err);
+          }
+        }
+      } else {
+        // Entregar produto normal
+        const product = await db.getProduct(transaction.product_id);
+        if (product && product.delivery_url) {
+          await deliver.deliverByLink(transaction.telegram_id, product.delivery_url, `✅ *Produto aprovado e entregue!*\n\n${product.delivery_url}`);
+        }
+        
+        // Notificar usuário
+        try {
+          await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *PAGAMENTO APROVADO!*
+
+💰 Valor: R$ ${transaction.amount}
+✅ Produto entregue com sucesso!
+
+🆔 TXID: ${txid}`, {
+            parse_mode: 'Markdown'
+          });
+        } catch (err) {
+          console.error('Erro ao notificar usuário:', err);
+        }
+      }
+      
+      await db.markAsDelivered(txid);
+      
+      // Atualizar mensagem do botão
+      await ctx.editMessageReplyMarkup({
+        inline_keyboard: [
+          [{ text: '✅ Aprovado', callback_data: 'approved' }]
+        ]
+      });
+      
+      return ctx.reply(`✅ *Transação aprovada com sucesso!*
+
+🆔 TXID: ${txid}
+👤 Usuário notificado
+📦 Produto/Grupo entregue`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao aprovar transação:', err);
+      return ctx.reply('❌ Erro ao aprovar transação.');
+    }
+  });
+
+  bot.action(/^reject_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('❌ Rejeitando...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      if (transaction.status !== 'proof_sent') {
+        return ctx.reply(`⚠️ Esta transação já foi processada.\n\nStatus: ${transaction.status}`);
+      }
+      
+      // Cancelar transação
+      await db.cancelTransaction(txid);
+      
+      // Notificar usuário
+      try {
+        await ctx.telegram.sendMessage(transaction.telegram_id, `❌ *COMPROVANTE REJEITADO*
+
+Seu comprovante foi analisado e não foi aprovado.
+
+🔄 *O que fazer:*
+1. Verifique se pagou o valor correto (R$ ${transaction.amount})
+2. Verifique se pagou para a chave correta
+3. Tente enviar outro comprovante
+4. Ou faça uma nova compra: /start
+
+🆔 TXID: ${txid}`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (err) {
+        console.error('Erro ao notificar usuário:', err);
+      }
+      
+      // Atualizar mensagem do botão
+      await ctx.editMessageReplyMarkup({
+        inline_keyboard: [
+          [{ text: '❌ Rejeitado', callback_data: 'rejected' }]
+        ]
+      });
+      
+      return ctx.reply(`❌ *Transação rejeitada!*
+
+🆔 TXID: ${txid}
+👤 Usuário notificado`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao rejeitar transação:', err);
+      return ctx.reply('❌ Erro ao rejeitar transação.');
+    }
+  });
+
+  bot.action(/^details_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('📋 Carregando detalhes...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      const user = transaction.user_id ? await db.getOrCreateUser({ id: transaction.user_id }) : null;
+      const product = await db.getProduct(transaction.product_id);
+      
+      let message = `📋 *DETALHES DA TRANSAÇÃO*\n\n`;
+      message += `🆔 TXID: ${txid}\n`;
+      message += `💰 Valor: R$ ${transaction.amount}\n`;
+      message += `📦 Produto: ${product ? product.name : transaction.product_id}\n`;
+      message += `👤 Usuário: ${user ? user.first_name : 'N/A'} (@${user?.username || 'N/A'})\n`;
+      message += `🔑 Chave PIX: ${transaction.pix_key}\n`;
+      message += `📊 Status: ${transaction.status}\n`;
+      message += `📅 Criada: ${new Date(transaction.created_at).toLocaleString('pt-BR')}\n`;
+      
+      if (transaction.proof_received_at) {
+        message += `📸 Comprovante: ${new Date(transaction.proof_received_at).toLocaleString('pt-BR')}\n`;
+      }
+      
+      message += `\n*Ações:*\n`;
+      message += `✅ /validar_${txid} - Aprovar\n`;
+      message += `❌ /rejeitar_${txid} - Rejeitar`;
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao buscar detalhes:', err);
+      return ctx.reply('❌ Erro ao buscar detalhes.');
     }
   });
 }

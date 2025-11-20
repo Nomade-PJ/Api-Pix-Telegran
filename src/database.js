@@ -449,6 +449,21 @@ async function getRecentUsers(limit = 20) {
   }
 }
 
+async function getAllAdmins() {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('is_admin', true);
+    
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar admins:', err.message);
+    return [];
+  }
+}
+
 // ===== CONFIGURAÇÕES (SETTINGS) =====
 
 async function getSetting(key) {
@@ -734,6 +749,7 @@ module.exports = {
   getOrCreateUser,
   isUserAdmin,
   getRecentUsers,
+  getAllAdmins,
   getProduct,
   getAllProducts,
   createProduct,
