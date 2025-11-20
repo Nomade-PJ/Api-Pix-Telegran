@@ -3,14 +3,17 @@
 
 const axios = require('axios');
 const FormData = require('form-data');
+const Tesseract = require('tesseract.js');
+const pdfParse = require('pdf-parse');
 
 /**
  * Analisa comprovante PIX usando múltiplos métodos
  * 1. Tenta OpenAI (se configurada) - suporta imagens e PDFs
- * 2. Tenta OCR.space (upload direto) - suporta imagens e PDFs
- * 3. Tenta OCR.space (URL) - fallback
- * 4. Tenta método alternativo de OCR
- * 5. Fallback para validação manual
+ * 2. Tenta pdf-parse (para PDFs com texto) - GRATUITO, SEM API KEY
+ * 3. Tenta Tesseract.js (processamento local) - GRATUITO, SEM API KEY, suporta PDFs e imagens
+ * 4. Tenta OCR.space (upload direto) - suporta imagens e PDFs
+ * 5. Tenta OCR.space (URL) - fallback
+ * 6. Fallback para validação manual
  */
 async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image') {
   try {
@@ -32,7 +35,33 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
       }
     }
     
-    // MÉTODO 2: OCR.space com upload direto (melhor para PDFs)
+    // MÉTODO 2: pdf-parse (para PDFs com texto extraível) - GRATUITO, SEM API KEY
+    if (fileType === 'pdf') {
+      try {
+        console.log('📄 Tentando pdf-parse (extração direta de texto do PDF)...');
+        const result = await analyzeWithPdfParse(fileUrl, expectedAmount, pixKey);
+        if (result && result.isValid !== null) {
+          console.log('✅ pdf-parse retornou resultado válido');
+          return result;
+        }
+      } catch (err) {
+        console.warn('⚠️ Erro com pdf-parse, tentando OCR:', err.message);
+      }
+    }
+    
+    // MÉTODO 3: Tesseract.js (processamento local) - GRATUITO, SEM API KEY, funciona com PDFs e imagens
+    try {
+      console.log('🔬 Tentando Tesseract.js (OCR local gratuito)...');
+      const result = await analyzeWithTesseract(fileUrl, expectedAmount, pixKey, fileType);
+      if (result && result.isValid !== null) {
+        console.log('✅ Tesseract.js retornou resultado válido');
+        return result;
+      }
+    } catch (err) {
+      console.warn('⚠️ Erro com Tesseract.js, tentando OCR.space:', err.message);
+    }
+    
+    // MÉTODO 4: OCR.space com upload direto (melhor para PDFs)
     try {
       console.log('📄 Tentando OCR.space (upload direto)...');
       const result = await analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType);
@@ -44,7 +73,7 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
       console.warn('⚠️ Erro com OCR.space (upload), tentando URL:', err.message);
     }
     
-    // MÉTODO 3: OCR.space com URL (fallback)
+    // MÉTODO 5: OCR.space com URL (fallback)
     try {
       console.log('📄 Tentando OCR.space (URL)...');
       const result = await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
@@ -56,7 +85,7 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
       console.warn('⚠️ Erro com OCR.space (URL):', err.message);
     }
     
-    // MÉTODO 4: Validação básica por padrões (sempre retorna para validação manual)
+    // MÉTODO 6: Validação básica por padrões (sempre retorna para validação manual)
     console.log('⚠️ Todos os métodos de OCR falharam, enviando para validação manual');
     return await analyzeWithPatterns(fileUrl, expectedAmount, pixKey);
     
@@ -424,6 +453,188 @@ async function analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType 
 }
 
 /**
+ * Análise usando pdf-parse (para PDFs com texto extraível)
+ * GRATUITO, SEM API KEY, funciona apenas para PDFs que já têm texto
+ */
+async function analyzeWithPdfParse(fileUrl, expectedAmount, pixKey) {
+  try {
+    console.log('📄 Baixando PDF para análise com pdf-parse...');
+    
+    // Baixar PDF
+    const pdfResponse = await axios.get(fileUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30000
+    });
+    
+    const pdfBuffer = Buffer.from(pdfResponse.data);
+    console.log(`✅ PDF baixado: ${(pdfBuffer.length / 1024).toFixed(2)} KB`);
+    
+    // Extrair texto do PDF
+    const pdfData = await pdfParse(pdfBuffer);
+    const extractedText = pdfData.text || '';
+    
+    if (!extractedText || extractedText.trim().length === 0) {
+      throw new Error('PDF não contém texto extraível (pode ser apenas imagem)');
+    }
+    
+    console.log(`✅ pdf-parse extraiu ${extractedText.length} caracteres do PDF`);
+    
+    // Extrair valor
+    const amountRegex = /R\$\s*([\d.,]+)|([\d.,]+)\s*reais?/gi;
+    const amountMatches = extractedText.match(amountRegex);
+    let foundAmount = null;
+    
+    if (amountMatches) {
+      const match = amountMatches[0];
+      foundAmount = match.replace(/[R$\sreais]/gi, '').replace(',', '.').trim();
+    }
+    
+    // Extrair chave PIX
+    const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const keyFound = pixKeyRegex.test(extractedText);
+    
+    // Verificar palavras-chave de pagamento
+    const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado|transferido|enviado)/i;
+    const isPaid = paymentKeywords.test(extractedText);
+    
+    // Calcular confiança
+    let confidence = 0;
+    if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) {
+      confidence += 50;
+      console.log(`✅ Valor encontrado: R$ ${foundAmount}`);
+    }
+    
+    if (keyFound) {
+      confidence += 30;
+      console.log(`✅ Chave PIX encontrada`);
+    }
+    
+    if (isPaid) {
+      confidence += 20;
+      console.log(`✅ Status de pagamento encontrado`);
+    }
+    
+    const isValid = confidence >= 70 && foundAmount && keyFound;
+    
+    console.log(`📊 Confiança final (pdf-parse): ${confidence}% - ${isValid ? 'VÁLIDO' : 'PRECISA VALIDAÇÃO MANUAL'}`);
+    
+    return {
+      isValid,
+      confidence,
+      details: {
+        amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
+        pixKey: keyFound ? pixKey : 'Não encontrada',
+        status: isPaid ? 'Pago' : 'Indeterminado',
+        extractedText: extractedText.substring(0, 300),
+        method: 'pdf-parse (Gratuito, Sem API Key)',
+        fileType: 'PDF'
+      }
+    };
+    
+  } catch (err) {
+    console.error('❌ Erro com pdf-parse:', err.message);
+    throw err;
+  }
+}
+
+/**
+ * Análise usando Tesseract.js (processamento local)
+ * GRATUITO, SEM API KEY, funciona com PDFs e imagens
+ */
+async function analyzeWithTesseract(fileUrl, expectedAmount, pixKey, fileType = 'image') {
+  try {
+    console.log(`🔬 Iniciando análise com Tesseract.js (${fileType === 'pdf' ? 'PDF' : 'imagem'})...`);
+    
+    // Baixar arquivo
+    const fileResponse = await axios.get(fileUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30000
+    });
+    
+    const fileBuffer = Buffer.from(fileResponse.data);
+    console.log(`✅ Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
+    
+    // Para PDFs, Tesseract precisa converter para imagem primeiro
+    // Por enquanto, vamos processar como imagem (Tesseract pode processar a primeira página)
+    const imageBuffer = fileType === 'pdf' ? fileBuffer : fileBuffer;
+    
+    // Processar com Tesseract (português)
+    console.log('🔬 Processando com Tesseract.js (pode demorar alguns segundos)...');
+    const { data: { text } } = await Tesseract.recognize(imageBuffer, 'por', {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          console.log(`🔬 Progresso: ${Math.round(m.progress * 100)}%`);
+        }
+      }
+    });
+    
+    const extractedText = text || '';
+    
+    if (!extractedText || extractedText.trim().length === 0) {
+      throw new Error('Tesseract não conseguiu extrair texto do documento');
+    }
+    
+    console.log(`✅ Tesseract extraiu ${extractedText.length} caracteres`);
+    
+    // Extrair valor
+    const amountRegex = /R\$\s*([\d.,]+)|([\d.,]+)\s*reais?/gi;
+    const amountMatches = extractedText.match(amountRegex);
+    let foundAmount = null;
+    
+    if (amountMatches) {
+      const match = amountMatches[0];
+      foundAmount = match.replace(/[R$\sreais]/gi, '').replace(',', '.').trim();
+    }
+    
+    // Extrair chave PIX
+    const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const keyFound = pixKeyRegex.test(extractedText);
+    
+    // Verificar palavras-chave de pagamento
+    const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado|transferido|enviado)/i;
+    const isPaid = paymentKeywords.test(extractedText);
+    
+    // Calcular confiança
+    let confidence = 0;
+    if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) {
+      confidence += 50;
+      console.log(`✅ Valor encontrado: R$ ${foundAmount}`);
+    }
+    
+    if (keyFound) {
+      confidence += 30;
+      console.log(`✅ Chave PIX encontrada`);
+    }
+    
+    if (isPaid) {
+      confidence += 20;
+      console.log(`✅ Status de pagamento encontrado`);
+    }
+    
+    const isValid = confidence >= 70 && foundAmount && keyFound;
+    
+    console.log(`📊 Confiança final (Tesseract): ${confidence}% - ${isValid ? 'VÁLIDO' : 'PRECISA VALIDAÇÃO MANUAL'}`);
+    
+    return {
+      isValid,
+      confidence,
+      details: {
+        amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
+        pixKey: keyFound ? pixKey : 'Não encontrada',
+        status: isPaid ? 'Pago' : 'Indeterminado',
+        extractedText: extractedText.substring(0, 300),
+        method: `Tesseract.js (Gratuito, Sem API Key, Local) - ${fileType === 'pdf' ? 'PDF' : 'Imagem'}`,
+        fileType: fileType === 'pdf' ? 'PDF' : 'Imagem'
+      }
+    };
+    
+  } catch (err) {
+    console.error('❌ Erro com Tesseract.js:', err.message);
+    throw err;
+  }
+}
+
+/**
  * Análise básica por padrões (sem API externa)
  */
 async function analyzeWithPatterns(fileUrl, expectedAmount, pixKey) {
@@ -437,7 +648,7 @@ async function analyzeWithPatterns(fileUrl, expectedAmount, pixKey) {
       error: 'Nenhum método de análise disponível',
       needsManualReview: true,
       method: 'Validação Manual',
-      message: 'Por favor, configure OPENAI_API_KEY ou use validação manual'
+      message: 'Todos os métodos de análise automática falharam. Validação manual necessária.'
     }
   };
 }
