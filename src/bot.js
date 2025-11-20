@@ -231,6 +231,7 @@ Esta transação foi cancelada automaticamente.
       const minutesRemaining = 30 - minutesElapsed;
 
       // 🆕 ANÁLISE AUTOMÁTICA DE COMPROVANTE
+      console.log(`📥 Comprovante recebido - Tipo: ${ctx.message.document ? 'documento' : 'foto'}, TXID: ${transaction.txid}`);
       await ctx.reply('🔍 *Analisando comprovante automaticamente...*', { parse_mode: 'Markdown' });
       
       // Salvar comprovante primeiro
@@ -272,18 +273,44 @@ Esta transação foi cancelada automaticamente.
       let analysis = null;
       if (fileUrl) {
         try {
+          console.log(`🔍 Iniciando análise de ${fileType === 'pdf' ? 'PDF' : 'imagem'}...`);
           analysis = await proofAnalyzer.analyzeProof(
             fileUrl,
             transaction.amount,
             transaction.pix_key,
             fileType // Passar tipo de arquivo
           );
+          console.log(`📊 Análise concluída:`, {
+            isValid: analysis?.isValid,
+            confidence: analysis?.confidence,
+            method: analysis?.details?.method
+          });
         } catch (err) {
-          console.error('Erro na análise automática:', err);
+          console.error('❌ Erro na análise automática:', err.message);
+          console.error('Stack:', err.stack);
+          // Continuar mesmo com erro - enviar para validação manual
+          await ctx.reply(`⚠️ *Análise automática não pôde ser concluída*
+
+O comprovante foi enviado para validação manual.
+Aguarde a aprovação do administrador.
+
+🆔 TXID: ${transaction.txid}`, {
+            parse_mode: 'Markdown'
+          });
         }
+      } else {
+        console.warn('⚠️ URL do arquivo não disponível para análise');
+        await ctx.reply(`⚠️ *Erro ao processar arquivo*
+
+O comprovante foi enviado para validação manual.
+Aguarde a aprovação do administrador.
+
+🆔 TXID: ${transaction.txid}`, {
+          parse_mode: 'Markdown'
+        });
       }
       
-      // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE
+      // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE (suporta imagens e PDFs)
       const notifyAdmins = async (status, analysisData = null) => {
         try {
           const admins = await db.getAllAdmins();
@@ -298,34 +325,67 @@ Esta transação foi cancelada automaticamente.
           const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
           const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
           
-          for (const admin of admins) {
-            try {
-              await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
-                caption: `${statusEmoji} *COMPROVANTE RECEBIDO - ${statusText}*
+          const caption = `${statusEmoji} *COMPROVANTE RECEBIDO - ${statusText}*
 
 ${analysisData ? `🤖 Análise automática: ${analysisData.confidence}% de confiança\n` : ''}💰 Valor: R$ ${transaction.amount}
 👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
 🆔 ID Usuário: ${ctx.from.id}
 📦 Produto: ${productName}
 📅 Enviado: ${new Date().toLocaleString('pt-BR')}
+${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
 
-🆔 TXID: ${transaction.txid}`,
-                parse_mode: 'Markdown',
-                reply_markup: status === 'pending' ? {
-                  inline_keyboard: [
-                    [
-                      { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
-                      { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
-                    ],
-                    [
-                      { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
-                    ]
-                  ]
-                } : undefined
-              });
-              console.log(`✅ Notificação enviada para admin ${admin.telegram_id} - Status: ${status}`);
+🆔 TXID: ${transaction.txid}`;
+          
+          const replyMarkup = status === 'pending' ? {
+            inline_keyboard: [
+              [
+                { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
+                { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
+              ],
+              [
+                { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
+              ]
+            ]
+          } : undefined;
+          
+          for (const admin of admins) {
+            try {
+              // 🆕 USAR sendDocument PARA PDFs E sendPhoto PARA IMAGENS
+              if (fileType === 'pdf') {
+                await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                  caption: caption,
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                console.log(`✅ PDF enviado para admin ${admin.telegram_id} - Status: ${status}`);
+              } else {
+                await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                  caption: caption,
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                console.log(`✅ Imagem enviada para admin ${admin.telegram_id} - Status: ${status}`);
+              }
             } catch (err) {
               console.error(`❌ Erro ao notificar admin ${admin.telegram_id}:`, err.message);
+              // Tentar método alternativo em caso de erro
+              try {
+                if (fileType === 'pdf') {
+                  await ctx.telegram.sendMessage(admin.telegram_id, `${caption}\n\n📄 *Arquivo PDF anexado*`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: replyMarkup
+                  });
+                  await ctx.telegram.sendDocument(admin.telegram_id, fileId);
+                } else {
+                  await ctx.telegram.sendMessage(admin.telegram_id, `${caption}\n\n🖼️ *Imagem anexada*`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: replyMarkup
+                  });
+                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId);
+                }
+              } catch (fallbackErr) {
+                console.error(`❌ Erro no fallback para admin ${admin.telegram_id}:`, fallbackErr.message);
+              }
             }
           }
         } catch (err) {
@@ -412,9 +472,10 @@ Entre manualmente: ${group.group_link}
         }
       } else if (analysis && analysis.isValid === false) {
         // ❌ REJEIÇÃO AUTOMÁTICA
+        console.log('❌ Comprovante rejeitado automaticamente');
         await db.cancelTransaction(transaction.txid);
         
-        // 🆕 NOTIFICAR ADMIN (mesmo sendo rejeitado)
+        // 🆕 NOTIFICAR ADMIN (mesmo sendo rejeitado automaticamente)
         await notifyAdmins('rejected', analysis);
         
         return ctx.reply(`❌ *COMPROVANTE INVÁLIDO*
@@ -432,19 +493,31 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           parse_mode: 'Markdown'
         });
       } else {
-        // ⚠️ VALIDAÇÃO MANUAL NECESSÁRIA
+        // ⚠️ VALIDAÇÃO MANUAL NECESSÁRIA (análise não disponível, falhou, ou confiança baixa)
+        console.log('⚠️ Comprovante enviado para validação manual');
+        
         // Atualizar status para proof_sent
         await db.updateTransactionProof(transaction.txid, fileId);
         
-        await ctx.reply(`⚠️ *Comprovante recebido!*
-
-${analysis ? `🤖 A análise automática precisa de confirmação manual.\n📊 Confiança da IA: ${analysis.confidence}%\n` : '🤖 Análise automática não disponível.\n'}⏳ Um admin irá validar em breve.
-
-🆔 TXID: ${transaction.txid}`, {
+        // Mensagem para o usuário
+        let userMessage = `⚠️ *Comprovante recebido!*\n\n`;
+        
+        if (analysis) {
+          userMessage += `🤖 A análise automática precisa de confirmação manual.\n📊 Confiança da IA: ${analysis.confidence || 0}%\n\n`;
+          if (analysis.details?.method) {
+            userMessage += `🔧 Método: ${analysis.details.method}\n`;
+          }
+        } else {
+          userMessage += `🤖 Análise automática não disponível ou falhou.\n`;
+        }
+        
+        userMessage += `⏳ Um admin irá validar em breve.\n\n🆔 TXID: ${transaction.txid}`;
+        
+        await ctx.reply(userMessage, {
           parse_mode: 'Markdown'
         });
         
-        // 🆕 NOTIFICAR ADMIN (validação manual necessária)
+        // 🆕 NOTIFICAR ADMIN (validação manual necessária) - SEMPRE notificar, mesmo sem análise
         await notifyAdmins('pending', analysis);
       }
     } catch (err) {
