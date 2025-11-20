@@ -545,8 +545,15 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           if (analysis.details?.method) {
             userMessage += `🔧 Método: ${analysis.details.method}\n\n`;
           }
+          if (analysis.details?.error) {
+            userMessage += `⚠️ Erro na análise: ${analysis.details.error}\n\n`;
+          }
         } else if (analysisError) {
           userMessage += `🤖 Análise automática não pôde ser concluída.\n⚠️ Erro: ${analysisError.message}\n\n`;
+          console.error('📋 Detalhes do erro de análise:', {
+            message: analysisError.message,
+            stack: analysisError.stack
+          });
         } else {
           userMessage += `🤖 Análise automática não disponível ou falhou.\n\n`;
         }
@@ -557,9 +564,10 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           await ctx.reply(userMessage, {
             parse_mode: 'Markdown'
           });
-          console.log('✅ Mensagem enviada ao usuário');
+          console.log('✅ Mensagem enviada ao usuário sobre status do comprovante');
         } catch (err) {
           console.error('❌ Erro ao enviar mensagem ao usuário:', err.message);
+          console.error('Stack:', err.stack);
         }
         
         // 🆕 NOTIFICAR ADMIN (validação manual necessária) - SEMPRE notificar, mesmo sem análise

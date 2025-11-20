@@ -21,14 +21,27 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
     if (GEMINI_API_KEY) {
       try {
         console.log('⭐ Tentando análise com Google Gemini (GRATUITO)...');
+        console.log(`📋 Parâmetros: fileType=${fileType}, expectedAmount=${expectedAmount}, pixKey=${pixKey}`);
         const result = await analyzeWithGemini(fileUrl, expectedAmount, pixKey, GEMINI_API_KEY, fileType);
+        console.log(`📊 Resultado do Gemini:`, {
+          hasResult: !!result,
+          isValid: result?.isValid,
+          confidence: result?.confidence,
+          method: result?.details?.method
+        });
         if (result && result.isValid !== null) {
           console.log('✅ Google Gemini retornou resultado válido');
           return result;
+        } else {
+          console.warn('⚠️ Gemini retornou resultado inválido ou null, tentando método alternativo');
         }
       } catch (err) {
-        console.warn('⚠️ Erro com Google Gemini, tentando método alternativo:', err.message);
+        console.error('❌ Erro com Google Gemini (detalhes completos):', err.message);
+        console.error('Stack:', err.stack);
+        console.warn('⚠️ Tentando método alternativo após erro do Gemini');
       }
+    } else {
+      console.warn('⚠️ GEMINI_API_KEY não configurada, pulando análise com Gemini');
     }
     
     // MÉTODO 2: OCR.space com upload direto (melhor para PDFs)
@@ -72,119 +85,6 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
         method: 'Erro crítico'
       }
     };
-  }
-}
-
-/**
- * Análise usando Google Gemini API (GRATUITO, similar ao GPT-4o-mini)
- * Suporta imagens e PDFs
- */
-async function analyzeWithGemini(fileUrl, expectedAmount, pixKey, apiKey, fileType = 'image') {
-  try {
-    console.log(`⭐ Analisando ${fileType === 'pdf' ? 'PDF' : 'imagem'} com Google Gemini...`);
-    
-    // Baixar arquivo para base64 (Gemini precisa de base64 para PDFs)
-    let fileData;
-    let mimeType;
-    
-    if (fileType === 'pdf') {
-      const fileResponse = await axios.get(fileUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30000
-      });
-      fileData = Buffer.from(fileResponse.data).toString('base64');
-      mimeType = 'application/pdf';
-    } else {
-      const fileResponse = await axios.get(fileUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30000
-      });
-      fileData = Buffer.from(fileResponse.data).toString('base64');
-      mimeType = fileUrl.toLowerCase().includes('.png') ? 'image/png' : 'image/jpeg';
-    }
-    
-    const prompt = `Analise este comprovante de pagamento PIX e extraia as seguintes informações:
-
-1. Valor pago (em reais)
-2. Chave PIX do destinatário
-3. Status do pagamento (aprovado/pago/concluído)
-4. Data e hora da transação
-5. Se o comprovante parece autêntico
-
-Valor esperado: R$ ${expectedAmount}
-Chave PIX esperada: ${pixKey}
-
-Responda APENAS em formato JSON com esta estrutura:
-{
-  "isValid": true/false,
-  "amount": "valor encontrado",
-  "pixKey": "chave encontrada",
-  "status": "status do pagamento",
-  "date": "data da transação",
-  "confidence": 0-100,
-  "reason": "motivo da validação ou rejeição"
-}`;
-
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        contents: [{
-          parts: [
-            { text: prompt },
-            {
-              inline_data: {
-                mime_type: mimeType,
-                data: fileData
-              }
-            }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 500
-        }
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        timeout: 30000
-      }
-    );
-
-    const responseText = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    
-    if (!responseText) {
-      throw new Error('Gemini não retornou resposta');
-    }
-
-    // Extrair JSON da resposta (pode vir com markdown)
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Resposta do Gemini não contém JSON válido');
-    }
-
-    const analysis = JSON.parse(jsonMatch[0]);
-    const amountMatch = parseFloat(analysis.amount?.replace('R$', '').replace(',', '.').trim()) === parseFloat(expectedAmount);
-    const finalValid = analysis.isValid && amountMatch;
-
-    return {
-      isValid: finalValid,
-      confidence: analysis.confidence || 0,
-      details: {
-        amount: analysis.amount,
-        pixKey: analysis.pixKey,
-        status: analysis.status,
-        date: analysis.date,
-        reason: analysis.reason,
-        amountMatch,
-        needsManualReview: (analysis.confidence || 0) < 80,
-        method: 'Google Gemini (Gratuito)'
-      }
-    };
-  } catch (err) {
-    console.error('❌ Erro com Google Gemini:', err.message);
-    throw err;
   }
 }
 
@@ -267,26 +167,56 @@ Responda APENAS em formato JSON com esta estrutura:
       }
     );
 
+    console.log(`📥 Resposta do Gemini recebida - Status: ${response.status}`);
+    console.log(`📋 Estrutura da resposta:`, JSON.stringify({
+      hasCandidates: !!response.data.candidates,
+      candidatesLength: response.data.candidates?.length || 0,
+      hasContent: !!response.data.candidates?.[0]?.content,
+      hasParts: !!response.data.candidates?.[0]?.content?.parts,
+      partsLength: response.data.candidates?.[0]?.content?.parts?.length || 0
+    }, null, 2));
+
     const responseText = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
+    console.log(`📝 Texto retornado pelo Gemini (primeiros 500 chars):`, responseText.substring(0, 500));
+    
     if (!responseText) {
+      console.error('❌ Resposta completa do Gemini:', JSON.stringify(response.data, null, 2));
       throw new Error('Gemini não retornou resposta');
     }
 
     // Extrair JSON da resposta (pode vir com markdown)
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
+      console.error('❌ Resposta do Gemini não contém JSON. Texto completo:', responseText);
       throw new Error('Resposta do Gemini não contém JSON válido');
     }
 
-    const analysis = JSON.parse(jsonMatch[0]);
+    console.log(`📦 JSON extraído:`, jsonMatch[0].substring(0, 300));
+
+    let analysis;
+    try {
+      analysis = JSON.parse(jsonMatch[0]);
+      console.log(`✅ JSON parseado com sucesso:`, {
+        isValid: analysis.isValid,
+        amount: analysis.amount,
+        confidence: analysis.confidence
+      });
+    } catch (parseErr) {
+      console.error('❌ Erro ao fazer parse do JSON:', parseErr.message);
+      console.error('JSON que falhou:', jsonMatch[0]);
+      throw new Error(`Erro ao fazer parse do JSON do Gemini: ${parseErr.message}`);
+    }
+
     const amountMatch = parseFloat(analysis.amount?.replace('R$', '').replace(',', '.').trim()) === parseFloat(expectedAmount);
     const finalValid = analysis.isValid && amountMatch;
 
     console.log(`✅ Gemini análise concluída:`, {
       isValid: finalValid,
       confidence: analysis.confidence,
-      amountMatch
+      amountMatch,
+      expectedAmount,
+      foundAmount: analysis.amount
     });
 
     return {
@@ -304,9 +234,12 @@ Responda APENAS em formato JSON com esta estrutura:
       }
     };
   } catch (err) {
-    console.error('❌ Erro com Google Gemini:', err.message);
+    console.error('❌ Erro detalhado com Google Gemini:');
+    console.error('Mensagem:', err.message);
+    console.error('Response data:', err.response?.data);
+    console.error('Status:', err.response?.status);
     console.error('Stack:', err.stack);
-    throw err;
+    throw new Error(`Google Gemini falhou: ${err.message}${err.response?.status ? ` (Status: ${err.response.status})` : ''}`);
   }
 }
 
