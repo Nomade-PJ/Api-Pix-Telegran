@@ -271,24 +271,46 @@ Esta transação foi cancelada automaticamente.
       
       // Analisar com IA (se URL disponível) - suporta imagens e PDFs
       let analysis = null;
+      let analysisError = null;
+      
       if (fileUrl) {
         try {
           console.log(`🔍 Iniciando análise de ${fileType === 'pdf' ? 'PDF' : 'imagem'}...`);
-          analysis = await proofAnalyzer.analyzeProof(
+          console.log(`📎 URL: ${fileUrl.substring(0, 100)}...`);
+          
+          // Timeout de 90 segundos para análise (PDFs podem demorar)
+          const analysisPromise = proofAnalyzer.analyzeProof(
             fileUrl,
             transaction.amount,
             transaction.pix_key,
-            fileType // Passar tipo de arquivo
+            fileType
           );
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout na análise (90s)')), 90000)
+          );
+          
+          analysis = await Promise.race([analysisPromise, timeoutPromise]);
+          
           console.log(`📊 Análise concluída:`, {
             isValid: analysis?.isValid,
             confidence: analysis?.confidence,
             method: analysis?.details?.method
           });
         } catch (err) {
+          analysisError = err;
           console.error('❌ Erro na análise automática:', err.message);
           console.error('Stack:', err.stack);
           // Continuar mesmo com erro - enviar para validação manual
+        }
+      } else {
+        console.warn('⚠️ URL do arquivo não disponível para análise');
+        analysisError = new Error('URL do arquivo não disponível');
+      }
+      
+      // 🆕 GARANTIR FEEDBACK AO USUÁRIO SEMPRE
+      if (analysisError && !analysis) {
+        try {
           await ctx.reply(`⚠️ *Análise automática não pôde ser concluída*
 
 O comprovante foi enviado para validação manual.
@@ -297,17 +319,9 @@ Aguarde a aprovação do administrador.
 🆔 TXID: ${transaction.txid}`, {
             parse_mode: 'Markdown'
           });
+        } catch (replyErr) {
+          console.error('❌ Erro ao enviar mensagem de erro:', replyErr.message);
         }
-      } else {
-        console.warn('⚠️ URL do arquivo não disponível para análise');
-        await ctx.reply(`⚠️ *Erro ao processar arquivo*
-
-O comprovante foi enviado para validação manual.
-Aguarde a aprovação do administrador.
-
-🆔 TXID: ${transaction.txid}`, {
-          parse_mode: 'Markdown'
-        });
       }
       
       // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE (suporta imagens e PDFs)
@@ -336,7 +350,8 @@ ${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
 
 🆔 TXID: ${transaction.txid}`;
           
-          const replyMarkup = status === 'pending' ? {
+          // 🆕 BOTÕES PARA TODOS OS STATUS (pending e rejected) - admin pode revisar
+          const replyMarkup = (status === 'pending' || status === 'rejected') ? {
             inline_keyboard: [
               [
                 { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
@@ -505,24 +520,123 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
         if (analysis) {
           userMessage += `🤖 A análise automática precisa de confirmação manual.\n📊 Confiança da IA: ${analysis.confidence || 0}%\n\n`;
           if (analysis.details?.method) {
-            userMessage += `🔧 Método: ${analysis.details.method}\n`;
+            userMessage += `🔧 Método: ${analysis.details.method}\n\n`;
           }
         } else {
-          userMessage += `🤖 Análise automática não disponível ou falhou.\n`;
+          userMessage += `🤖 Análise automática não disponível ou falhou.\n\n`;
         }
         
         userMessage += `⏳ Um admin irá validar em breve.\n\n🆔 TXID: ${transaction.txid}`;
         
-        await ctx.reply(userMessage, {
-          parse_mode: 'Markdown'
-        });
+        try {
+          await ctx.reply(userMessage, {
+            parse_mode: 'Markdown'
+          });
+        } catch (err) {
+          console.error('❌ Erro ao enviar mensagem ao usuário:', err.message);
+        }
         
         // 🆕 NOTIFICAR ADMIN (validação manual necessária) - SEMPRE notificar, mesmo sem análise
-        await notifyAdmins('pending', analysis);
+        try {
+          await notifyAdmins('pending', analysis);
+        } catch (notifyErr) {
+          console.error('❌ Erro ao notificar admins:', notifyErr.message);
+          // Tentar novamente sem análise
+          try {
+            await notifyAdmins('pending', null);
+          } catch (retryErr) {
+            console.error('❌ Erro ao notificar admins (retry):', retryErr.message);
+          }
+        }
       }
     } catch (err) {
-      console.error('Erro receber comprovante:', err.message);
-      await ctx.reply('❌ Erro ao processar. Tente novamente.');
+      console.error('❌ Erro ao receber comprovante:', err.message);
+      console.error('Stack:', err.stack);
+      
+      // Tentar notificar admin mesmo em caso de erro crítico
+      try {
+        const transaction = await db.getLastPendingTransaction(ctx.chat.id);
+        if (transaction) {
+          const fileId = ctx.message.photo 
+            ? ctx.message.photo.slice(-1)[0].file_id 
+            : (ctx.message.document?.file_id || null);
+          
+          if (fileId) {
+            const notifyAdmins = async (status, analysisData = null) => {
+              try {
+                const admins = await db.getAllAdmins();
+                const product = await db.getProduct(transaction.product_id);
+                const productName = product ? product.name : transaction.product_id;
+                
+                const fileType = ctx.message.document ? 'pdf' : 'image';
+                const caption = `⚠️ *ERRO NO PROCESSAMENTO - COMPROVANTE RECEBIDO*
+
+❌ Erro: ${err.message}
+💰 Valor: R$ ${transaction.amount}
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 ID Usuário: ${ctx.from.id}
+📦 Produto: ${productName}
+📅 Enviado: ${new Date().toLocaleString('pt-BR')}
+${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
+
+🆔 TXID: ${transaction.txid}`;
+                
+                const replyMarkup = {
+                  inline_keyboard: [
+                    [
+                      { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
+                      { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
+                    ],
+                    [
+                      { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
+                    ]
+                  ]
+                };
+                
+                for (const admin of admins) {
+                  try {
+                    if (fileType === 'pdf') {
+                      await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                        caption: caption,
+                        parse_mode: 'Markdown',
+                        reply_markup: replyMarkup
+                      });
+                    } else {
+                      await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                        caption: caption,
+                        parse_mode: 'Markdown',
+                        reply_markup: replyMarkup
+                      });
+                    }
+                  } catch (notifyErr) {
+                    console.error(`❌ Erro ao notificar admin ${admin.telegram_id}:`, notifyErr.message);
+                  }
+                }
+              } catch (notifyErr) {
+                console.error('❌ Erro ao buscar admins:', notifyErr.message);
+              }
+            };
+            
+            await notifyAdmins('pending', null);
+          }
+        }
+      } catch (notifyErr) {
+        console.error('❌ Erro ao tentar notificar admin em caso de erro:', notifyErr.message);
+      }
+      
+      try {
+        await ctx.reply(`❌ *Erro ao processar comprovante*
+
+Ocorreu um erro inesperado.
+O comprovante foi enviado para validação manual.
+Aguarde a aprovação do administrador.
+
+🔄 Tente novamente ou entre em contato com o suporte.`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (replyErr) {
+        console.error('❌ Erro ao enviar mensagem de erro:', replyErr.message);
+      }
     }
   });
 
