@@ -308,23 +308,8 @@ Esta transação foi cancelada automaticamente.
         analysisError = new Error('URL do arquivo não disponível');
       }
       
-      // 🆕 GARANTIR FEEDBACK AO USUÁRIO SEMPRE
-      if (analysisError && !analysis) {
-        try {
-          await ctx.reply(`⚠️ *Análise automática não pôde ser concluída*
-
-O comprovante foi enviado para validação manual.
-Aguarde a aprovação do administrador.
-
-🆔 TXID: ${transaction.txid}`, {
-            parse_mode: 'Markdown'
-          });
-        } catch (replyErr) {
-          console.error('❌ Erro ao enviar mensagem de erro:', replyErr.message);
-        }
-      }
-      
       // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE (suporta imagens e PDFs)
+      // IMPORTANTE: Esta função DEVE ser chamada em TODOS os casos (aprovado, rejeitado, pendente, erro)
       const notifyAdmins = async (status, analysisData = null) => {
         try {
           const admins = await db.getAllAdmins();
@@ -510,9 +495,20 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
       } else {
         // ⚠️ VALIDAÇÃO MANUAL NECESSÁRIA (análise não disponível, falhou, ou confiança baixa)
         console.log('⚠️ Comprovante enviado para validação manual');
+        console.log('📊 Estado da análise:', { 
+          hasAnalysis: !!analysis, 
+          hasError: !!analysisError,
+          isValid: analysis?.isValid,
+          confidence: analysis?.confidence 
+        });
         
-        // Atualizar status para proof_sent
-        await db.updateTransactionProof(transaction.txid, fileId);
+        // Atualizar status para proof_sent (se ainda não foi atualizado)
+        try {
+          await db.updateTransactionProof(transaction.txid, fileId);
+          console.log('✅ Comprovante salvo no banco:', transaction.txid);
+        } catch (updateErr) {
+          console.error('❌ Erro ao salvar comprovante:', updateErr.message);
+        }
         
         // Mensagem para o usuário
         let userMessage = `⚠️ *Comprovante recebido!*\n\n`;
@@ -522,6 +518,8 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           if (analysis.details?.method) {
             userMessage += `🔧 Método: ${analysis.details.method}\n\n`;
           }
+        } else if (analysisError) {
+          userMessage += `🤖 Análise automática não pôde ser concluída.\n⚠️ Erro: ${analysisError.message}\n\n`;
         } else {
           userMessage += `🤖 Análise automática não disponível ou falhou.\n\n`;
         }
@@ -532,20 +530,27 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           await ctx.reply(userMessage, {
             parse_mode: 'Markdown'
           });
+          console.log('✅ Mensagem enviada ao usuário');
         } catch (err) {
           console.error('❌ Erro ao enviar mensagem ao usuário:', err.message);
         }
         
         // 🆕 NOTIFICAR ADMIN (validação manual necessária) - SEMPRE notificar, mesmo sem análise
+        console.log('📤 Notificando admins...');
         try {
           await notifyAdmins('pending', analysis);
+          console.log('✅ Admins notificados com sucesso');
         } catch (notifyErr) {
           console.error('❌ Erro ao notificar admins:', notifyErr.message);
+          console.error('Stack:', notifyErr.stack);
           // Tentar novamente sem análise
           try {
+            console.log('🔄 Tentando notificar novamente sem dados de análise...');
             await notifyAdmins('pending', null);
+            console.log('✅ Notificação de retry enviada');
           } catch (retryErr) {
             console.error('❌ Erro ao notificar admins (retry):', retryErr.message);
+            console.error('Stack:', retryErr.stack);
           }
         }
       }
