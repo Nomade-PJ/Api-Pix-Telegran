@@ -236,23 +236,47 @@ Esta transação foi cancelada automaticamente.
       // Salvar comprovante primeiro
       await db.updateTransactionProof(transaction.txid, fileId);
       
-      // Obter URL do arquivo para análise
+      // Obter URL do arquivo para análise (suporta imagens e PDFs)
       let fileUrl = null;
+      let fileType = 'image'; // 'image' ou 'pdf'
       try {
         const file = await ctx.telegram.getFile(fileId);
         fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        
+        // Detectar tipo de arquivo (PDF ou imagem)
+        if (ctx.message.document) {
+          const mimeType = (ctx.message.document.mime_type || '').toLowerCase();
+          const fileName = (ctx.message.document.file_name || '').toLowerCase();
+          const filePath = (file.file_path || '').toLowerCase();
+          
+          // Verificar se é PDF por múltiplos critérios
+          if (mimeType.includes('pdf') || 
+              fileName.endsWith('.pdf') || 
+              filePath.includes('.pdf') ||
+              mimeType === 'application/pdf') {
+            fileType = 'pdf';
+            console.log('📄 PDF detectado:', { mimeType, fileName, filePath });
+          } else {
+            console.log('🖼️ Imagem detectada:', { mimeType, fileName, filePath });
+          }
+        } else if (ctx.message.photo) {
+          // Se for foto, já sabemos que é imagem
+          fileType = 'image';
+          console.log('📷 Foto detectada');
+        }
       } catch (err) {
         console.error('Erro ao obter URL do arquivo:', err);
       }
       
-      // Analisar com IA (se URL disponível)
+      // Analisar com IA (se URL disponível) - suporta imagens e PDFs
       let analysis = null;
       if (fileUrl) {
         try {
           analysis = await proofAnalyzer.analyzeProof(
             fileUrl,
             transaction.amount,
-            transaction.pix_key
+            transaction.pix_key,
+            fileType // Passar tipo de arquivo
           );
         } catch (err) {
           console.error('Erro na análise automática:', err);
