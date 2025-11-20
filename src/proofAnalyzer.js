@@ -140,6 +140,11 @@ Responda APENAS em formato JSON com esta estrutura:
   "reason": "motivo da validação ou rejeição"
 }`;
 
+    console.log(`📤 Enviando requisição para Gemini API...`);
+    console.log(`📋 Modelo: gemini-1.5-flash`);
+    console.log(`📋 MimeType: ${mimeType}`);
+    console.log(`📋 Tamanho do arquivo base64: ${(fileData.length / 1024).toFixed(2)} KB`);
+    
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
@@ -156,14 +161,15 @@ Responda APENAS em formato JSON com esta estrutura:
         }],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 500
+          maxOutputTokens: 500,
+          responseMimeType: 'application/json' // 🆕 Forçar resposta JSON
         }
       },
       {
         headers: {
           'Content-Type': 'application/json'
         },
-        timeout: 30000
+        timeout: 60000 // Aumentar timeout para PDFs grandes
       }
     );
 
