@@ -1,32 +1,56 @@
 // src/proofAnalyzer.js
-// Análise automática de comprovantes PIX usando IA
+// Análise automática de comprovantes PIX usando múltiplos métodos
 
 const axios = require('axios');
 
 /**
- * Analisa comprovante PIX usando IA (OpenAI Vision API)
- * @param {string} fileUrl - URL da imagem do comprovante
- * @param {string} expectedAmount - Valor esperado do pagamento
- * @param {string} pixKey - Chave PIX esperada
- * @returns {Promise<{isValid: boolean, confidence: number, details: object}>}
+ * Analisa comprovante PIX usando múltiplos métodos
+ * 1. Tenta OpenAI (se configurada)
+ * 2. Tenta OCR gratuito (Tesseract via API)
+ * 3. Fallback para validação manual
  */
 async function analyzeProof(fileUrl, expectedAmount, pixKey) {
   try {
+    // MÉTODO 1: Tentar OpenAI primeiro (mais preciso)
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     
-    if (!OPENAI_API_KEY) {
-      console.warn('⚠️ OPENAI_API_KEY não configurada - Pulando análise automática');
-      return {
-        isValid: null, // null = precisa validação manual
-        confidence: 0,
-        details: {
-          error: 'API Key não configurada',
-          needsManualReview: true
-        }
-      };
+    if (OPENAI_API_KEY) {
+      try {
+        return await analyzeWithOpenAI(fileUrl, expectedAmount, pixKey, OPENAI_API_KEY);
+      } catch (err) {
+        console.warn('⚠️ Erro com OpenAI, tentando método alternativo:', err.message);
+      }
     }
+    
+    // MÉTODO 2: OCR gratuito usando Tesseract (via API pública)
+    try {
+      return await analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey);
+    } catch (err) {
+      console.warn('⚠️ Erro com OCR gratuito:', err.message);
+    }
+    
+    // MÉTODO 3: Validação básica por padrões
+    return await analyzeWithPatterns(fileUrl, expectedAmount, pixKey);
+    
+  } catch (error) {
+    console.error('❌ Erro na análise automática:', error.message);
+    
+    return {
+      isValid: null,
+      confidence: 0,
+      details: {
+        error: error.message,
+        needsManualReview: true
+      }
+    };
+  }
+}
 
-    const prompt = `Analise este comprovante de pagamento PIX e extraia as seguintes informações:
+/**
+ * Análise usando OpenAI Vision API
+ */
+async function analyzeWithOpenAI(fileUrl, expectedAmount, pixKey, apiKey) {
+  const prompt = `Analise este comprovante de pagamento PIX e extraia as seguintes informações:
 
 1. Valor pago (em reais)
 2. Chave PIX do destinatário
@@ -48,75 +72,136 @@ Responda APENAS em formato JSON com esta estrutura:
   "reason": "motivo da validação ou rejeição"
 }`;
 
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
+  const response = await axios.post(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: prompt
+            },
+            {
+              type: 'image_url',
+              image_url: { url: fileUrl }
+            }
+          ]
+        }
+      ],
+      max_tokens: 500,
+      temperature: 0.1
+    },
+    {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  const analysis = JSON.parse(response.data.choices[0].message.content);
+  const amountMatch = parseFloat(analysis.amount?.replace('R$', '').replace(',', '.')) === parseFloat(expectedAmount);
+  const finalValid = analysis.isValid && amountMatch;
+
+  return {
+    isValid: finalValid,
+    confidence: analysis.confidence || 0,
+    details: {
+      amount: analysis.amount,
+      pixKey: analysis.pixKey,
+      status: analysis.status,
+      date: analysis.date,
+      reason: analysis.reason,
+      amountMatch,
+      needsManualReview: analysis.confidence < 80,
+      method: 'OpenAI'
+    }
+  };
+}
+
+/**
+ * Análise usando OCR gratuito (Tesseract via API)
+ */
+async function analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey) {
+  // Usar API gratuita de OCR (ex: OCR.space)
+  const OCR_API_KEY = process.env.OCR_API_KEY || 'helloworld'; // Chave gratuita padrão
+  
+  try {
+    const ocrResponse = await axios.post(
+      'https://api.ocr.space/parse/imageurl',
       {
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: prompt
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: fileUrl
-                }
-              }
-            ]
-          }
-        ],
-        max_tokens: 500,
-        temperature: 0.1
+        apikey: OCR_API_KEY,
+        url: fileUrl,
+        language: 'por',
+        isOverlayRequired: false
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/x-www-form-urlencoded'
         }
       }
     );
 
-    const analysis = JSON.parse(response.data.choices[0].message.content);
+    const extractedText = ocrResponse.data.ParsedResults?.[0]?.ParsedText || '';
     
-    // Validação adicional
-    const amountMatch = parseFloat(analysis.amount?.replace('R$', '').replace(',', '.')) === parseFloat(expectedAmount);
-    const finalValid = analysis.isValid && amountMatch;
-
-    console.log('✅ Análise automática concluída:', {
-      valid: finalValid,
-      confidence: analysis.confidence
-    });
-
-    return {
-      isValid: finalValid,
-      confidence: analysis.confidence || 0,
-      details: {
-        amount: analysis.amount,
-        pixKey: analysis.pixKey,
-        status: analysis.status,
-        date: analysis.date,
-        reason: analysis.reason,
-        amountMatch,
-        needsManualReview: analysis.confidence < 80
-      }
-    };
-
-  } catch (error) {
-    console.error('❌ Erro na análise automática:', error.message);
+    // Extrair valor
+    const amountRegex = /R\$\s*([\d.,]+)/gi;
+    const amountMatches = extractedText.match(amountRegex);
+    const foundAmount = amountMatches ? amountMatches[0].replace(/[R$\s]/g, '').replace(',', '.') : null;
+    
+    // Extrair chave PIX
+    const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const keyFound = pixKeyRegex.test(extractedText);
+    
+    // Verificar palavras-chave de pagamento
+    const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado)/i;
+    const isPaid = paymentKeywords.test(extractedText);
+    
+    // Calcular confiança
+    let confidence = 0;
+    if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) confidence += 50;
+    if (keyFound) confidence += 30;
+    if (isPaid) confidence += 20;
+    
+    const isValid = confidence >= 70 && foundAmount && keyFound;
     
     return {
-      isValid: null,
-      confidence: 0,
+      isValid,
+      confidence,
       details: {
-        error: error.message,
-        needsManualReview: true
+        amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
+        pixKey: keyFound ? pixKey : 'Não encontrada',
+        status: isPaid ? 'Pago' : 'Indeterminado',
+        extractedText: extractedText.substring(0, 200), // Primeiros 200 chars
+        method: 'OCR Gratuito'
       }
     };
+    
+  } catch (err) {
+    throw new Error(`OCR falhou: ${err.message}`);
   }
+}
+
+/**
+ * Análise básica por padrões (sem API externa)
+ */
+async function analyzeWithPatterns(fileUrl, expectedAmount, pixKey) {
+  // Método mais básico: apenas validação estrutural
+  // Não analisa a imagem, apenas retorna que precisa validação manual
+  
+  return {
+    isValid: null,
+    confidence: 0,
+    details: {
+      error: 'Nenhum método de análise disponível',
+      needsManualReview: true,
+      method: 'Validação Manual',
+      message: 'Por favor, configure OPENAI_API_KEY ou use validação manual'
+    }
+  };
 }
 
 /**
