@@ -3,39 +3,19 @@
 
 const axios = require('axios');
 const FormData = require('form-data');
-const Tesseract = require('tesseract.js');
-const pdfParse = require('pdf-parse');
 
 /**
  * Analisa comprovante PIX usando múltiplos métodos
- * 1. Tenta OpenAI (se configurada) - suporta imagens e PDFs
- * 2. Tenta pdf-parse (para PDFs com texto) - GRATUITO, SEM API KEY
- * 3. Tenta Tesseract.js (processamento local) - GRATUITO, SEM API KEY, suporta PDFs e imagens
- * 4. Tenta OCR.space (upload direto) - suporta imagens e PDFs
- * 5. Tenta OCR.space (URL) - fallback
- * 6. Fallback para validação manual
+ * 1. Tenta Google Gemini (GRATUITO) - suporta imagens e PDFs
+ * 2. Tenta OCR.space (upload direto) - suporta imagens e PDFs
+ * 3. Tenta OCR.space (URL) - fallback
+ * 4. Fallback para validação manual
  */
 async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image') {
   try {
     console.log(`🔍 Iniciando análise - Tipo: ${fileType}, Valor esperado: R$ ${expectedAmount}, Chave: ${pixKey}`);
     
-    // MÉTODO 1: Tentar OpenAI primeiro (mais preciso)
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-    
-    if (OPENAI_API_KEY) {
-      try {
-        console.log('🤖 Tentando análise com OpenAI...');
-        const result = await analyzeWithOpenAI(fileUrl, expectedAmount, pixKey, OPENAI_API_KEY);
-        if (result && result.isValid !== null) {
-          console.log('✅ OpenAI retornou resultado válido');
-          return result;
-        }
-      } catch (err) {
-        console.warn('⚠️ Erro com OpenAI, tentando método alternativo:', err.message);
-      }
-    }
-    
-    // MÉTODO 2: Google Gemini (GRATUITO, similar ao GPT-4o-mini) - suporta PDFs e imagens
+    // MÉTODO 1: Google Gemini (GRATUITO, similar ao GPT-4o-mini) - suporta PDFs e imagens
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     
     if (GEMINI_API_KEY) {
@@ -51,33 +31,7 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
       }
     }
     
-    // MÉTODO 3: pdf-parse (para PDFs com texto extraível) - GRATUITO, SEM API KEY
-    if (fileType === 'pdf') {
-      try {
-        console.log('📄 Tentando pdf-parse (extração direta de texto do PDF)...');
-        const result = await analyzeWithPdfParse(fileUrl, expectedAmount, pixKey);
-        if (result && result.isValid !== null) {
-          console.log('✅ pdf-parse retornou resultado válido');
-          return result;
-        }
-      } catch (err) {
-        console.warn('⚠️ Erro com pdf-parse, tentando OCR:', err.message);
-      }
-    }
-    
-    // MÉTODO 4: Tesseract.js (processamento local) - GRATUITO, SEM API KEY, funciona com PDFs e imagens
-    try {
-      console.log('🔬 Tentando Tesseract.js (OCR local gratuito)...');
-      const result = await analyzeWithTesseract(fileUrl, expectedAmount, pixKey, fileType);
-      if (result && result.isValid !== null) {
-        console.log('✅ Tesseract.js retornou resultado válido');
-        return result;
-      }
-    } catch (err) {
-      console.warn('⚠️ Erro com Tesseract.js, tentando OCR.space:', err.message);
-    }
-    
-    // MÉTODO 5: OCR.space com upload direto (melhor para PDFs)
+    // MÉTODO 2: OCR.space com upload direto (melhor para PDFs)
     try {
       console.log('📄 Tentando OCR.space (upload direto)...');
       const result = await analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType);
@@ -89,7 +43,7 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
       console.warn('⚠️ Erro com OCR.space (upload), tentando URL:', err.message);
     }
     
-    // MÉTODO 6: OCR.space com URL (fallback)
+    // MÉTODO 3: OCR.space com URL (fallback)
     try {
       console.log('📄 Tentando OCR.space (URL)...');
       const result = await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
@@ -101,7 +55,7 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
       console.warn('⚠️ Erro com OCR.space (URL):', err.message);
     }
     
-    // MÉTODO 7: Validação básica por padrões (sempre retorna para validação manual)
+    // MÉTODO 4: Validação básica por padrões (sempre retorna para validação manual)
     console.log('⚠️ Todos os métodos de OCR falharam, enviando para validação manual');
     return await analyzeWithPatterns(fileUrl, expectedAmount, pixKey);
     
@@ -354,82 +308,6 @@ Responda APENAS em formato JSON com esta estrutura:
     console.error('Stack:', err.stack);
     throw err;
   }
-}
-
-/**
- * Análise usando OpenAI Vision API
- */
-async function analyzeWithOpenAI(fileUrl, expectedAmount, pixKey, apiKey) {
-  const prompt = `Analise este comprovante de pagamento PIX e extraia as seguintes informações:
-
-1. Valor pago (em reais)
-2. Chave PIX do destinatário
-3. Status do pagamento (aprovado/pago/concluído)
-4. Data e hora da transação
-5. Se o comprovante parece autêntico
-
-Valor esperado: R$ ${expectedAmount}
-Chave PIX esperada: ${pixKey}
-
-Responda APENAS em formato JSON com esta estrutura:
-{
-  "isValid": true/false,
-  "amount": "valor encontrado",
-  "pixKey": "chave encontrada",
-  "status": "status do pagamento",
-  "date": "data da transação",
-  "confidence": 0-100,
-  "reason": "motivo da validação ou rejeição"
-}`;
-
-  const response = await axios.post(
-    'https://api.openai.com/v1/chat/completions',
-    {
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: prompt
-            },
-            {
-              type: 'image_url',
-              image_url: { url: fileUrl }
-            }
-          ]
-        }
-      ],
-      max_tokens: 500,
-      temperature: 0.1
-    },
-    {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-
-  const analysis = JSON.parse(response.data.choices[0].message.content);
-  const amountMatch = parseFloat(analysis.amount?.replace('R$', '').replace(',', '.')) === parseFloat(expectedAmount);
-  const finalValid = analysis.isValid && amountMatch;
-
-  return {
-    isValid: finalValid,
-    confidence: analysis.confidence || 0,
-    details: {
-      amount: analysis.amount,
-      pixKey: analysis.pixKey,
-      status: analysis.status,
-      date: analysis.date,
-      reason: analysis.reason,
-      amountMatch,
-      needsManualReview: analysis.confidence < 80,
-      method: 'OpenAI'
-    }
-  };
 }
 
 /**
@@ -701,188 +579,6 @@ async function analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType 
       fileType: isPDF ? 'PDF' : 'Imagem'
     }
   };
-}
-
-/**
- * Análise usando pdf-parse (para PDFs com texto extraível)
- * GRATUITO, SEM API KEY, funciona apenas para PDFs que já têm texto
- */
-async function analyzeWithPdfParse(fileUrl, expectedAmount, pixKey) {
-  try {
-    console.log('📄 Baixando PDF para análise com pdf-parse...');
-    
-    // Baixar PDF
-    const pdfResponse = await axios.get(fileUrl, {
-      responseType: 'arraybuffer',
-      timeout: 30000
-    });
-    
-    const pdfBuffer = Buffer.from(pdfResponse.data);
-    console.log(`✅ PDF baixado: ${(pdfBuffer.length / 1024).toFixed(2)} KB`);
-    
-    // Extrair texto do PDF
-    const pdfData = await pdfParse(pdfBuffer);
-    const extractedText = pdfData.text || '';
-    
-    if (!extractedText || extractedText.trim().length === 0) {
-      throw new Error('PDF não contém texto extraível (pode ser apenas imagem)');
-    }
-    
-    console.log(`✅ pdf-parse extraiu ${extractedText.length} caracteres do PDF`);
-    
-    // Extrair valor
-    const amountRegex = /R\$\s*([\d.,]+)|([\d.,]+)\s*reais?/gi;
-    const amountMatches = extractedText.match(amountRegex);
-    let foundAmount = null;
-    
-    if (amountMatches) {
-      const match = amountMatches[0];
-      foundAmount = match.replace(/[R$\sreais]/gi, '').replace(',', '.').trim();
-    }
-    
-    // Extrair chave PIX
-    const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    const keyFound = pixKeyRegex.test(extractedText);
-    
-    // Verificar palavras-chave de pagamento
-    const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado|transferido|enviado)/i;
-    const isPaid = paymentKeywords.test(extractedText);
-    
-    // Calcular confiança
-    let confidence = 0;
-    if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) {
-      confidence += 50;
-      console.log(`✅ Valor encontrado: R$ ${foundAmount}`);
-    }
-    
-    if (keyFound) {
-      confidence += 30;
-      console.log(`✅ Chave PIX encontrada`);
-    }
-    
-    if (isPaid) {
-      confidence += 20;
-      console.log(`✅ Status de pagamento encontrado`);
-    }
-    
-    const isValid = confidence >= 70 && foundAmount && keyFound;
-    
-    console.log(`📊 Confiança final (pdf-parse): ${confidence}% - ${isValid ? 'VÁLIDO' : 'PRECISA VALIDAÇÃO MANUAL'}`);
-    
-    return {
-      isValid,
-      confidence,
-      details: {
-        amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
-        pixKey: keyFound ? pixKey : 'Não encontrada',
-        status: isPaid ? 'Pago' : 'Indeterminado',
-        extractedText: extractedText.substring(0, 300),
-        method: 'pdf-parse (Gratuito, Sem API Key)',
-        fileType: 'PDF'
-      }
-    };
-    
-  } catch (err) {
-    console.error('❌ Erro com pdf-parse:', err.message);
-    throw err;
-  }
-}
-
-/**
- * Análise usando Tesseract.js (processamento local)
- * GRATUITO, SEM API KEY, funciona com PDFs e imagens
- */
-async function analyzeWithTesseract(fileUrl, expectedAmount, pixKey, fileType = 'image') {
-  try {
-    console.log(`🔬 Iniciando análise com Tesseract.js (${fileType === 'pdf' ? 'PDF' : 'imagem'})...`);
-    
-    // Baixar arquivo
-    const fileResponse = await axios.get(fileUrl, {
-      responseType: 'arraybuffer',
-      timeout: 30000
-    });
-    
-    const fileBuffer = Buffer.from(fileResponse.data);
-    console.log(`✅ Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
-    
-    // Para PDFs, Tesseract precisa converter para imagem primeiro
-    // Por enquanto, vamos processar como imagem (Tesseract pode processar a primeira página)
-    const imageBuffer = fileType === 'pdf' ? fileBuffer : fileBuffer;
-    
-    // Processar com Tesseract (português)
-    console.log('🔬 Processando com Tesseract.js (pode demorar alguns segundos)...');
-    const { data: { text } } = await Tesseract.recognize(imageBuffer, 'por', {
-      logger: m => {
-        if (m.status === 'recognizing text') {
-          console.log(`🔬 Progresso: ${Math.round(m.progress * 100)}%`);
-        }
-      }
-    });
-    
-    const extractedText = text || '';
-    
-    if (!extractedText || extractedText.trim().length === 0) {
-      throw new Error('Tesseract não conseguiu extrair texto do documento');
-    }
-    
-    console.log(`✅ Tesseract extraiu ${extractedText.length} caracteres`);
-    
-    // Extrair valor
-    const amountRegex = /R\$\s*([\d.,]+)|([\d.,]+)\s*reais?/gi;
-    const amountMatches = extractedText.match(amountRegex);
-    let foundAmount = null;
-    
-    if (amountMatches) {
-      const match = amountMatches[0];
-      foundAmount = match.replace(/[R$\sreais]/gi, '').replace(',', '.').trim();
-    }
-    
-    // Extrair chave PIX
-    const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    const keyFound = pixKeyRegex.test(extractedText);
-    
-    // Verificar palavras-chave de pagamento
-    const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado|transferido|enviado)/i;
-    const isPaid = paymentKeywords.test(extractedText);
-    
-    // Calcular confiança
-    let confidence = 0;
-    if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) {
-      confidence += 50;
-      console.log(`✅ Valor encontrado: R$ ${foundAmount}`);
-    }
-    
-    if (keyFound) {
-      confidence += 30;
-      console.log(`✅ Chave PIX encontrada`);
-    }
-    
-    if (isPaid) {
-      confidence += 20;
-      console.log(`✅ Status de pagamento encontrado`);
-    }
-    
-    const isValid = confidence >= 70 && foundAmount && keyFound;
-    
-    console.log(`📊 Confiança final (Tesseract): ${confidence}% - ${isValid ? 'VÁLIDO' : 'PRECISA VALIDAÇÃO MANUAL'}`);
-    
-    return {
-      isValid,
-      confidence,
-      details: {
-        amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
-        pixKey: keyFound ? pixKey : 'Não encontrada',
-        status: isPaid ? 'Pago' : 'Indeterminado',
-        extractedText: extractedText.substring(0, 300),
-        method: `Tesseract.js (Gratuito, Sem API Key, Local) - ${fileType === 'pdf' ? 'PDF' : 'Imagem'}`,
-        fileType: fileType === 'pdf' ? 'PDF' : 'Imagem'
-      }
-    };
-    
-  } catch (err) {
-    console.error('❌ Erro com Tesseract.js:', err.message);
-    throw err;
-  }
 }
 
 /**

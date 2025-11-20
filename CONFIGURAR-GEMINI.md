@@ -39,14 +39,12 @@ A API key será adicionada automaticamente quando você configurar na Vercel (ve
 
 O Google Gemini será usado automaticamente como método de análise, oferecendo precisão similar ao GPT-4o-mini, mas **100% GRATUITO**!
 
-## 🔄 Nova Ordem de Análise (com Gemini):
+## 🔄 Ordem de Análise:
 
-1. ✅ **OpenAI** (se configurada) - pago
-2. ⭐ **Google Gemini** - **GRATUITO** ⭐
-3. 📄 **pdf-parse** - gratuito
-4. 🔬 **Tesseract.js** - gratuito
-5. 📄 **OCR.space** - gratuito
-6. ⚠️ Validação manual
+1. ⭐ **Google Gemini** - **GRATUITO** ⭐ (se configurada)
+2. 📄 **OCR.space (upload direto)** - gratuito
+3. 📄 **OCR.space (URL)** - fallback gratuito
+4. ⚠️ Validação manual
 
 ## 💰 Custos
 
