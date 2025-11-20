@@ -311,7 +311,7 @@ Responda APENAS em formato JSON com esta estrutura:
 }
 
 /**
- * Análise usando OCR gratuito (Tesseract via API)
+ * Análise usando OCR.space (gratuito)
  * Suporta imagens (JPG, PNG) e PDFs
  * Baixa o arquivo do Telegram e faz upload direto para evitar erro 405
  */
