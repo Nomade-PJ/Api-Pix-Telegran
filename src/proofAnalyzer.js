@@ -182,23 +182,57 @@ Responda APENAS em formato JSON com esta estrutura:
       partsLength: response.data.candidates?.[0]?.content?.parts?.length || 0
     }, null, 2));
 
-    const responseText = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    // Verificar se há erro na resposta
+    if (response.data.error) {
+      console.error('❌ Gemini retornou erro:', JSON.stringify(response.data.error, null, 2));
+      throw new Error(`Gemini API Error: ${response.data.error.message || 'Erro desconhecido'}`);
+    }
+
+    // Verificar se há candidatos
+    if (!response.data.candidates || response.data.candidates.length === 0) {
+      console.error('❌ Gemini não retornou candidatos. Resposta completa:', JSON.stringify(response.data, null, 2));
+      throw new Error('Gemini não retornou candidatos na resposta');
+    }
+
+    // Verificar se há conteúdo
+    const candidate = response.data.candidates[0];
+    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+      console.error('❌ Gemini não retornou conteúdo. Candidato:', JSON.stringify(candidate, null, 2));
+      throw new Error('Gemini não retornou conteúdo na resposta');
+    }
+
+    // Verificar se há bloqueio de segurança
+    if (candidate.finishReason === 'SAFETY') {
+      console.error('❌ Gemini bloqueou a resposta por segurança');
+      throw new Error('Gemini bloqueou a resposta por políticas de segurança');
+    }
+
+    const responseText = candidate.content.parts[0].text || '';
     
     console.log(`📝 Texto retornado pelo Gemini (primeiros 500 chars):`, responseText.substring(0, 500));
     
-    if (!responseText) {
+    if (!responseText || responseText.trim().length === 0) {
       console.error('❌ Resposta completa do Gemini:', JSON.stringify(response.data, null, 2));
-      throw new Error('Gemini não retornou resposta');
+      throw new Error('Gemini não retornou texto na resposta');
     }
 
-    // Extrair JSON da resposta (pode vir com markdown)
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    // Extrair JSON da resposta (pode vir com markdown ou já ser JSON puro)
+    let jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    
+    // Se não encontrou JSON, tentar parse direto (pode ser JSON puro)
     if (!jsonMatch) {
-      console.error('❌ Resposta do Gemini não contém JSON. Texto completo:', responseText);
-      throw new Error('Resposta do Gemini não contém JSON válido');
+      console.log('⚠️ Não encontrou JSON com regex, tentando parse direto...');
+      try {
+        const directParse = JSON.parse(responseText.trim());
+        jsonMatch = [responseText.trim()];
+        console.log('✅ Parse direto funcionou!');
+      } catch (directErr) {
+        console.error('❌ Parse direto também falhou. Texto completo:', responseText);
+        throw new Error('Resposta do Gemini não contém JSON válido');
+      }
     }
 
-    console.log(`📦 JSON extraído:`, jsonMatch[0].substring(0, 300));
+    console.log(`📦 JSON extraído (primeiros 300 chars):`, jsonMatch[0].substring(0, 300));
 
     let analysis;
     try {
@@ -206,7 +240,8 @@ Responda APENAS em formato JSON com esta estrutura:
       console.log(`✅ JSON parseado com sucesso:`, {
         isValid: analysis.isValid,
         amount: analysis.amount,
-        confidence: analysis.confidence
+        confidence: analysis.confidence,
+        pixKey: analysis.pixKey
       });
     } catch (parseErr) {
       console.error('❌ Erro ao fazer parse do JSON:', parseErr.message);
