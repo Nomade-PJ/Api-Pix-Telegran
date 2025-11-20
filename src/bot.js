@@ -312,14 +312,18 @@ Esta transação foi cancelada automaticamente.
       // IMPORTANTE: Esta função DEVE ser chamada em TODOS os casos (aprovado, rejeitado, pendente, erro)
       const notifyAdmins = async (status, analysisData = null) => {
         try {
+          console.log(`📤 notifyAdmins chamado - Status: ${status}, FileType: ${fileType}, FileId: ${fileId?.substring(0, 20)}...`);
+          
           const admins = await db.getAllAdmins();
-          const product = await db.getProduct(transaction.product_id);
-          const productName = product ? product.name : transaction.product_id;
+          console.log(`👥 Admins encontrados: ${admins.length}`);
           
           if (admins.length === 0) {
             console.warn('⚠️ Nenhum admin encontrado para notificar');
             return;
           }
+          
+          const product = await db.getProduct(transaction.product_id);
+          const productName = product ? product.name : transaction.product_id;
           
           const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
           const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
@@ -348,10 +352,15 @@ ${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
             ]
           } : undefined;
           
+          console.log(`📋 Preparando envio para ${admins.length} admin(s) - Tipo: ${fileType}, Botões: ${replyMarkup ? 'Sim' : 'Não'}`);
+          
           for (const admin of admins) {
             try {
+              console.log(`📨 Enviando para admin ${admin.telegram_id} (${admin.first_name || admin.username || 'N/A'})...`);
+              
               // 🆕 USAR sendDocument PARA PDFs E sendPhoto PARA IMAGENS
               if (fileType === 'pdf') {
+                console.log(`📄 Enviando PDF para admin ${admin.telegram_id}...`);
                 await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
                   caption: caption,
                   parse_mode: 'Markdown',
@@ -359,6 +368,7 @@ ${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
                 });
                 console.log(`✅ PDF enviado para admin ${admin.telegram_id} - Status: ${status}`);
               } else {
+                console.log(`🖼️ Enviando imagem para admin ${admin.telegram_id}...`);
                 await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
                   caption: caption,
                   parse_mode: 'Markdown',
@@ -368,28 +378,36 @@ ${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
               }
             } catch (err) {
               console.error(`❌ Erro ao notificar admin ${admin.telegram_id}:`, err.message);
+              console.error('Stack:', err.stack);
               // Tentar método alternativo em caso de erro
               try {
+                console.log(`🔄 Tentando método alternativo para admin ${admin.telegram_id}...`);
                 if (fileType === 'pdf') {
                   await ctx.telegram.sendMessage(admin.telegram_id, `${caption}\n\n📄 *Arquivo PDF anexado*`, {
                     parse_mode: 'Markdown',
                     reply_markup: replyMarkup
                   });
                   await ctx.telegram.sendDocument(admin.telegram_id, fileId);
+                  console.log(`✅ Método alternativo funcionou para admin ${admin.telegram_id}`);
                 } else {
                   await ctx.telegram.sendMessage(admin.telegram_id, `${caption}\n\n🖼️ *Imagem anexada*`, {
                     parse_mode: 'Markdown',
                     reply_markup: replyMarkup
                   });
                   await ctx.telegram.sendPhoto(admin.telegram_id, fileId);
+                  console.log(`✅ Método alternativo funcionou para admin ${admin.telegram_id}`);
                 }
               } catch (fallbackErr) {
                 console.error(`❌ Erro no fallback para admin ${admin.telegram_id}:`, fallbackErr.message);
+                console.error('Stack:', fallbackErr.stack);
               }
             }
           }
+          
+          console.log(`✅ Processo de notificação concluído para ${admins.length} admin(s)`);
         } catch (err) {
           console.error('❌ Erro ao buscar admins:', err.message);
+          console.error('Stack:', err.stack);
         }
       };
       
