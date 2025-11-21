@@ -1,612 +1,247 @@
 // src/proofAnalyzer.js
-// Análise automática de comprovantes PIX usando múltiplos métodos
+// Análise automática de comprovantes PIX usando OCR.space
 
 const axios = require('axios');
 const FormData = require('form-data');
 
 /**
- * Analisa comprovante PIX usando múltiplos métodos
- * 1. Tenta Google Gemini (GRATUITO) - suporta imagens e PDFs
- * 2. Tenta OCR.space (upload direto) - suporta imagens e PDFs
- * 3. Tenta OCR.space (URL) - fallback
- * 4. Fallback para validação manual
+ * Analisa comprovante PIX usando OCR.space
+ * Suporta imagens (JPG, PNG) e PDFs
  */
 async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image') {
   try {
-    console.log(`🔍 Iniciando análise - Tipo: ${fileType}, Valor esperado: R$ ${expectedAmount}, Chave: ${pixKey}`);
+    console.log(`🔍 [OCR] Iniciando análise - Tipo: ${fileType}, Valor esperado: R$ ${expectedAmount}, Chave: ${pixKey}`);
     
-    // MÉTODO 1: Google Gemini (GRATUITO, similar ao GPT-4o-mini) - suporta PDFs e imagens
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    
-    if (GEMINI_API_KEY) {
-      try {
-        console.log('⭐ Tentando análise com Google Gemini (GRATUITO)...');
-        console.log(`📋 Parâmetros: fileType=${fileType}, expectedAmount=${expectedAmount}, pixKey=${pixKey}`);
-        const result = await analyzeWithGemini(fileUrl, expectedAmount, pixKey, GEMINI_API_KEY, fileType);
-        console.log(`📊 Resultado do Gemini:`, {
-          hasResult: !!result,
-          isValid: result?.isValid,
-          confidence: result?.confidence,
-          method: result?.details?.method
-        });
-        if (result && result.isValid !== null) {
-          console.log('✅ Google Gemini retornou resultado válido');
-          return result;
-        } else {
-          console.warn('⚠️ Gemini retornou resultado inválido ou null, tentando método alternativo');
-        }
-      } catch (err) {
-        console.error('❌ Erro com Google Gemini (detalhes completos):', err.message);
-        console.error('Stack:', err.stack);
-        console.warn('⚠️ Tentando método alternativo após erro do Gemini');
-      }
-    } else {
-      console.warn('⚠️ GEMINI_API_KEY não configurada, pulando análise com Gemini');
-    }
-    
-    // MÉTODO 2: OCR.space com upload direto (melhor para PDFs)
+    // MÉTODO PRINCIPAL: OCR.space com upload direto
     try {
-      console.log('📄 Tentando OCR.space (upload direto)...');
-      const result = await analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType);
-      if (result && result.isValid !== null) {
-        console.log('✅ OCR.space (upload) retornou resultado válido');
+      console.log('📄 [OCR] Analisando com OCR.space...');
+      const result = await analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType);
+      if (result) {
+        console.log(`✅ [OCR] Análise concluída - Válido: ${result.isValid}, Confiança: ${result.confidence}%`);
         return result;
       }
     } catch (err) {
-      console.warn('⚠️ Erro com OCR.space (upload), tentando URL:', err.message);
+      console.error('❌ [OCR] Erro na análise:', err.message);
     }
     
-    // MÉTODO 3: OCR.space com URL (fallback)
-    try {
-      console.log('📄 Tentando OCR.space (URL)...');
-      const result = await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
-      if (result && result.isValid !== null) {
-        console.log('✅ OCR.space (URL) retornou resultado válido');
-        return result;
+    // Fallback: Retornar para validação manual
+    console.log('⚠️ [OCR] Retornando para validação manual');
+    return {
+      isValid: null,
+      confidence: 0,
+      details: {
+        method: 'Validação Manual',
+        reason: 'Análise automática não disponível',
+        needsManualReview: true
       }
-    } catch (err) {
-      console.warn('⚠️ Erro com OCR.space (URL):', err.message);
-    }
-    
-    // MÉTODO 4: Validação básica por padrões (sempre retorna para validação manual)
-    console.log('⚠️ Todos os métodos de OCR falharam, enviando para validação manual');
-    return await analyzeWithPatterns(fileUrl, expectedAmount, pixKey);
+    };
     
   } catch (error) {
-    console.error('❌ Erro crítico na análise automática:', error.message);
-    console.error('Stack:', error.stack);
+    console.error('❌ [OCR] Erro crítico:', error.message);
     
     return {
       isValid: null,
       confidence: 0,
       details: {
+        method: 'Erro',
         error: error.message,
-        needsManualReview: true,
-        method: 'Erro crítico'
+        needsManualReview: true
       }
     };
-  }
-}
-
-/**
- * Análise usando Google Gemini API (GRATUITO, similar ao GPT-4o-mini)
- * Suporta imagens e PDFs
- */
-async function analyzeWithGemini(fileUrl, expectedAmount, pixKey, apiKey, fileType = 'image') {
-  try {
-    console.log(`⭐ Analisando ${fileType === 'pdf' ? 'PDF' : 'imagem'} com Google Gemini...`);
-    
-    // Baixar arquivo para base64 (Gemini precisa de base64)
-    let fileData;
-    let mimeType;
-    
-    try {
-      const fileResponse = await axios.get(fileUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30000
-      });
-      fileData = Buffer.from(fileResponse.data).toString('base64');
-      
-      if (fileType === 'pdf') {
-        mimeType = 'application/pdf';
-      } else {
-        mimeType = fileUrl.toLowerCase().includes('.png') ? 'image/png' : 'image/jpeg';
-      }
-      
-      console.log(`✅ Arquivo baixado e convertido para base64: ${(fileData.length / 1024).toFixed(2)} KB`);
-    } catch (downloadErr) {
-      throw new Error(`Erro ao baixar arquivo: ${downloadErr.message}`);
-    }
-    
-    const prompt = `Analise este comprovante de pagamento PIX e extraia as seguintes informações:
-
-1. Valor pago (em reais)
-2. Chave PIX do destinatário
-3. Status do pagamento (aprovado/pago/concluído)
-4. Data e hora da transação
-5. Se o comprovante parece autêntico
-
-Valor esperado: R$ ${expectedAmount}
-Chave PIX esperada: ${pixKey}
-
-Responda APENAS em formato JSON com esta estrutura:
-{
-  "isValid": true/false,
-  "amount": "valor encontrado",
-  "pixKey": "chave encontrada",
-  "status": "status do pagamento",
-  "date": "data da transação",
-  "confidence": 0-100,
-  "reason": "motivo da validação ou rejeição"
-}`;
-
-    console.log(`📤 Enviando requisição para Gemini API...`);
-    console.log(`📋 Modelo: gemini-1.5-flash`);
-    console.log(`📋 MimeType: ${mimeType}`);
-    console.log(`📋 Tamanho do arquivo base64: ${(fileData.length / 1024).toFixed(2)} KB`);
-    
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        contents: [{
-          parts: [
-            { text: prompt },
-            {
-              inline_data: {
-                mime_type: mimeType,
-                data: fileData
-              }
-            }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 500
-        }
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        timeout: 60000 // Aumentar timeout para PDFs grandes
-      }
-    );
-
-    console.log(`📥 Resposta do Gemini recebida - Status: ${response.status}`);
-    console.log(`📋 Estrutura da resposta:`, JSON.stringify({
-      hasCandidates: !!response.data.candidates,
-      candidatesLength: response.data.candidates?.length || 0,
-      hasContent: !!response.data.candidates?.[0]?.content,
-      hasParts: !!response.data.candidates?.[0]?.content?.parts,
-      partsLength: response.data.candidates?.[0]?.content?.parts?.length || 0
-    }, null, 2));
-
-    // Verificar se há erro na resposta
-    if (response.data.error) {
-      console.error('❌ Gemini retornou erro:', JSON.stringify(response.data.error, null, 2));
-      throw new Error(`Gemini API Error: ${response.data.error.message || 'Erro desconhecido'}`);
-    }
-
-    // Verificar se há candidatos
-    if (!response.data.candidates || response.data.candidates.length === 0) {
-      console.error('❌ Gemini não retornou candidatos. Resposta completa:', JSON.stringify(response.data, null, 2));
-      throw new Error('Gemini não retornou candidatos na resposta');
-    }
-
-    // Verificar se há conteúdo
-    const candidate = response.data.candidates[0];
-    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
-      console.error('❌ Gemini não retornou conteúdo. Candidato:', JSON.stringify(candidate, null, 2));
-      throw new Error('Gemini não retornou conteúdo na resposta');
-    }
-
-    // Verificar se há bloqueio de segurança
-    if (candidate.finishReason === 'SAFETY') {
-      console.error('❌ Gemini bloqueou a resposta por segurança');
-      throw new Error('Gemini bloqueou a resposta por políticas de segurança');
-    }
-
-    const responseText = candidate.content.parts[0].text || '';
-    
-    console.log(`📝 Texto retornado pelo Gemini (primeiros 500 chars):`, responseText.substring(0, 500));
-    
-    if (!responseText || responseText.trim().length === 0) {
-      console.error('❌ Resposta completa do Gemini:', JSON.stringify(response.data, null, 2));
-      throw new Error('Gemini não retornou texto na resposta');
-    }
-
-    // Extrair JSON da resposta (pode vir com markdown ou já ser JSON puro)
-    let jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    
-    // Se não encontrou JSON, tentar parse direto (pode ser JSON puro)
-    if (!jsonMatch) {
-      console.log('⚠️ Não encontrou JSON com regex, tentando parse direto...');
-      try {
-        const directParse = JSON.parse(responseText.trim());
-        jsonMatch = [responseText.trim()];
-        console.log('✅ Parse direto funcionou!');
-      } catch (directErr) {
-        console.error('❌ Parse direto também falhou. Texto completo:', responseText);
-        throw new Error('Resposta do Gemini não contém JSON válido');
-      }
-    }
-
-    console.log(`📦 JSON extraído (primeiros 300 chars):`, jsonMatch[0].substring(0, 300));
-
-    let analysis;
-    try {
-      analysis = JSON.parse(jsonMatch[0]);
-      console.log(`✅ JSON parseado com sucesso:`, {
-        isValid: analysis.isValid,
-        amount: analysis.amount,
-        confidence: analysis.confidence,
-        pixKey: analysis.pixKey
-      });
-    } catch (parseErr) {
-      console.error('❌ Erro ao fazer parse do JSON:', parseErr.message);
-      console.error('JSON que falhou:', jsonMatch[0]);
-      throw new Error(`Erro ao fazer parse do JSON do Gemini: ${parseErr.message}`);
-    }
-
-    const amountMatch = parseFloat(analysis.amount?.replace('R$', '').replace(',', '.').trim()) === parseFloat(expectedAmount);
-    const finalValid = analysis.isValid && amountMatch;
-
-    console.log(`✅ Gemini análise concluída:`, {
-      isValid: finalValid,
-      confidence: analysis.confidence,
-      amountMatch,
-      expectedAmount,
-      foundAmount: analysis.amount
-    });
-
-    return {
-      isValid: finalValid,
-      confidence: analysis.confidence || 0,
-      details: {
-        amount: analysis.amount,
-        pixKey: analysis.pixKey,
-        status: analysis.status,
-        date: analysis.date,
-        reason: analysis.reason,
-        amountMatch,
-        needsManualReview: (analysis.confidence || 0) < 80,
-        method: 'Google Gemini (Gratuito)'
-      }
-    };
-  } catch (err) {
-    console.error('❌ Erro detalhado com Google Gemini:');
-    console.error('Mensagem:', err.message);
-    if (err.response) {
-      console.error('Response status:', err.response.status);
-      console.error('Response data:', JSON.stringify(err.response.data, null, 2));
-      console.error('Response headers:', err.response.headers);
-    }
-    if (err.code) {
-      console.error('Error code:', err.code);
-    }
-    console.error('Stack:', err.stack);
-    
-    // Fornecer mensagem de erro mais clara
-    let errorMsg = `Google Gemini falhou: ${err.message}`;
-    if (err.response?.status === 404) {
-      errorMsg += ' - Modelo não encontrado ou API key inválida';
-    } else if (err.response?.status === 429) {
-      errorMsg += ' - Limite de requisições atingido';
-    } else if (err.response?.status === 400) {
-      errorMsg += ' - Requisição inválida';
-    }
-    
-    throw new Error(errorMsg);
   }
 }
 
 /**
  * Análise usando OCR.space (gratuito)
- * Suporta imagens (JPG, PNG) e PDFs
- * Baixa o arquivo do Telegram e faz upload direto para evitar erro 405
+ * Suporta imagens e PDFs
  */
-async function analyzeWithFreeOCR(fileUrl, expectedAmount, pixKey, fileType = 'image') {
-  // Usar API gratuita de OCR (ex: OCR.space)
-  const OCR_API_KEY = process.env.OCR_API_KEY || 'helloworld'; // Chave gratuita padrão
-  
+async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
   try {
-    const isPDF = fileType === 'pdf' || fileUrl.toLowerCase().includes('.pdf');
+    console.log(`🔍 [OCR] Baixando arquivo do Telegram...`);
     
-    console.log(`🔍 Analisando ${isPDF ? 'PDF' : 'imagem'} com OCR.space...`);
-    console.log(`📎 Baixando arquivo do Telegram...`);
-    
-    // 🆕 BAIXAR ARQUIVO DO TELEGRAM PRIMEIRO
-    // Isso resolve o problema do erro 405 (URL não aceita)
-    let fileBuffer;
-    let fileName;
-    
-    try {
-      const fileResponse = await axios.get(fileUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30000,
-        maxRedirects: 5
-      });
-      
-      fileBuffer = Buffer.from(fileResponse.data);
-      fileName = isPDF ? 'comprovante.pdf' : 'comprovante.jpg';
-      
-      console.log(`✅ Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
-    } catch (downloadErr) {
-      console.error('❌ Erro ao baixar arquivo:', downloadErr.message);
-      // Fallback: tentar com URL mesmo (pode funcionar para alguns casos)
-      console.log('⚠️ Tentando com URL direta como fallback...');
-      return await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
-    }
-    
-    // OCR.space endpoint para upload de arquivo
-    const endpoint = 'https://api.ocr.space/parse/image';
-    
-    // Preparar form-data com arquivo
-    const formData = new FormData();
-    formData.append('apikey', OCR_API_KEY);
-    formData.append('file', fileBuffer, {
-      filename: fileName,
-      contentType: isPDF ? 'application/pdf' : 'image/jpeg'
+    // Baixar arquivo do Telegram
+    const response = await axios.get(fileUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30000 // 30 segundos
     });
+    
+    const fileBuffer = Buffer.from(response.data);
+    console.log(`✅ [OCR] Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
+    
+    // Preparar FormData
+    const formData = new FormData();
+    formData.append('file', fileBuffer, {
+      filename: fileType === 'pdf' ? 'proof.pdf' : 'proof.jpg',
+      contentType: fileType === 'pdf' ? 'application/pdf' : 'image/jpeg'
+    });
+    formData.append('apikey', 'K87899643688957');
     formData.append('language', 'por');
     formData.append('isOverlayRequired', 'false');
     formData.append('detectOrientation', 'true');
     formData.append('scale', 'true');
-    formData.append('isCreateSearchablePdf', 'false');
-    formData.append('isSearchablePdfHideTextLayer', 'false');
+    formData.append('OCREngine', '2'); // Engine 2 é melhor para PDFs
     
-    // Se for PDF, adicionar parâmetros específicos
-    if (isPDF) {
-      formData.append('filetype', 'PDF');
-      formData.append('OCREngine', '2'); // Engine 2 funciona melhor com PDFs
-    } else {
-      formData.append('OCREngine', '1'); // Engine 1 para imagens
-    }
+    console.log(`📤 [OCR] Enviando para OCR.space...`);
     
-    // Fazer upload e análise
-    const ocrResponse = await axios.post(
-      endpoint,
-      formData,
-      {
-        headers: {
-          ...formData.getHeaders(),
-          'Accept': 'application/json'
-        },
-        timeout: 60000, // 60 segundos para PDFs (podem ser maiores)
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity
-      }
-    );
-    
-    // Verificar se a resposta tem erro
-    if (!ocrResponse.data) {
-      throw new Error('OCR não retornou dados');
-    }
-    
-    if (ocrResponse.data.OCRExitCode !== 1) {
-      throw new Error(`OCR retornou código de saída: ${ocrResponse.data.OCRExitCode}`);
-    }
-
-    // Verificar resposta do OCR
-    if (!ocrResponse.data.ParsedResults || ocrResponse.data.ParsedResults.length === 0) {
-      throw new Error('OCR não retornou resultados');
-    }
-    
-    const extractedText = ocrResponse.data.ParsedResults[0].ParsedText || '';
-    
-    if (!extractedText || extractedText.trim().length === 0) {
-      throw new Error('OCR não conseguiu extrair texto do documento');
-    }
-    
-    console.log(`✅ OCR extraiu ${extractedText.length} caracteres do ${isPDF ? 'PDF' : 'documento'}`);
-    
-    // Extrair valor (múltiplos formatos)
-    const amountRegex = /R\$\s*([\d.,]+)|([\d.,]+)\s*reais?/gi;
-    const amountMatches = extractedText.match(amountRegex);
-    let foundAmount = null;
-    
-    if (amountMatches) {
-      // Pegar o primeiro match e limpar
-      const match = amountMatches[0];
-      foundAmount = match.replace(/[R$\sreais]/gi, '').replace(',', '.').trim();
-    }
-    
-    // Extrair chave PIX (buscar por diferentes formatos)
-    const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    const keyFound = pixKeyRegex.test(extractedText);
-    
-    // Verificar palavras-chave de pagamento
-    const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado|transferido|enviado)/i;
-    const isPaid = paymentKeywords.test(extractedText);
-    
-    // Calcular confiança
-    let confidence = 0;
-    if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) {
-      confidence += 50;
-      console.log(`✅ Valor encontrado: R$ ${foundAmount}`);
-    } else if (foundAmount) {
-      console.log(`⚠️ Valor encontrado (${foundAmount}) não corresponde ao esperado (${expectedAmount})`);
-    }
-    
-    if (keyFound) {
-      confidence += 30;
-      console.log(`✅ Chave PIX encontrada`);
-    } else {
-      console.log(`⚠️ Chave PIX não encontrada no texto`);
-    }
-    
-    if (isPaid) {
-      confidence += 20;
-      console.log(`✅ Status de pagamento encontrado`);
-    }
-    
-    const isValid = confidence >= 70 && foundAmount && keyFound;
-    
-    console.log(`📊 Confiança final: ${confidence}% - ${isValid ? 'VÁLIDO' : 'PRECISA VALIDAÇÃO MANUAL'}`);
-    
-    return {
-      isValid,
-      confidence,
-      details: {
-        amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
-        pixKey: keyFound ? pixKey : 'Não encontrada',
-        status: isPaid ? 'Pago' : 'Indeterminado',
-        extractedText: extractedText.substring(0, 300), // Primeiros 300 chars para debug
-        method: `OCR Gratuito (${isPDF ? 'PDF' : 'Imagem'})`,
-        fileType: isPDF ? 'PDF' : 'Imagem'
-      }
-    };
-    
-  } catch (err) {
-    const errorStatus = err.response?.status;
-    const errorData = err.response?.data;
-    
-    console.error('❌ Erro detalhado do OCR:', {
-      message: err.message,
-      status: errorStatus,
-      data: errorData
+    // Enviar para OCR.space
+    const ocrResponse = await axios.post('https://api.ocr.space/parse/image', formData, {
+      headers: formData.getHeaders(),
+      timeout: 60000, // 60 segundos para processar
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
     });
     
-    // Se for erro 405, tentar método alternativo com URL
-    if (errorStatus === 405 || err.message.includes('405')) {
-      console.log('⚠️ Erro 405 detectado, tentando método alternativo com URL...');
-      try {
-        return await analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType);
-      } catch (fallbackErr) {
-        throw new Error(`OCR falhou: ${err.message}. Método alternativo também falhou: ${fallbackErr.message}`);
-      }
+    if (!ocrResponse.data || ocrResponse.data.IsErroredOnProcessing) {
+      throw new Error(ocrResponse.data?.ErrorMessage?.[0] || 'OCR falhou');
     }
     
-    // Se for erro de rate limit ou similar
-    if (errorStatus === 429) {
-      throw new Error(`Limite de requisições do OCR atingido. Tente novamente em alguns instantes.`);
+    const extractedText = ocrResponse.data.ParsedResults?.[0]?.ParsedText || '';
+    
+    if (!extractedText) {
+      throw new Error('OCR não extraiu texto');
     }
     
-    throw new Error(`OCR falhou: ${err.message}${errorStatus ? ` (Status: ${errorStatus})` : ''}`);
+    console.log(`✅ [OCR] Extraiu ${extractedText.length} caracteres`);
+    console.log(`📄 [OCR] Texto extraído (primeiros 500 chars):`);
+    console.log(extractedText.substring(0, 500));
+    
+    // Analisar o texto extraído
+    return analyzeExtractedText(extractedText, expectedAmount, pixKey, fileType);
+    
+  } catch (err) {
+    console.error('❌ [OCR] Erro:', err.message);
+    throw err;
   }
 }
 
 /**
- * Método alternativo: análise via URL (fallback)
+ * Analisa o texto extraído do OCR
+ * FLEXÍVEL: Aceita valores próximos e variações
  */
-async function analyzeWithFreeOCR_URL(fileUrl, expectedAmount, pixKey, fileType = 'image') {
-  const OCR_API_KEY = process.env.OCR_API_KEY || 'helloworld';
-  const isPDF = fileType === 'pdf' || fileUrl.toLowerCase().includes('.pdf');
-  const endpoint = 'https://api.ocr.space/parse/imageurl';
+function analyzeExtractedText(text, expectedAmount, pixKey, fileType) {
+  const textLower = text.toLowerCase();
+  const textNormalized = text.replace(/\s+/g, ' ');
   
-  const params = new URLSearchParams();
-  params.append('apikey', OCR_API_KEY);
-  params.append('url', fileUrl);
-  params.append('language', 'por');
-  params.append('isOverlayRequired', 'false');
-  params.append('detectOrientation', 'true');
-  params.append('scale', 'true');
+  console.log(`🔍 [OCR] Analisando texto extraído...`);
   
-  if (isPDF) {
-    params.append('filetype', 'PDF');
-    params.append('OCREngine', '2');
-  } else {
-    params.append('OCREngine', '1');
-  }
+  // Limpar chave PIX para comparação
+  const cleanPixKey = pixKey.replace(/\D/g, ''); // Remove tudo que não é número
   
-  const ocrResponse = await axios.post(
-    endpoint,
-    params.toString(),
-    {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
-      timeout: 30000
+  // 1. BUSCAR VALOR (flexível - aceita valores próximos ±10%)
+  const valorRegex = /(?:R\$|rs|valor|total|pago)\s*[\:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/gi;
+  let foundValues = [];
+  let match;
+  
+  while ((match = valorRegex.exec(text)) !== null) {
+    const valorStr = match[1].replace(/\./g, '').replace(',', '.');
+    const valor = parseFloat(valorStr);
+    if (!isNaN(valor) && valor > 0) {
+      foundValues.push(valor);
     }
-  );
-  
-  if (!ocrResponse.data || ocrResponse.data.OCRExitCode !== 1) {
-    throw new Error(`OCR retornou código de saída: ${ocrResponse.data?.OCRExitCode}`);
   }
   
-  if (!ocrResponse.data.ParsedResults || ocrResponse.data.ParsedResults.length === 0) {
-    throw new Error('OCR não retornou resultados');
+  console.log(`💰 [OCR] Valores encontrados:`, foundValues);
+  console.log(`💰 [OCR] Valor esperado: ${expectedAmount}`);
+  
+  // Verificar se algum valor está dentro da margem de ±10%
+  const expectedFloat = parseFloat(expectedAmount);
+  const margem = expectedFloat * 0.10; // 10% de margem
+  const minValue = expectedFloat - margem;
+  const maxValue = expectedFloat + margem;
+  
+  const matchingValue = foundValues.find(v => v >= minValue && v <= maxValue);
+  const hasCorrectValue = !!matchingValue;
+  
+  if (hasCorrectValue) {
+    console.log(`✅ [OCR] Valor correspondente encontrado: R$ ${matchingValue} (esperado: R$ ${expectedAmount})`);
+  } else if (foundValues.length > 0) {
+    console.log(`⚠️ [OCR] Valores encontrados mas nenhum corresponde ao esperado`);
+    console.log(`⚠️ [OCR] Faixa aceitável: R$ ${minValue.toFixed(2)} - R$ ${maxValue.toFixed(2)}`);
+  } else {
+    console.log(`⚠️ [OCR] Nenhum valor encontrado no texto`);
   }
   
-  const extractedText = ocrResponse.data.ParsedResults[0].ParsedText || '';
+  // 2. BUSCAR CHAVE PIX (flexível - busca qualquer número que contenha parte da chave)
+  let hasPixKey = false;
   
-  if (!extractedText || extractedText.trim().length === 0) {
-    throw new Error('OCR não conseguiu extrair texto do documento');
+  if (cleanPixKey.length >= 8) {
+    // Buscar por qualquer sequência de 8+ dígitos consecutivos da chave
+    const pixPart = cleanPixKey.substring(0, 8);
+    hasPixKey = text.includes(pixPart) || textNormalized.includes(pixPart);
+    
+    if (!hasPixKey) {
+      // Tentar buscar com formatação
+      hasPixKey = text.includes(pixKey) || textLower.includes(pixKey.toLowerCase());
+    }
   }
   
-  // Mesma lógica de extração do método principal
-  const amountRegex = /R\$\s*([\d.,]+)|([\d.,]+)\s*reais?/gi;
-  const amountMatches = extractedText.match(amountRegex);
-  let foundAmount = null;
-  
-  if (amountMatches) {
-    const match = amountMatches[0];
-    foundAmount = match.replace(/[R$\sreais]/gi, '').replace(',', '.').trim();
+  if (hasPixKey) {
+    console.log(`✅ [OCR] Chave PIX encontrada`);
+  } else {
+    console.log(`⚠️ [OCR] Chave PIX não encontrada`);
   }
   
-  const pixKeyRegex = new RegExp(pixKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-  const keyFound = pixKeyRegex.test(extractedText);
-  const paymentKeywords = /(pago|aprovado|concluído|confirmado|realizado|transferido|enviado)/i;
-  const isPaid = paymentKeywords.test(extractedText);
+  // 3. BUSCAR PALAVRAS-CHAVE DE CONFIRMAÇÃO
+  const palavrasChave = [
+    'pix',
+    'aprovad',
+    'concluí',
+    'efetua',
+    'transferência',
+    'pagamento',
+    'comprovante'
+  ];
   
+  const hasKeywords = palavrasChave.some(palavra => textLower.includes(palavra));
+  
+  if (hasKeywords) {
+    console.log(`✅ [OCR] Palavras-chave encontradas`);
+  }
+  
+  // 4. CALCULAR CONFIANÇA E VALIDAÇÃO
   let confidence = 0;
-  if (foundAmount && parseFloat(foundAmount) === parseFloat(expectedAmount)) confidence += 50;
-  if (keyFound) confidence += 30;
-  if (isPaid) confidence += 20;
+  let isValid = false;
   
-  const isValid = confidence >= 70 && foundAmount && keyFound;
+  // Sistema de pontuação
+  if (hasCorrectValue) confidence += 50; // Valor correto = 50 pontos
+  if (hasPixKey) confidence += 30;        // Chave PIX = 30 pontos
+  if (hasKeywords) confidence += 20;      // Palavras-chave = 20 pontos
+  
+  // Validação baseada na confiança
+  if (confidence >= 70) {
+    // Alta confiança (70%+) = Aprovação automática
+    isValid = true;
+    console.log(`✅ [OCR] APROVADO AUTOMATICAMENTE - Confiança: ${confidence}%`);
+  } else if (confidence >= 40) {
+    // Média confiança (40-69%) = Validação manual
+    isValid = null;
+    console.log(`⚠️ [OCR] VALIDAÇÃO MANUAL - Confiança: ${confidence}%`);
+  } else {
+    // Baixa confiança (<40%) = Pode ser rejeitado
+    isValid = false;
+    console.log(`❌ [OCR] SUSPEITO - Confiança: ${confidence}%`);
+  }
   
   return {
     isValid,
     confidence,
     details: {
-      amount: foundAmount ? `R$ ${foundAmount}` : 'Não encontrado',
-      pixKey: keyFound ? pixKey : 'Não encontrada',
-      status: isPaid ? 'Pago' : 'Indeterminado',
-      extractedText: extractedText.substring(0, 300),
-      method: `OCR Gratuito (URL - ${isPDF ? 'PDF' : 'Imagem'})`,
-      fileType: isPDF ? 'PDF' : 'Imagem'
+      method: `OCR.space (${fileType.toUpperCase()})`,
+      amount: matchingValue ? `R$ ${matchingValue.toFixed(2)}` : null,
+      hasCorrectValue,
+      hasPixKey,
+      hasKeywords,
+      foundValues: foundValues.map(v => `R$ ${v.toFixed(2)}`),
+      reason: confidence < 40 
+        ? 'Comprovante não corresponde aos dados esperados' 
+        : confidence < 70 
+          ? 'Análise inconclusiva - requer validação manual' 
+          : 'Comprovante válido',
+      needsManualReview: confidence < 70
     }
   };
-}
-
-/**
- * Análise básica por padrões (sem API externa)
- */
-async function analyzeWithPatterns(fileUrl, expectedAmount, pixKey) {
-  // Método mais básico: apenas validação estrutural
-  // Não analisa a imagem, apenas retorna que precisa validação manual
-  
-  return {
-    isValid: null,
-    confidence: 0,
-    details: {
-      error: 'Nenhum método de análise disponível',
-      needsManualReview: true,
-      method: 'Validação Manual',
-      message: 'Todos os métodos de análise automática falharam. Validação manual necessária.'
-    }
-  };
-}
-
-/**
- * Valida comprovante localmente (verificação básica)
- */
-function quickValidation(fileId) {
-  // Verificações básicas
-  if (!fileId) {
-    return { isValid: false, reason: 'Arquivo inválido' };
-  }
-
-  // Aqui você pode adicionar verificações simples
-  // Por exemplo: tamanho do arquivo, tipo, etc.
-  
-  return { isValid: true, reason: 'Verificação básica passou' };
 }
 
 module.exports = {
-  analyzeProof,
-  quickValidation
+  analyzeProof
 };
-

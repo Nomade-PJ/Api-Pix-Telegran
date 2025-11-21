@@ -424,14 +424,26 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             isValid: analysis?.isValid,
             confidence: analysis?.confidence,
             method: analysis?.details?.method,
-            reason: analysis?.details?.reason
+            reason: analysis?.details?.reason,
+            hasCorrectValue: analysis?.details?.hasCorrectValue,
+            hasPixKey: analysis?.details?.hasPixKey,
+            foundValues: analysis?.details?.foundValues
           });
+          
+          // Log detalhado da decisão
+          if (analysis?.isValid === true && analysis?.confidence >= 70) {
+            console.log(`✅ [AUTO-ANALYSIS] DECISÃO: APROVAR AUTOMATICAMENTE (confiança ${analysis.confidence}% >= 70%)`);
+          } else if (analysis?.isValid === false && analysis?.confidence < 40) {
+            console.log(`❌ [AUTO-ANALYSIS] DECISÃO: REJEITAR AUTOMATICAMENTE (confiança ${analysis.confidence}% < 40%)`);
+          } else {
+            console.log(`⚠️ [AUTO-ANALYSIS] DECISÃO: VALIDAÇÃO MANUAL (confiança ${analysis?.confidence}% entre 40% e 70%)`);
+          }
           
           const product = await db.getProduct(transactionData.product_id);
           const productName = product ? product.name : transactionData.product_id;
           
-          // ✅ APROVAÇÃO AUTOMÁTICA (confidence >= 80)
-          if (analysis && analysis.isValid === true && analysis.confidence >= 80) {
+          // ✅ APROVAÇÃO AUTOMÁTICA (confidence >= 70 e isValid = true)
+          if (analysis && analysis.isValid === true && analysis.confidence >= 70) {
             console.log(`✅ [AUTO-ANALYSIS] APROVAÇÃO AUTOMÁTICA para TXID ${transactionData.txid}`);
             
             try {
@@ -486,6 +498,7 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                   
                   try {
                     await telegram.unbanChatMember(group.group_id, chatId, { only_if_banned: true });
+                    console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação para cliente ${chatId}`);
                     await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
@@ -513,6 +526,7 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               } else {
                 // Produto digital
                 if (product && product.file_url) {
+                  console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação (produto digital) para cliente ${chatId}`);
                   await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
@@ -534,8 +548,8 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               console.error(`❌ [AUTO-ANALYSIS] Erro na aprovação automática:`, approvalErr.message);
             }
           }
-          // ❌ REJEIÇÃO AUTOMÁTICA (confidence >= 70 e isValid = false)
-          else if (analysis && analysis.isValid === false && analysis.confidence >= 70) {
+          // ❌ REJEIÇÃO AUTOMÁTICA (confidence < 40 e isValid = false)
+          else if (analysis && analysis.isValid === false && analysis.confidence < 40) {
             console.log(`❌ [AUTO-ANALYSIS] REJEIÇÃO AUTOMÁTICA para TXID ${transactionData.txid}`);
             
             try {
@@ -544,6 +558,7 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               console.log(`❌ [AUTO-ANALYSIS] Transação cancelada no banco`);
               
               // Notificar USUÁRIO sobre rejeição
+              console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de rejeição para cliente ${chatId}`);
               await telegram.sendMessage(chatId, `❌ *COMPROVANTE INVÁLIDO*
 
 🤖 Análise automática detectou problemas:
