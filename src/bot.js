@@ -844,9 +844,100 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
       console.log(`✅ [HANDLER] Processo concluído com sucesso!`);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       
-      // 🆕 REMOVER TODO O CÓDIGO DE ANÁLISE AUTOMÁTICA
-      // Análise será feita manualmente pelo admin
-      // O código abaixo NÃO será mais executado
+      // 🆕 ANÁLISE OCR EM BACKGROUND (NÃO BLOQUEIA O FLUXO PRINCIPAL)
+      // Análise acontece DEPOIS que admin já recebeu
+      // Se encontrar algo suspeito, notifica admin novamente
+      console.log('🔍 [HANDLER] Iniciando análise OCR em background (não bloqueante)...');
+      
+      // Executar análise de forma assíncrona (fire and forget)
+      (async () => {
+        try {
+          if (!fileUrl) {
+            console.warn('⚠️ [OCR-BACKGROUND] URL do arquivo não disponível, pulando análise');
+            return;
+          }
+          
+          console.log(`🔍 [OCR-BACKGROUND] Iniciando análise de ${fileType}...`);
+          console.log(`📎 [OCR-BACKGROUND] URL: ${fileUrl.substring(0, 80)}...`);
+          
+          // Timeout de 60 segundos (análise em background pode demorar)
+          const analysisPromise = proofAnalyzer.analyzeProof(
+            fileUrl,
+            transaction.amount,
+            transaction.pix_key,
+            fileType
+          );
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout na análise OCR (60s)')), 60000)
+          );
+          
+          const analysis = await Promise.race([analysisPromise, timeoutPromise]);
+          
+          console.log(`📊 [OCR-BACKGROUND] Análise concluída:`, {
+            isValid: analysis?.isValid,
+            confidence: analysis?.confidence,
+            method: analysis?.details?.method
+          });
+          
+          // Se a análise detectou algo suspeito, notificar admin novamente
+          if (analysis && analysis.isValid === false && analysis.confidence >= 70) {
+            console.log('⚠️ [OCR-BACKGROUND] Comprovante SUSPEITO detectado, notificando admin...');
+            
+            try {
+              const admins = await db.getAllAdmins();
+              const product = await db.getProduct(transaction.product_id);
+              const productName = product ? product.name : transaction.product_id;
+              
+              for (const admin of admins) {
+                try {
+                  await ctx.telegram.sendMessage(admin.telegram_id, 
+                    `⚠️ *ALERTA: ANÁLISE OCR DETECTOU PROBLEMA*
+
+🆔 TXID: ${transaction.txid}
+💰 Valor esperado: R$ ${transaction.amount}
+📦 Produto: ${productName}
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+
+🤖 *Análise OCR (${analysis.confidence}% confiança):*
+❌ ${analysis.details.reason || 'Comprovante pode ser inválido'}
+
+⚠️ *Revise com atenção antes de aprovar!*`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                      inline_keyboard: [
+                        [
+                          { text: '✅ Aprovar mesmo assim', callback_data: `approve_${transaction.txid}` },
+                          { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
+                        ]
+                      ]
+                    }
+                  });
+                  console.log(`✅ [OCR-BACKGROUND] Alerta enviado para admin ${admin.telegram_id}`);
+                } catch (notifyErr) {
+                  console.error(`❌ [OCR-BACKGROUND] Erro ao notificar admin:`, notifyErr.message);
+                }
+              }
+            } catch (err) {
+              console.error('❌ [OCR-BACKGROUND] Erro ao enviar alerta:', err.message);
+            }
+          } else if (analysis && analysis.isValid === true && analysis.confidence >= 80) {
+            console.log('✅ [OCR-BACKGROUND] Comprovante parece VÁLIDO (admin já foi notificado)');
+          } else {
+            console.log('⚠️ [OCR-BACKGROUND] Análise inconclusiva (confiança baixa)');
+          }
+        } catch (err) {
+          console.error('❌ [OCR-BACKGROUND] Erro na análise:', err.message);
+          // Não faz nada - análise em background não deve afetar o fluxo principal
+        }
+      })().catch(err => {
+        console.error('❌ [OCR-BACKGROUND] Erro não tratado:', err.message);
+      });
+      
+      console.log('✅ [HANDLER] Análise OCR iniciada em background (não bloqueante)');
+      
+      // 🆕 CÓDIGO ANTIGO DE ANÁLISE BLOQUEANTE REMOVIDO
+      // Agora análise é em background e não bloqueia
       
       /*
       // =======================================================
