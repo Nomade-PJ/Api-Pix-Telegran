@@ -762,6 +762,90 @@ async function getGroupMember(telegramId, groupId) {
   }
 }
 
+// ===== CACHE OCR =====
+
+/**
+ * Verifica se já existe análise OCR para uma transação
+ * Retorna o resultado se existir, null caso contrário
+ */
+async function getOCRResult(txid) {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('ocr_result, ocr_confidence, ocr_analyzed_at')
+      .eq('txid', txid)
+      .single();
+    
+    if (error) throw error;
+    
+    // Se existe resultado e foi analisado recentemente (últimas 24h), retornar
+    if (data && data.ocr_result && data.ocr_analyzed_at) {
+      const analyzedAt = new Date(data.ocr_analyzed_at);
+      const now = new Date();
+      const hoursDiff = (now - analyzedAt) / (1000 * 60 * 60);
+      
+      if (hoursDiff < 24) {
+        console.log(`✅ [DB-CACHE] Cache OCR encontrado para TXID ${txid} (${hoursDiff.toFixed(1)}h atrás)`);
+        return {
+          isValid: data.ocr_result.isValid,
+          confidence: data.ocr_confidence,
+          details: data.ocr_result.details || {}
+        };
+      }
+    }
+    
+    return null;
+  } catch (err) {
+    console.error('Erro ao buscar cache OCR:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Salva resultado do OCR no banco para cache
+ */
+async function saveOCRResult(txid, ocrResult) {
+  try {
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        ocr_result: ocrResult,
+        ocr_confidence: ocrResult.confidence || 0,
+        ocr_analyzed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+    
+    if (error) throw error;
+    console.log(`✅ [DB-CACHE] Resultado OCR salvo no cache para TXID ${txid}`);
+    return true;
+  } catch (err) {
+    console.error('Erro ao salvar cache OCR:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Atualiza URL do arquivo de comprovante (para uso futuro com Supabase Storage)
+ */
+async function updateProofFileUrl(txid, fileUrl) {
+  try {
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        proof_file_url: fileUrl,
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('Erro ao atualizar URL do arquivo:', err.message);
+    return false;
+  }
+}
+
 module.exports = {
   supabase,
   getOrCreateUser,
@@ -797,6 +881,9 @@ module.exports = {
   getExpiredMembers,
   markMemberReminded,
   expireMember,
-  getGroupMember
+  getGroupMember,
+  getOCRResult,
+  saveOCRResult,
+  updateProofFileUrl
 };
 

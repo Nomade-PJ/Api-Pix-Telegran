@@ -419,22 +419,42 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           console.log(`🆔 [AUTO-ANALYSIS] TXID: ${transactionData.txid}`);
           console.log(`⏰ [AUTO-ANALYSIS] Tempo início: ${new Date().toISOString()}`);
           
-          // Timeout de 3 minutos (180s) para análise completa
-          // Download: até 90s (com retry) + OCR: até 90s = máximo 180s
-          const analysisPromise = proofAnalyzer.analyzeProof(
-            fileUrl,
-            transactionData.amount,
-            transactionData.pix_key,
-            fileType
-          );
+          // 🚀 OTIMIZAÇÃO: Verificar cache do OCR primeiro
+          console.log(`🔍 [AUTO-ANALYSIS] Verificando cache OCR...`);
+          let analysis = await db.getOCRResult(transactionData.txid);
           
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout na análise OCR (3 minutos)')), 180000)
-          );
-          
-          console.log(`⏳ [AUTO-ANALYSIS] Aguardando resultado da análise...`);
-          const analysis = await Promise.race([analysisPromise, timeoutPromise]);
-          console.log(`⏰ [AUTO-ANALYSIS] Tempo fim: ${new Date().toISOString()}`);
+          if (analysis) {
+            console.log(`⚡ [AUTO-ANALYSIS] Cache encontrado! Usando resultado em cache (confiança: ${analysis.confidence}%)`);
+            console.log(`⏰ [AUTO-ANALYSIS] Tempo fim: ${new Date().toISOString()} (cache)`);
+          } else {
+            console.log(`📊 [AUTO-ANALYSIS] Cache não encontrado, iniciando análise OCR...`);
+            
+            // Salvar URL do arquivo no banco (para uso futuro)
+            await db.updateProofFileUrl(transactionData.txid, fileUrl);
+            
+            // Timeout de 3 minutos (180s) para análise completa
+            // Download: até 90s (com retry) + OCR: até 90s = máximo 180s
+            const analysisPromise = proofAnalyzer.analyzeProof(
+              fileUrl,
+              transactionData.amount,
+              transactionData.pix_key,
+              fileType
+            );
+            
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout na análise OCR (3 minutos)')), 180000)
+            );
+            
+            console.log(`⏳ [AUTO-ANALYSIS] Aguardando resultado da análise...`);
+            analysis = await Promise.race([analysisPromise, timeoutPromise]);
+            console.log(`⏰ [AUTO-ANALYSIS] Tempo fim: ${new Date().toISOString()}`);
+            
+            // 🚀 OTIMIZAÇÃO: Salvar resultado no cache
+            if (analysis) {
+              await db.saveOCRResult(transactionData.txid, analysis);
+              console.log(`💾 [AUTO-ANALYSIS] Resultado salvo no cache para uso futuro`);
+            }
+          }
           
           console.log(`📊 [AUTO-ANALYSIS] Análise concluída:`, {
             isValid: analysis?.isValid,
