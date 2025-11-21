@@ -62,17 +62,41 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
     
     const downloadStartTime = Date.now();
     
-    // Baixar arquivo do Telegram - Timeout otimizado
-    const response = await axios.get(fileUrl, {
-      responseType: 'arraybuffer',
-      timeout: 60000, // 60 segundos (1 minuto) - suficiente para arquivos pequenos (7-8KB)
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity
-    });
+    // Baixar arquivo do Telegram com retry (3 tentativas)
+    let fileBuffer = null;
+    let downloadTime = 0;
+    const maxRetries = 3;
     
-    const downloadTime = ((Date.now() - downloadStartTime) / 1000).toFixed(2);
-    const fileBuffer = Buffer.from(response.data);
-    console.log(`✅ [OCR] Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB em ${downloadTime}s`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`📥 [OCR] Tentativa ${attempt}/${maxRetries} de download...`);
+        
+        const response = await axios.get(fileUrl, {
+          responseType: 'arraybuffer',
+          timeout: 90000, // 90 segundos - aumentado para conexões lentas
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        });
+        
+        downloadTime = ((Date.now() - downloadStartTime) / 1000).toFixed(2);
+        fileBuffer = Buffer.from(response.data);
+        console.log(`✅ [OCR] Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB em ${downloadTime}s (tentativa ${attempt})`);
+        break; // Sucesso, sair do loop
+        
+      } catch (downloadErr) {
+        if (attempt === maxRetries) {
+          // Última tentativa falhou
+          throw new Error(`Erro ao baixar arquivo após ${maxRetries} tentativas: ${downloadErr.message}`);
+        }
+        console.warn(`⚠️ [OCR] Tentativa ${attempt} falhou: ${downloadErr.message}. Tentando novamente...`);
+        // Aguardar 2 segundos antes de tentar novamente
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    
+    if (!fileBuffer) {
+      throw new Error('Não foi possível baixar o arquivo após todas as tentativas');
+    }
     
     // Preparar FormData
     const formData = new FormData();
