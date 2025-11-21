@@ -57,9 +57,79 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
  */
 async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
   try {
-    console.log(`🔍 [OCR] Baixando arquivo do Telegram...`);
+    console.log(`🔍 [OCR] Iniciando análise OCR...`);
     console.log(`📎 [OCR] URL: ${fileUrl.substring(0, 100)}...`);
     
+    const ocrApiKey = process.env.OCR_SPACE_API_KEY || 'K87899643688957';
+    
+    // TENTATIVA 1: Usar URL diretamente (mais rápido, sem download)
+    // Tentar múltiplas engines via URL
+    const urlEngines = fileType === 'pdf' ? ['2', '1'] : ['1', '2', '3'];
+    let urlSuccess = false;
+    
+    for (let urlEngineIndex = 0; urlEngineIndex < urlEngines.length && !urlSuccess; urlEngineIndex++) {
+      const urlEngine = urlEngines[urlEngineIndex];
+      console.log(`🚀 [OCR] Tentativa 1.${urlEngineIndex + 1}: URL direta com Engine ${urlEngine}...`);
+      
+      try {
+        const urlFormData = new FormData();
+        urlFormData.append('url', fileUrl);
+        urlFormData.append('apikey', ocrApiKey);
+        urlFormData.append('language', 'por');
+        urlFormData.append('isOverlayRequired', 'false');
+        urlFormData.append('detectOrientation', 'true');
+        urlFormData.append('scale', 'true');
+        urlFormData.append('OCREngine', urlEngine);
+        
+        const urlStartTime = Date.now();
+        const urlResponse = await axios.post('https://api.ocr.space/parse/imageurl', urlFormData, {
+          headers: urlFormData.getHeaders(),
+          timeout: 90000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        });
+        
+        const urlTime = ((Date.now() - urlStartTime) / 1000).toFixed(2);
+        console.log(`✅ [OCR] Resposta recebida via URL em ${urlTime}s (Engine ${urlEngine})`);
+        
+        if (urlResponse.data) {
+          const parsedResults = urlResponse.data.ParsedResults;
+          if (parsedResults && parsedResults.length > 0) {
+            const result = parsedResults[0];
+            const extractedText = result?.ParsedText || '';
+            const fileParseExitCode = result?.FileParseExitCode;
+            
+            console.log(`📊 [OCR] FileParseExitCode: ${fileParseExitCode}, Texto: ${extractedText.length} chars`);
+            
+            if (extractedText && extractedText.trim().length > 0 && fileParseExitCode === 1) {
+              // FileParseExitCode: 1 = sucesso, mas pode estar vazio
+              // Se tem texto, usar mesmo assim
+              console.log(`✅ [OCR] Texto extraído via URL (Engine ${urlEngine}): ${extractedText.length} caracteres`);
+              console.log(`📄 [OCR] Texto extraído (primeiros 500 chars):`);
+              console.log(extractedText.substring(0, 500));
+              urlSuccess = true;
+              return analyzeExtractedText(extractedText, expectedAmount, pixKey, fileType);
+            } else if (fileParseExitCode !== 1) {
+              console.warn(`⚠️ [OCR] FileParseExitCode ${fileParseExitCode} (Engine ${urlEngine}), tentando próxima engine...`);
+            } else {
+              console.warn(`⚠️ [OCR] Texto vazio com Engine ${urlEngine}, tentando próxima engine...`);
+            }
+          }
+        }
+      } catch (urlErr) {
+        console.warn(`⚠️ [OCR] Erro ao usar URL diretamente (Engine ${urlEngine}): ${urlErr.message}`);
+        if (urlEngineIndex === urlEngines.length - 1) {
+          console.warn(`⚠️ [OCR] Todas as engines via URL falharam, tentando download...`);
+        }
+      }
+    }
+    
+    if (!urlSuccess) {
+      console.log(`📥 [OCR] URL direta não funcionou, tentando download...`);
+    }
+    
+    // TENTATIVA 2: Download do arquivo e upload
+    console.log(`📥 [OCR] Tentativa 2: Baixando arquivo do Telegram...`);
     const downloadStartTime = Date.now();
     
     // Baixar arquivo do Telegram com retry (3 tentativas)
@@ -98,61 +168,121 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
       throw new Error('Não foi possível baixar o arquivo após todas as tentativas');
     }
     
-    // Preparar FormData
-    const formData = new FormData();
-    formData.append('file', fileBuffer, {
-      filename: fileType === 'pdf' ? 'proof.pdf' : 'proof.jpg',
-      contentType: fileType === 'pdf' ? 'application/pdf' : 'image/jpeg'
-    });
+    // Tentar múltiplas engines e configurações para melhorar extração
+    // Engine 1 = Tesseract, Engine 2 = OCR.space, Engine 3 = Advanced OCR
+    const engines = fileType === 'pdf' ? ['2', '1', '3'] : ['1', '2', '3'];
     
-    // Usar API key do ambiente ou fallback
-    const ocrApiKey = process.env.OCR_SPACE_API_KEY || 'K87899643688957';
-    formData.append('apikey', ocrApiKey);
-    formData.append('language', 'por');
-    formData.append('isOverlayRequired', 'false');
-    formData.append('detectOrientation', 'true');
-    formData.append('scale', 'true');
-    formData.append('OCREngine', fileType === 'pdf' ? '2' : '1'); // Engine 2 para PDFs, 1 para imagens
+    let extractedText = '';
+    let lastError = null;
     
-    console.log(`📤 [OCR] Enviando para OCR.space...`);
-    console.log(`🔑 [OCR] API Key: ${ocrApiKey.substring(0, 5)}...`);
-    console.log(`⚙️ [OCR] Engine: ${fileType === 'pdf' ? '2 (PDF)' : '1 (Imagem)'}`);
-    
-    const ocrStartTime = Date.now();
-    
-    // Enviar para OCR.space - Timeout otimizado
-    const ocrResponse = await axios.post('https://api.ocr.space/parse/image', formData, {
-      headers: formData.getHeaders(),
-      timeout: 90000, // 90 segundos (1.5 minutos) - OCR geralmente responde em 5-30s
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity
-    });
-    
-    const ocrTime = ((Date.now() - ocrStartTime) / 1000).toFixed(2);
-    console.log(`✅ [OCR] Resposta recebida em ${ocrTime}s`);
-    
-    // Verificar erros
-    if (!ocrResponse.data) {
-      throw new Error('OCR retornou resposta vazia');
+    for (let engineIndex = 0; engineIndex < engines.length; engineIndex++) {
+      const engine = engines[engineIndex];
+      try {
+        console.log(`📤 [OCR] Tentativa ${engineIndex + 1}/${engines.length} - Engine ${engine}...`);
+        
+        const formData = new FormData();
+        formData.append('file', fileBuffer, {
+          filename: fileType === 'pdf' ? 'proof.pdf' : 'proof.jpg',
+          contentType: fileType === 'pdf' ? 'application/pdf' : 'image/jpeg'
+        });
+        formData.append('apikey', ocrApiKey);
+        formData.append('language', 'por');
+        formData.append('isOverlayRequired', 'false');
+        formData.append('detectOrientation', 'true');
+        formData.append('scale', 'true');
+        formData.append('OCREngine', engine);
+        formData.append('isCreateSearchablePdf', 'false');
+        formData.append('isSearchablePdfHideTextLayer', 'false');
+        
+        const ocrStartTime = Date.now();
+        
+        // Enviar para OCR.space
+        const ocrResponse = await axios.post('https://api.ocr.space/parse/image', formData, {
+          headers: formData.getHeaders(),
+          timeout: 90000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        });
+        
+        const ocrTime = ((Date.now() - ocrStartTime) / 1000).toFixed(2);
+        console.log(`✅ [OCR] Resposta recebida em ${ocrTime}s (Engine ${engine})`);
+        
+        // Verificar erros
+        if (!ocrResponse.data) {
+          console.warn(`⚠️ [OCR] OCR retornou resposta vazia (Engine ${engine})`);
+          lastError = 'OCR retornou resposta vazia';
+          continue;
+        }
+        
+        if (ocrResponse.data.IsErroredOnProcessing) {
+          const errorMsg = ocrResponse.data.ErrorMessage?.[0] || 'Erro desconhecido no OCR';
+          console.warn(`⚠️ [OCR] Erro do OCR.space (Engine ${engine}):`, errorMsg);
+          lastError = errorMsg;
+          continue; // Tentar próxima engine
+        }
+        
+        const parsedResults = ocrResponse.data.ParsedResults;
+        if (!parsedResults || parsedResults.length === 0) {
+          console.warn(`⚠️ [OCR] Nenhum resultado retornado (Engine ${engine})`);
+          lastError = 'Nenhum resultado retornado';
+          continue; // Tentar próxima engine
+        }
+        
+        const result = parsedResults[0];
+        extractedText = result?.ParsedText || '';
+        const fileParseExitCode = result?.FileParseExitCode;
+        const errorMessage = result?.ErrorMessage || '';
+        
+        console.log(`📊 [OCR] Engine ${engine} - FileParseExitCode: ${fileParseExitCode}, Texto: ${extractedText.length} chars`);
+        if (errorMessage) {
+          console.log(`📊 [OCR] ErrorMessage: ${errorMessage}`);
+        }
+        
+        // FileParseExitCode: 1 = sucesso (mas pode estar vazio)
+        // FileParseExitCode: 0 ou outros = erro
+        if (fileParseExitCode !== 1 && fileParseExitCode !== undefined) {
+          console.warn(`⚠️ [OCR] FileParseExitCode: ${fileParseExitCode} indica erro (Engine ${engine})`);
+          lastError = `FileParseExitCode: ${fileParseExitCode}`;
+          continue; // Tentar próxima engine
+        }
+        
+        if (extractedText && extractedText.trim().length > 0) {
+          console.log(`✅ [OCR] Texto extraído com sucesso usando Engine ${engine}: ${extractedText.length} caracteres`);
+          console.log(`📄 [OCR] Texto extraído (primeiros 500 chars):`);
+          console.log(extractedText.substring(0, 500));
+          break; // Sucesso, sair do loop
+        } else {
+          console.warn(`⚠️ [OCR] Texto vazio retornado (Engine ${engine}, FileParseExitCode: ${fileParseExitCode})`);
+          lastError = `Texto vazio (FileParseExitCode: ${fileParseExitCode})`;
+          if (engineIndex < engines.length - 1) {
+            continue; // Tentar próxima engine
+          }
+        }
+        
+      } catch (engineErr) {
+        console.warn(`⚠️ [OCR] Erro com Engine ${engine}:`, engineErr.message);
+        lastError = engineErr.message;
+        if (engineIndex < engines.length - 1) {
+          continue; // Tentar próxima engine
+        }
+      }
     }
     
-    if (ocrResponse.data.IsErroredOnProcessing) {
-      const errorMsg = ocrResponse.data.ErrorMessage?.[0] || 'Erro desconhecido no OCR';
-      console.error(`❌ [OCR] Erro do OCR.space:`, errorMsg);
-      throw new Error(`OCR.space erro: ${errorMsg}`);
-    }
-    
-    const parsedResults = ocrResponse.data.ParsedResults;
-    if (!parsedResults || parsedResults.length === 0) {
-      throw new Error('OCR não retornou resultados');
-    }
-    
-    const extractedText = parsedResults[0]?.ParsedText || '';
-    
+    // Se não conseguiu extrair texto após todas as tentativas, retornar para validação manual
     if (!extractedText || extractedText.trim().length === 0) {
-      console.warn(`⚠️ [OCR] OCR não extraiu texto (resultado vazio)`);
-      console.warn(`⚠️ [OCR] Resposta completa:`, JSON.stringify(ocrResponse.data, null, 2).substring(0, 500));
-      throw new Error('OCR não extraiu texto do documento');
+      console.warn(`⚠️ [OCR] Não foi possível extrair texto após tentar ${engines.length} engines`);
+      console.warn(`⚠️ [OCR] Último erro: ${lastError || 'N/A'}`);
+      // Não lançar erro - retornar para validação manual
+      return {
+        isValid: null,
+        confidence: 0,
+        details: {
+          method: 'OCR.space (Falhou)',
+          reason: 'OCR não conseguiu extrair texto do documento. Pode ser PDF protegido, imagem de baixa qualidade ou formato não suportado.',
+          needsManualReview: true,
+          error: lastError || 'Texto não extraído'
+        }
+      };
     }
     
     console.log(`✅ [OCR] Extraiu ${extractedText.length} caracteres`);
