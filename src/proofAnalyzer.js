@@ -58,15 +58,21 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
 async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
   try {
     console.log(`🔍 [OCR] Baixando arquivo do Telegram...`);
+    console.log(`📎 [OCR] URL: ${fileUrl.substring(0, 100)}...`);
     
-    // Baixar arquivo do Telegram
+    const downloadStartTime = Date.now();
+    
+    // Baixar arquivo do Telegram - AUMENTAR TIMEOUT
     const response = await axios.get(fileUrl, {
       responseType: 'arraybuffer',
-      timeout: 30000 // 30 segundos
+      timeout: 90000, // 90 segundos (aumentado de 30s)
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
     });
     
+    const downloadTime = ((Date.now() - downloadStartTime) / 1000).toFixed(2);
     const fileBuffer = Buffer.from(response.data);
-    console.log(`✅ [OCR] Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
+    console.log(`✅ [OCR] Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB em ${downloadTime}s`);
     
     // Preparar FormData
     const formData = new FormData();
@@ -74,31 +80,55 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
       filename: fileType === 'pdf' ? 'proof.pdf' : 'proof.jpg',
       contentType: fileType === 'pdf' ? 'application/pdf' : 'image/jpeg'
     });
-    formData.append('apikey', 'K87899643688957');
+    
+    // Usar API key do ambiente ou fallback
+    const ocrApiKey = process.env.OCR_SPACE_API_KEY || 'K87899643688957';
+    formData.append('apikey', ocrApiKey);
     formData.append('language', 'por');
     formData.append('isOverlayRequired', 'false');
     formData.append('detectOrientation', 'true');
     formData.append('scale', 'true');
-    formData.append('OCREngine', '2'); // Engine 2 é melhor para PDFs
+    formData.append('OCREngine', fileType === 'pdf' ? '2' : '1'); // Engine 2 para PDFs, 1 para imagens
     
     console.log(`📤 [OCR] Enviando para OCR.space...`);
+    console.log(`🔑 [OCR] API Key: ${ocrApiKey.substring(0, 5)}...`);
+    console.log(`⚙️ [OCR] Engine: ${fileType === 'pdf' ? '2 (PDF)' : '1 (Imagem)'}`);
     
-    // Enviar para OCR.space
+    const ocrStartTime = Date.now();
+    
+    // Enviar para OCR.space - AUMENTAR TIMEOUT
     const ocrResponse = await axios.post('https://api.ocr.space/parse/image', formData, {
       headers: formData.getHeaders(),
-      timeout: 60000, // 60 segundos para processar
+      timeout: 120000, // 120 segundos (2 minutos) para processar
       maxContentLength: Infinity,
       maxBodyLength: Infinity
     });
     
-    if (!ocrResponse.data || ocrResponse.data.IsErroredOnProcessing) {
-      throw new Error(ocrResponse.data?.ErrorMessage?.[0] || 'OCR falhou');
+    const ocrTime = ((Date.now() - ocrStartTime) / 1000).toFixed(2);
+    console.log(`✅ [OCR] Resposta recebida em ${ocrTime}s`);
+    
+    // Verificar erros
+    if (!ocrResponse.data) {
+      throw new Error('OCR retornou resposta vazia');
     }
     
-    const extractedText = ocrResponse.data.ParsedResults?.[0]?.ParsedText || '';
+    if (ocrResponse.data.IsErroredOnProcessing) {
+      const errorMsg = ocrResponse.data.ErrorMessage?.[0] || 'Erro desconhecido no OCR';
+      console.error(`❌ [OCR] Erro do OCR.space:`, errorMsg);
+      throw new Error(`OCR.space erro: ${errorMsg}`);
+    }
     
-    if (!extractedText) {
-      throw new Error('OCR não extraiu texto');
+    const parsedResults = ocrResponse.data.ParsedResults;
+    if (!parsedResults || parsedResults.length === 0) {
+      throw new Error('OCR não retornou resultados');
+    }
+    
+    const extractedText = parsedResults[0]?.ParsedText || '';
+    
+    if (!extractedText || extractedText.trim().length === 0) {
+      console.warn(`⚠️ [OCR] OCR não extraiu texto (resultado vazio)`);
+      console.warn(`⚠️ [OCR] Resposta completa:`, JSON.stringify(ocrResponse.data, null, 2).substring(0, 500));
+      throw new Error('OCR não extraiu texto do documento');
     }
     
     console.log(`✅ [OCR] Extraiu ${extractedText.length} caracteres`);
@@ -109,7 +139,17 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
     return analyzeExtractedText(extractedText, expectedAmount, pixKey, fileType);
     
   } catch (err) {
-    console.error('❌ [OCR] Erro:', err.message);
+    console.error('❌ [OCR] Erro detalhado:');
+    console.error(`   Mensagem: ${err.message}`);
+    console.error(`   Code: ${err.code || 'N/A'}`);
+    if (err.response) {
+      console.error(`   Status: ${err.response.status}`);
+      console.error(`   Data: ${JSON.stringify(err.response.data).substring(0, 200)}`);
+    }
+    if (err.config) {
+      console.error(`   URL: ${err.config.url || 'N/A'}`);
+      console.error(`   Timeout: ${err.config.timeout || 'N/A'}ms`);
+    }
     throw err;
   }
 }
@@ -127,18 +167,33 @@ function analyzeExtractedText(text, expectedAmount, pixKey, fileType) {
   // Limpar chave PIX para comparação
   const cleanPixKey = pixKey.replace(/\D/g, ''); // Remove tudo que não é número
   
-  // 1. BUSCAR VALOR (flexível - aceita valores próximos ±10%)
-  const valorRegex = /(?:R\$|rs|valor|total|pago)\s*[\:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/gi;
+  // 1. BUSCAR VALOR (flexível - múltiplos padrões)
   let foundValues = [];
-  let match;
   
-  while ((match = valorRegex.exec(text)) !== null) {
+  // Padrão 1: R$ 59,90 ou R$59.90
+  const valorRegex1 = /(?:R\$|rs|valor|total|pago|pagamento|transferência|transferencia)\s*[\:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/gi;
+  let match;
+  while ((match = valorRegex1.exec(text)) !== null) {
     const valorStr = match[1].replace(/\./g, '').replace(',', '.');
     const valor = parseFloat(valorStr);
-    if (!isNaN(valor) && valor > 0) {
+    if (!isNaN(valor) && valor > 0 && valor < 100000) {
       foundValues.push(valor);
     }
   }
+  
+  // Padrão 2: 59,90 ou 59.90 (sem R$)
+  const valorRegex2 = /\b(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\b/g;
+  while ((match = valorRegex2.exec(text)) !== null) {
+    const valorStr = match[1].replace(/\./g, '').replace(',', '.');
+    const valor = parseFloat(valorStr);
+    // Aceitar valores entre 1 e 10000 (evitar números de telefone, datas, etc)
+    if (!isNaN(valor) && valor >= 1 && valor <= 10000) {
+      foundValues.push(valor);
+    }
+  }
+  
+  // Remover duplicatas
+  foundValues = [...new Set(foundValues)];
   
   console.log(`💰 [OCR] Valores encontrados:`, foundValues);
   console.log(`💰 [OCR] Valor esperado: ${expectedAmount}`);
@@ -161,16 +216,34 @@ function analyzeExtractedText(text, expectedAmount, pixKey, fileType) {
     console.log(`⚠️ [OCR] Nenhum valor encontrado no texto`);
   }
   
-  // 2. BUSCAR CHAVE PIX (flexível - busca qualquer número que contenha parte da chave)
+  // 2. BUSCAR CHAVE PIX (flexível - múltiplas tentativas)
   let hasPixKey = false;
   
   if (cleanPixKey.length >= 8) {
-    // Buscar por qualquer sequência de 8+ dígitos consecutivos da chave
-    const pixPart = cleanPixKey.substring(0, 8);
-    hasPixKey = text.includes(pixPart) || textNormalized.includes(pixPart);
+    // Tentativa 1: Buscar chave completa sem formatação
+    hasPixKey = text.includes(cleanPixKey) || textNormalized.includes(cleanPixKey);
     
+    // Tentativa 2: Buscar últimos 8 dígitos (mais comum em comprovantes)
+    if (!hasPixKey && cleanPixKey.length >= 8) {
+      const last8 = cleanPixKey.substring(cleanPixKey.length - 8);
+      hasPixKey = text.includes(last8) || textNormalized.includes(last8);
+    }
+    
+    // Tentativa 3: Buscar primeiros 8 dígitos
     if (!hasPixKey) {
-      // Tentar buscar com formatação
+      const first8 = cleanPixKey.substring(0, 8);
+      hasPixKey = text.includes(first8) || textNormalized.includes(first8);
+    }
+    
+    // Tentativa 4: Buscar com formatação (+55, espaços, etc)
+    if (!hasPixKey) {
+      // Remover + e espaços da chave original
+      const pixKeyClean = pixKey.replace(/[\s\+\-\(\)]/g, '');
+      hasPixKey = text.includes(pixKeyClean) || textLower.includes(pixKeyClean.toLowerCase());
+    }
+    
+    // Tentativa 5: Buscar chave original com formatação
+    if (!hasPixKey) {
       hasPixKey = text.includes(pixKey) || textLower.includes(pixKey.toLowerCase());
     }
   }
