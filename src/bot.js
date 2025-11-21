@@ -374,6 +374,22 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
       
       // 🆕 ANÁLISE AUTOMÁTICA OCR EM BACKGROUND
       // Executar análise de forma assíncrona (não bloqueia webhook)
+      // Capturar variáveis necessárias ANTES do setImmediate para evitar problemas de contexto
+      const telegram = ctx.telegram;
+      const chatId = ctx.chat.id;
+      const fromUser = {
+        id: ctx.from.id,
+        first_name: ctx.from.first_name,
+        username: ctx.from.username
+      };
+      const transactionData = {
+        txid: transaction.txid,
+        amount: transaction.amount,
+        pix_key: transaction.pix_key,
+        product_id: transaction.product_id,
+        user_id: transaction.user_id
+      };
+      
       setImmediate(async () => {
         try {
           if (!fileUrl) {
@@ -383,15 +399,16 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           
           console.log(`🔍 [AUTO-ANALYSIS] Iniciando análise OCR de ${fileType}...`);
           console.log(`📎 [AUTO-ANALYSIS] URL: ${fileUrl.substring(0, 80)}...`);
-          console.log(`💰 [AUTO-ANALYSIS] Valor esperado: R$ ${transaction.amount}`);
-          console.log(`🔑 [AUTO-ANALYSIS] Chave PIX: ${transaction.pix_key}`);
-          console.log(`🆔 [AUTO-ANALYSIS] TXID: ${transaction.txid}`);
+          console.log(`💰 [AUTO-ANALYSIS] Valor esperado: R$ ${transactionData.amount}`);
+          console.log(`🔑 [AUTO-ANALYSIS] Chave PIX: ${transactionData.pix_key}`);
+          console.log(`🆔 [AUTO-ANALYSIS] TXID: ${transactionData.txid}`);
+          console.log(`⏰ [AUTO-ANALYSIS] Tempo início: ${new Date().toISOString()}`);
           
           // Timeout de 90 segundos para análise
           const analysisPromise = proofAnalyzer.analyzeProof(
             fileUrl,
-            transaction.amount,
-            transaction.pix_key,
+            transactionData.amount,
+            transactionData.pix_key,
             fileType
           );
           
@@ -399,7 +416,9 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             setTimeout(() => reject(new Error('Timeout na análise OCR (90s)')), 90000)
           );
           
+          console.log(`⏳ [AUTO-ANALYSIS] Aguardando resultado da análise...`);
           const analysis = await Promise.race([analysisPromise, timeoutPromise]);
+          console.log(`⏰ [AUTO-ANALYSIS] Tempo fim: ${new Date().toISOString()}`);
           
           console.log(`📊 [AUTO-ANALYSIS] Análise concluída:`, {
             isValid: analysis?.isValid,
@@ -408,40 +427,40 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             reason: analysis?.details?.reason
           });
           
-          const product = await db.getProduct(transaction.product_id);
-          const productName = product ? product.name : transaction.product_id;
+          const product = await db.getProduct(transactionData.product_id);
+          const productName = product ? product.name : transactionData.product_id;
           
           // ✅ APROVAÇÃO AUTOMÁTICA (confidence >= 80)
           if (analysis && analysis.isValid === true && analysis.confidence >= 80) {
-            console.log(`✅ [AUTO-ANALYSIS] APROVAÇÃO AUTOMÁTICA para TXID ${transaction.txid}`);
+            console.log(`✅ [AUTO-ANALYSIS] APROVAÇÃO AUTOMÁTICA para TXID ${transactionData.txid}`);
             
             try {
               // Aprovar transação no banco
-              await db.validateTransaction(transaction.txid, transaction.user_id);
+              await db.validateTransaction(transactionData.txid, transactionData.user_id);
               console.log(`✅ [AUTO-ANALYSIS] Transação validada no banco`);
               
               // Notificar ADMIN sobre aprovação automática
               const admins = await db.getAllAdmins();
               for (const admin of admins) {
                 try {
-                  await ctx.telegram.sendMessage(admin.telegram_id, 
+                  await telegram.sendMessage(admin.telegram_id, 
                     `✅ *COMPROVANTE APROVADO AUTOMATICAMENTE*
 
 🤖 *Análise OCR:* ${analysis.confidence}% de confiança
-💰 Valor confirmado: R$ ${analysis.details.amount || transaction.amount}
-👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
-🆔 ID: ${ctx.from.id}
+💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
+👤 Usuário: ${fromUser.first_name} (@${fromUser.username || 'N/A'})
+🆔 ID: ${fromUser.id}
 📦 Produto: ${productName}
 📅 ${new Date().toLocaleString('pt-BR')}
 
-🆔 TXID: ${transaction.txid}
+🆔 TXID: ${transactionData.txid}
 
 ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 'Imagem'}
 ✅ Status: *ENTREGUE AUTOMATICAMENTE*`, {
                     parse_mode: 'Markdown',
                     reply_markup: {
                       inline_keyboard: [[
-                        { text: '❌ Cancelar entrega', callback_data: `reject_${transaction.txid}` }
+                        { text: '❌ Cancelar entrega', callback_data: `reject_${transactionData.txid}` }
                       ]]
                     }
                   });
@@ -452,25 +471,25 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               }
               
               // Entregar produto ao usuário
-              if (transaction.product_id && transaction.product_id.startsWith('group_')) {
+              if (transactionData.product_id && transactionData.product_id.startsWith('group_')) {
                 // Assinatura de grupo
-                const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+                const groupTelegramId = parseInt(transactionData.product_id.replace('group_', ''));
                 const group = await db.getGroupById(groupTelegramId);
                 
                 if (group) {
                   await db.addGroupMember({
-                    telegramId: ctx.chat.id,
-                    userId: transaction.user_id,
+                    telegramId: chatId,
+                    userId: transactionData.user_id,
                     groupId: group.id,
                     days: group.subscription_days
                   });
                   
                   try {
-                    await ctx.telegram.unbanChatMember(group.group_id, ctx.chat.id, { only_if_banned: true });
-                    await ctx.telegram.sendMessage(ctx.chat.id, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                    await telegram.unbanChatMember(group.group_id, chatId, { only_if_banned: true });
+                    await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
-💰 Valor confirmado: R$ ${analysis.details.amount || transaction.amount}
+💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
 
 👥 *Grupo:* ${group.group_name}
 📅 *Acesso válido por:* ${group.subscription_days} dias
@@ -478,35 +497,35 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
 
 ✅ Você foi adicionado ao grupo!
 
-🆔 TXID: ${transaction.txid}`, { parse_mode: 'Markdown' });
+🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
                   } catch (err) {
                     console.error('Erro ao adicionar ao grupo:', err);
-                    await ctx.telegram.sendMessage(ctx.chat.id, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                    await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 ⚠️ Erro ao adicionar ao grupo. Entre manualmente: ${group.group_link}
 
-🆔 TXID: ${transaction.txid}`, { parse_mode: 'Markdown' });
+🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
                   }
                   
-                  await db.markAsDelivered(transaction.txid);
+                  await db.markAsDelivered(transactionData.txid);
                   console.log(`✅ [AUTO-ANALYSIS] Assinatura de grupo entregue`);
                 }
               } else {
                 // Produto digital
                 if (product && product.file_url) {
-                  await ctx.telegram.sendMessage(ctx.chat.id, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                  await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
-💰 Valor confirmado: R$ ${analysis.details.amount || transaction.amount}
+💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
 
 📦 *Produto:* ${productName}
 🔗 *Link para download:* ${product.file_url}
 
 ✅ Produto entregue com sucesso!
 
-🆔 TXID: ${transaction.txid}`, { parse_mode: 'Markdown' });
+🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
                   
-                  await db.markAsDelivered(transaction.txid);
+                  await db.markAsDelivered(transactionData.txid);
                   console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
                 }
               }
@@ -517,46 +536,46 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
           }
           // ❌ REJEIÇÃO AUTOMÁTICA (confidence >= 70 e isValid = false)
           else if (analysis && analysis.isValid === false && analysis.confidence >= 70) {
-            console.log(`❌ [AUTO-ANALYSIS] REJEIÇÃO AUTOMÁTICA para TXID ${transaction.txid}`);
+            console.log(`❌ [AUTO-ANALYSIS] REJEIÇÃO AUTOMÁTICA para TXID ${transactionData.txid}`);
             
             try {
               // Cancelar transação no banco
-              await db.cancelTransaction(transaction.txid);
+              await db.cancelTransaction(transactionData.txid);
               console.log(`❌ [AUTO-ANALYSIS] Transação cancelada no banco`);
               
               // Notificar USUÁRIO sobre rejeição
-              await ctx.telegram.sendMessage(ctx.chat.id, `❌ *COMPROVANTE INVÁLIDO*
+              await telegram.sendMessage(chatId, `❌ *COMPROVANTE INVÁLIDO*
 
 🤖 Análise automática detectou problemas:
 ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado'}
 
-💰 Valor esperado: R$ ${transaction.amount}
-🔑 Chave PIX: ${transaction.pix_key}
+💰 Valor esperado: R$ ${transactionData.amount}
+🔑 Chave PIX: ${transactionData.pix_key}
 
 🔄 *O que fazer:*
-1. Verifique se pagou o valor EXATO (R$ ${transaction.amount})
+1. Verifique se pagou o valor EXATO (R$ ${transactionData.amount})
 2. Verifique se pagou para a chave CORRETA
 3. Envie um novo comprovante CLARO e LEGÍVEL
 4. Ou faça uma nova compra: /start
 
-🆔 TXID: ${transaction.txid}`, { parse_mode: 'Markdown' });
+🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
               
               // Notificar ADMIN sobre rejeição automática
               const admins = await db.getAllAdmins();
               for (const admin of admins) {
                 try {
-                  await ctx.telegram.sendMessage(admin.telegram_id, 
+                  await telegram.sendMessage(admin.telegram_id, 
                     `❌ *COMPROVANTE REJEITADO AUTOMATICAMENTE*
 
 🤖 *Análise OCR:* ${analysis.confidence}% de confiança
 ⚠️ Motivo: ${analysis.details.reason || 'Inválido'}
-👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
-🆔 ID: ${ctx.from.id}
+👤 Usuário: ${fromUser.first_name} (@${fromUser.username || 'N/A'})
+🆔 ID: ${fromUser.id}
 📦 Produto: ${productName}
-💰 Valor esperado: R$ ${transaction.amount}
+💰 Valor esperado: R$ ${transactionData.amount}
 📅 ${new Date().toLocaleString('pt-BR')}
 
-🆔 TXID: ${transaction.txid}
+🆔 TXID: ${transactionData.txid}
 
 ❌ Status: *CANCELADO AUTOMATICAMENTE*
 ⚠️ Usuário foi notificado para enviar novo comprovante`, {
@@ -574,14 +593,19 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           }
           // ⚠️ ANÁLISE INCONCLUSIVA (deixar para validação manual)
           else {
-            console.log(`⚠️ [AUTO-ANALYSIS] Análise inconclusiva para TXID ${transaction.txid}`);
+            console.log(`⚠️ [AUTO-ANALYSIS] Análise inconclusiva para TXID ${transactionData.txid}`);
             console.log(`⚠️ [AUTO-ANALYSIS] Confiança: ${analysis?.confidence}%, isValid: ${analysis?.isValid}`);
             console.log(`⚠️ [AUTO-ANALYSIS] Validação manual já foi solicitada ao admin`);
           }
           
         } catch (err) {
-          console.error(`❌ [AUTO-ANALYSIS] Erro na análise:`, err.message);
+          console.error(`❌ [AUTO-ANALYSIS] Erro na análise para TXID ${transactionData.txid}:`, err.message);
           console.error('Stack:', err.stack);
+          console.error('Detalhes do erro:', {
+            name: err.name,
+            message: err.message,
+            code: err.code
+          });
           // Em caso de erro, validação manual já foi solicitada ao admin
         }
       });

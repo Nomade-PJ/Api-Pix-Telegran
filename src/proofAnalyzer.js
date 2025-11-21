@@ -146,7 +146,7 @@ Responda APENAS em formato JSON com esta estrutura:
     console.log(`📋 Tamanho do arquivo base64: ${(fileData.length / 1024).toFixed(2)} KB`);
     
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         contents: [{
           parts: [
@@ -161,8 +161,7 @@ Responda APENAS em formato JSON com esta estrutura:
         }],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 500,
-          responseMimeType: 'application/json' // 🆕 Forçar resposta JSON
+          maxOutputTokens: 500
         }
       },
       {
@@ -277,10 +276,27 @@ Responda APENAS em formato JSON com esta estrutura:
   } catch (err) {
     console.error('❌ Erro detalhado com Google Gemini:');
     console.error('Mensagem:', err.message);
-    console.error('Response data:', err.response?.data);
-    console.error('Status:', err.response?.status);
+    if (err.response) {
+      console.error('Response status:', err.response.status);
+      console.error('Response data:', JSON.stringify(err.response.data, null, 2));
+      console.error('Response headers:', err.response.headers);
+    }
+    if (err.code) {
+      console.error('Error code:', err.code);
+    }
     console.error('Stack:', err.stack);
-    throw new Error(`Google Gemini falhou: ${err.message}${err.response?.status ? ` (Status: ${err.response.status})` : ''}`);
+    
+    // Fornecer mensagem de erro mais clara
+    let errorMsg = `Google Gemini falhou: ${err.message}`;
+    if (err.response?.status === 404) {
+      errorMsg += ' - Modelo não encontrado ou API key inválida';
+    } else if (err.response?.status === 429) {
+      errorMsg += ' - Limite de requisições atingido';
+    } else if (err.response?.status === 400) {
+      errorMsg += ' - Requisição inválida';
+    }
+    
+    throw new Error(errorMsg);
   }
 }
 
