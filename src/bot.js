@@ -419,8 +419,8 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           console.log(`🆔 [AUTO-ANALYSIS] TXID: ${transactionData.txid}`);
           console.log(`⏰ [AUTO-ANALYSIS] Tempo início: ${new Date().toISOString()}`);
           
-          // Timeout de 4 minutos (240s) para análise completa
-          // Download: até 120s + OCR: até 120s = máximo 240s
+          // Timeout de 2.5 minutos (150s) para análise completa
+          // Download: até 60s + OCR: até 90s = máximo 150s (com margem de segurança)
           const analysisPromise = proofAnalyzer.analyzeProof(
             fileUrl,
             transactionData.amount,
@@ -429,7 +429,7 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           );
           
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout na análise OCR (4 minutos)')), 240000)
+            setTimeout(() => reject(new Error('Timeout na análise OCR (2.5 minutos)')), 150000)
           );
           
           console.log(`⏳ [AUTO-ANALYSIS] Aguardando resultado da análise...`);

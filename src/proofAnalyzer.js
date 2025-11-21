@@ -62,10 +62,10 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
     
     const downloadStartTime = Date.now();
     
-    // Baixar arquivo do Telegram - AUMENTAR TIMEOUT
+    // Baixar arquivo do Telegram - Timeout otimizado
     const response = await axios.get(fileUrl, {
       responseType: 'arraybuffer',
-      timeout: 120000, // 120 segundos (2 minutos) - aumentado para evitar timeout
+      timeout: 60000, // 60 segundos (1 minuto) - suficiente para arquivos pequenos (7-8KB)
       maxContentLength: Infinity,
       maxBodyLength: Infinity
     });
@@ -96,10 +96,10 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
     
     const ocrStartTime = Date.now();
     
-    // Enviar para OCR.space - AUMENTAR TIMEOUT
+    // Enviar para OCR.space - Timeout otimizado
     const ocrResponse = await axios.post('https://api.ocr.space/parse/image', formData, {
       headers: formData.getHeaders(),
-      timeout: 120000, // 120 segundos (2 minutos) para processar
+      timeout: 90000, // 90 segundos (1.5 minutos) - OCR geralmente responde em 5-30s
       maxContentLength: Infinity,
       maxBodyLength: Infinity
     });
