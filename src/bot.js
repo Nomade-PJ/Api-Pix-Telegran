@@ -188,11 +188,22 @@ Esta transação foi cancelada automaticamente.
   // Receber comprovante (foto ou documento)
   bot.on(['photo', 'document'], async (ctx) => {
     try {
+      // 🆕 LOG INICIAL - CRÍTICO PARA DEBUG
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🎯 [HANDLER] COMPROVANTE RECEBIDO!');
+      console.log(`📋 [HANDLER] Tipo: ${ctx.message.photo ? 'PHOTO' : 'DOCUMENT'}`);
+      console.log(`👤 [HANDLER] User: ${ctx.from.id} (@${ctx.from.username || 'N/A'})`);
+      console.log(`📅 [HANDLER] Timestamp: ${new Date().toISOString()}`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
       const transaction = await db.getLastPendingTransaction(ctx.chat.id);
       
       if (!transaction) {
+        console.warn('⚠️ [HANDLER] Nenhuma transação pendente encontrada');
         return ctx.reply('❌ Não localizei uma cobrança pendente.\n\nSe acabou de pagar, aguarde alguns segundos e tente novamente.');
       }
+      
+      console.log(`✅ [HANDLER] Transação encontrada: ${transaction.txid}`);
 
       // Verificar se a transação está expirada (30 minutos)
       const createdAt = new Date(transaction.created_at);
@@ -223,19 +234,34 @@ Esta transação foi cancelada automaticamente.
         : (ctx.message.document?.file_id || null);
       
       if (!fileId) {
+        console.error('❌ [HANDLER] FileId não encontrado');
         return ctx.reply('❌ Erro ao processar comprovante. Envie uma foto ou documento válido.');
       }
+
+      console.log(`📎 [HANDLER] FileId: ${fileId.substring(0, 30)}...`);
 
       // Calcular tempo restante
       const minutesElapsed = Math.floor(diffMinutes);
       const minutesRemaining = 30 - minutesElapsed;
 
-      // 🆕 ANÁLISE AUTOMÁTICA DE COMPROVANTE
-      console.log(`📥 Comprovante recebido - Tipo: ${ctx.message.document ? 'documento' : 'foto'}, TXID: ${transaction.txid}`);
-      await ctx.reply('🔍 *Analisando comprovante automaticamente...*', { parse_mode: 'Markdown' });
+      console.log(`⏰ [HANDLER] Tempo decorrido: ${minutesElapsed} minutos (${minutesRemaining} minutos restantes)`);
+
+      // 🆕 OTIMIZAÇÃO CRÍTICA: SALVAR NO BANCO PRIMEIRO (NÃO BLOQUEAR)
+      console.log(`💾 [HANDLER] Salvando comprovante no banco IMEDIATAMENTE...`);
       
-      // Salvar comprovante primeiro
-      await db.updateTransactionProof(transaction.txid, fileId);
+      try {
+        const saveResult = await db.updateTransactionProof(transaction.txid, fileId);
+        console.log(`✅ [HANDLER] Comprovante salvo no banco: ${saveResult ? 'Sucesso' : 'Falha'}`);
+      } catch (saveErr) {
+        console.error(`❌ [HANDLER] Erro ao salvar comprovante:`, saveErr.message);
+        // Continuar mesmo com erro - notificar admin é mais importante
+      }
+      
+      // 🆕 RESPOSTA IMEDIATA AO USUÁRIO (NÃO ESPERAR ANÁLISE)
+      console.log(`💬 [HANDLER] Enviando confirmação ao usuário...`);
+      const userResponsePromise = ctx.reply('✅ *Comprovante recebido!*\n\n⏳ Um admin irá validar em breve.\n\n🆔 TXID: ' + transaction.txid, { 
+        parse_mode: 'Markdown' 
+      }).catch(err => console.error('❌ Erro ao enviar confirmação:', err.message));
       
       // 🆕 DETECÇÃO MELHORADA DE TIPO DE ARQUIVO (PDF vs Imagem)
       let fileUrl = null;
@@ -309,50 +335,15 @@ Esta transação foi cancelada automaticamente.
           console.log('📷 FOTO DETECTADA (photo)');
         }
         
-        console.log(`✅ Tipo de arquivo determinado: ${fileType.toUpperCase()}`);
+        console.log(`✅ [HANDLER] Tipo de arquivo determinado: ${fileType.toUpperCase()}`);
       } catch (err) {
-        console.error('❌ Erro ao obter URL do arquivo:', err.message);
+        console.error('❌ [HANDLER] Erro ao obter URL do arquivo:', err.message);
         console.error('Stack:', err.stack);
       }
       
-      // Analisar com IA (se URL disponível) - suporta imagens e PDFs
-      let analysis = null;
-      let analysisError = null;
-      
-      if (fileUrl) {
-        try {
-          console.log(`🔍 Iniciando análise de ${fileType === 'pdf' ? 'PDF' : 'imagem'}...`);
-          console.log(`📎 URL: ${fileUrl.substring(0, 100)}...`);
-          
-          // Timeout de 90 segundos para análise (PDFs podem demorar)
-          const analysisPromise = proofAnalyzer.analyzeProof(
-            fileUrl,
-            transaction.amount,
-            transaction.pix_key,
-            fileType
-          );
-          
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout na análise (90s)')), 90000)
-          );
-          
-          analysis = await Promise.race([analysisPromise, timeoutPromise]);
-          
-          console.log(`📊 Análise concluída:`, {
-            isValid: analysis?.isValid,
-            confidence: analysis?.confidence,
-            method: analysis?.details?.method
-          });
-        } catch (err) {
-          analysisError = err;
-          console.error('❌ Erro na análise automática:', err.message);
-          console.error('Stack:', err.stack);
-          // Continuar mesmo com erro - enviar para validação manual
-        }
-      } else {
-        console.warn('⚠️ URL do arquivo não disponível para análise');
-        analysisError = new Error('URL do arquivo não disponível');
-      }
+      // 🆕 NOTIFICAR ADMIN IMEDIATAMENTE (ANTES DE QUALQUER ANÁLISE)
+      // Isso garante que o admin SEMPRE receba o comprovante, mesmo se a análise falhar ou der timeout
+      console.log(`📤 [HANDLER] NOTIFICANDO ADMIN IMEDIATAMENTE (sem esperar análise)...`);
       
       // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE (suporta imagens e PDFs)
       // IMPORTANTE: Esta função DEVE ser chamada em TODOS os casos (aprovado, rejeitado, pendente, erro)
@@ -477,7 +468,49 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
         }
       };
       
-      // Processar resultado da análise
+      // 🆕 CHAMAR NOTIFICAÇÃO IMEDIATAMENTE (SEM ESPERAR ANÁLISE)
+      console.log(`📤 [HANDLER] Chamando notifyAdmins AGORA...`);
+      
+      try {
+        await notifyAdmins('pending', null);
+        console.log(`✅ [HANDLER] Admin notificado com sucesso!`);
+      } catch (notifyErr) {
+        console.error(`❌ [HANDLER] Erro ao notificar admin:`, notifyErr.message);
+        console.error('Stack:', notifyErr.stack);
+        
+        // 🆕 MÉTODO ALTERNATIVO se falhar
+        try {
+          console.log(`🔄 [HANDLER] Tentando método alternativo...`);
+          // Aguardar 1 segundo e tentar novamente
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await notifyAdmins('pending', null);
+          console.log(`✅ [HANDLER] Admin notificado na segunda tentativa!`);
+        } catch (retryErr) {
+          console.error(`❌ [HANDLER] Erro na segunda tentativa:`, retryErr.message);
+        }
+      }
+      
+      console.log(`✅ [HANDLER] Processo concluído com sucesso!`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      // 🆕 REMOVER TODO O CÓDIGO DE ANÁLISE AUTOMÁTICA
+      // Análise será feita manualmente pelo admin
+      // O código abaixo NÃO será mais executado
+      
+      /*
+      // =======================================================
+      // 🔥 CÓDIGO ANTIGO DE ANÁLISE AUTOMÁTICA REMOVIDO
+      // =======================================================
+      // Agora o fluxo é mais simples e rápido:
+      // 1. Salva no banco ✅
+      // 2. Responde ao usuário ✅  
+      // 3. Detecta tipo de arquivo ✅
+      // 4. Notifica admin IMEDIATAMENTE ✅
+      // 5. FIM! ✅
+      // 
+      // Admin faz validação manual clicando em Aprovar/Rejeitar
+      // =======================================================
+      
       if (analysis && analysis.isValid === true && analysis.confidence >= 80) {
         // ✅ APROVAÇÃO AUTOMÁTICA
         try {
@@ -749,122 +782,27 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           }
         }
       }
+      */
+      // =======================================================
+      // FIM DO CÓDIGO ANTIGO REMOVIDO
+      // =======================================================
+      
     } catch (err) {
-      console.error('❌ Erro ao receber comprovante:', err.message);
+      console.error('❌ [HANDLER] Erro crítico ao receber comprovante:', err.message);
       console.error('Stack:', err.stack);
       
-      // 🆕 NOTIFICAÇÃO DE ERRO MELHORADA - Tentar notificar admin mesmo em caso de erro crítico
-      try {
-        console.log('⚠️ [ERROR-HANDLER] Tentando notificar admin sobre erro crítico...');
-        const transaction = await db.getLastPendingTransaction(ctx.chat.id);
-        if (transaction) {
-          const fileId = ctx.message.photo 
-            ? ctx.message.photo.slice(-1)[0].file_id 
-            : (ctx.message.document?.file_id || null);
-          
-          if (fileId) {
-            console.log(`📎 [ERROR-HANDLER] FileId encontrado: ${fileId.substring(0, 30)}...`);
-            
-            const notifyAdminsError = async (status, analysisData = null) => {
-              try {
-                const admins = await db.getAllAdmins();
-                const product = await db.getProduct(transaction.product_id);
-                const productName = product ? product.name : transaction.product_id;
-                
-                // Detectar tipo de arquivo
-                let detectedFileType = 'image';
-                if (ctx.message.document) {
-                  const mimeType = (ctx.message.document.mime_type || '').toLowerCase();
-                  const fileName = (ctx.message.document.file_name || '').toLowerCase();
-                  
-                  if (mimeType.includes('pdf') || fileName.endsWith('.pdf')) {
-                    detectedFileType = 'pdf';
-                  }
-                }
-                
-                const fileTypeEmoji = detectedFileType === 'pdf' ? '📄' : '🖼️';
-                const fileTypeText = detectedFileType === 'pdf' ? 'PDF' : 'Imagem';
-                
-                const caption = `⚠️ *ERRO NO PROCESSAMENTO - COMPROVANTE RECEBIDO*
-
-❌ Erro: ${err.message}
-💰 Valor: R$ ${transaction.amount}
-👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
-🆔 ID Usuário: ${ctx.from.id}
-📦 Produto: ${productName}
-${fileTypeEmoji} Tipo: *${fileTypeText}*
-📅 Enviado: ${new Date().toLocaleString('pt-BR')}
-
-🆔 TXID: ${transaction.txid}`;
-                
-                const replyMarkup = {
-                  inline_keyboard: [
-                    [
-                      { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
-                      { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
-                    ],
-                    [
-                      { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
-                    ]
-                  ]
-                };
-                
-                console.log(`👥 [ERROR-HANDLER] Notificando ${admins.length} admin(s)...`);
-                
-                for (const admin of admins) {
-                  try {
-                    if (detectedFileType === 'pdf') {
-                      console.log(`📄 [ERROR-HANDLER] Enviando PDF para admin ${admin.telegram_id}...`);
-                      await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
-                        caption: caption,
-                        parse_mode: 'Markdown',
-                        reply_markup: replyMarkup
-                      });
-                      console.log(`✅ [ERROR-HANDLER] PDF enviado para admin ${admin.telegram_id}`);
-                    } else {
-                      console.log(`🖼️ [ERROR-HANDLER] Enviando imagem para admin ${admin.telegram_id}...`);
-                      await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
-                        caption: caption,
-                        parse_mode: 'Markdown',
-                        reply_markup: replyMarkup
-                      });
-                      console.log(`✅ [ERROR-HANDLER] Imagem enviada para admin ${admin.telegram_id}`);
-                    }
-                  } catch (notifyErr) {
-                    console.error(`❌ [ERROR-HANDLER] Erro ao notificar admin ${admin.telegram_id}:`, notifyErr.message);
-                  }
-                }
-                
-                console.log(`✅ [ERROR-HANDLER] Notificação de erro concluída`);
-              } catch (notifyErr) {
-                console.error('❌ [ERROR-HANDLER] Erro ao buscar admins:', notifyErr.message);
-              }
-            };
-            
-            await notifyAdminsError('pending', null);
-          } else {
-            console.warn('⚠️ [ERROR-HANDLER] FileId não encontrado');
-          }
-        } else {
-          console.warn('⚠️ [ERROR-HANDLER] Transação não encontrada');
-        }
-      } catch (notifyErr) {
-        console.error('❌ [ERROR-HANDLER] Erro ao tentar notificar admin em caso de erro:', notifyErr.message);
-        console.error('Stack:', notifyErr.stack);
-      }
-      
+      // 🆕 NOTIFICAÇÃO SIMPLES EM CASO DE ERRO
       try {
         await ctx.reply(`❌ *Erro ao processar comprovante*
 
-Ocorreu um erro inesperado.
-O comprovante foi enviado para validação manual.
-Aguarde a aprovação do administrador.
+Ocorreu um erro inesperado, mas seu comprovante foi salvo.
+Um administrador irá validar manualmente.
 
-🔄 Tente novamente ou entre em contato com o suporte.`, {
+🔄 Tente novamente ou aguarde a validação.`, {
           parse_mode: 'Markdown'
         });
       } catch (replyErr) {
-        console.error('❌ Erro ao enviar mensagem de erro:', replyErr.message);
+        console.error('❌ [HANDLER] Erro ao enviar mensagem de erro:', replyErr.message);
       }
     }
   });
