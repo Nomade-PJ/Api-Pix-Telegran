@@ -141,9 +141,23 @@ function createBot(token) {
       
       // 🆕 RESPOSTA IMEDIATA AO USUÁRIO (NÃO ESPERAR ANÁLISE)
       console.log(`💬 [HANDLER] Enviando confirmação ao usuário...`);
-      const userResponsePromise = ctx.reply('✅ *Comprovante recebido!*\n\n⏳ Um admin irá validar em breve.\n\n🆔 TXID: ' + transaction.txid, { 
-        parse_mode: 'Markdown' 
-      }).catch(err => console.error('❌ Erro ao enviar confirmação:', err.message));
+      try {
+        await ctx.reply('✅ *Comprovante recebido!*\n\n⏳ Um admin irá validar em breve.\n\n🆔 TXID: ' + transaction.txid, { 
+          parse_mode: 'Markdown' 
+        });
+        console.log(`✅ [HANDLER] Confirmação enviada ao usuário com sucesso`);
+      } catch (err) {
+        console.error('❌ [HANDLER] Erro ao enviar confirmação:', err.message);
+        // Tentar novamente
+        try {
+          await ctx.telegram.sendMessage(ctx.chat.id, '✅ *Comprovante recebido!*\n\n⏳ Um admin irá validar em breve.\n\n🆔 TXID: ' + transaction.txid, { 
+            parse_mode: 'Markdown' 
+          });
+          console.log(`✅ [HANDLER] Confirmação enviada na segunda tentativa`);
+        } catch (retryErr) {
+          console.error('❌ [HANDLER] Erro na segunda tentativa:', retryErr.message);
+        }
+      }
       
       // 🆕 DETECÇÃO MELHORADA DE TIPO DE ARQUIVO (PDF vs Imagem)
       let fileUrl = null;
@@ -386,6 +400,7 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
         txid: transaction.txid,
         amount: transaction.amount,
         pix_key: transaction.pix_key,
+        pix_payload: transaction.pix_payload || transaction.pixPayload, // Código PIX (copia e cola)
         product_id: transaction.product_id,
         user_id: transaction.user_id
       };
@@ -404,8 +419,8 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           console.log(`🆔 [AUTO-ANALYSIS] TXID: ${transactionData.txid}`);
           console.log(`⏰ [AUTO-ANALYSIS] Tempo início: ${new Date().toISOString()}`);
           
-          // Timeout de 3 minutos (180s) para análise completa
-          // Download: até 90s + OCR: até 120s = máximo 210s, mas 180s é suficiente na maioria dos casos
+          // Timeout de 4 minutos (240s) para análise completa
+          // Download: até 120s + OCR: até 120s = máximo 240s
           const analysisPromise = proofAnalyzer.analyzeProof(
             fileUrl,
             transactionData.amount,
@@ -414,7 +429,7 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           );
           
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout na análise OCR (3 minutos)')), 180000)
+            setTimeout(() => reject(new Error('Timeout na análise OCR (4 minutos)')), 240000)
           );
           
           console.log(`⏳ [AUTO-ANALYSIS] Aguardando resultado da análise...`);
@@ -560,21 +575,33 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               
               // Notificar USUÁRIO sobre rejeição
               console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de rejeição para cliente ${chatId}`);
-              await telegram.sendMessage(chatId, `❌ *COMPROVANTE INVÁLIDO*
+              
+              // Preparar mensagem com código PIX
+              let rejectionMessage = `❌ *COMPROVANTE INVÁLIDO*
 
 🤖 Análise automática detectou problemas:
 ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado'}
 
-💰 Valor esperado: R$ ${transactionData.amount}
-🔑 Chave PIX: ${transactionData.pix_key}
+💰 *Valor esperado:* R$ ${transactionData.amount}
+🔑 *Chave PIX:* ${transactionData.pix_key}`;
 
-🔄 *O que fazer:*
+              // Adicionar código PIX (copia e cola) se disponível
+              if (transactionData.pix_payload) {
+                rejectionMessage += `\n\n📋 *Código PIX (Copiar e Colar):*
+\`${transactionData.pix_payload}\``;
+              }
+
+              rejectionMessage += `\n\n🔄 *O que fazer:*
 1. Verifique se pagou o valor EXATO (R$ ${transactionData.amount})
 2. Verifique se pagou para a chave CORRETA
 3. Envie um novo comprovante CLARO e LEGÍVEL
 4. Ou faça uma nova compra: /start
 
-🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
+🆔 TXID: ${transactionData.txid}`;
+
+              await telegram.sendMessage(chatId, rejectionMessage, { 
+                parse_mode: 'Markdown' 
+              });
               
               // Notificar ADMIN sobre rejeição automática
               const admins = await db.getAllAdmins();

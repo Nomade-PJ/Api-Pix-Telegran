@@ -65,7 +65,7 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
     // Baixar arquivo do Telegram - AUMENTAR TIMEOUT
     const response = await axios.get(fileUrl, {
       responseType: 'arraybuffer',
-      timeout: 90000, // 90 segundos (aumentado de 30s)
+      timeout: 120000, // 120 segundos (2 minutos) - aumentado para evitar timeout
       maxContentLength: Infinity,
       maxBodyLength: Infinity
     });
