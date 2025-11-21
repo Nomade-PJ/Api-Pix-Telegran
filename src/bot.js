@@ -419,9 +419,23 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           console.log(`🆔 [AUTO-ANALYSIS] TXID: ${transactionData.txid}`);
           console.log(`⏰ [AUTO-ANALYSIS] Tempo início: ${new Date().toISOString()}`);
           
-          // 🚀 OTIMIZAÇÃO: Verificar cache do OCR primeiro
+          // 🚀 OTIMIZAÇÃO: Verificar cache do OCR primeiro (com timeout de 5s)
           console.log(`🔍 [AUTO-ANALYSIS] Verificando cache OCR...`);
-          let analysis = await db.getOCRResult(transactionData.txid);
+          let analysis = null;
+          
+          try {
+            const cachePromise = db.getOCRResult(transactionData.txid);
+            const cacheTimeout = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout na verificação de cache (5s)')), 5000)
+            );
+            
+            analysis = await Promise.race([cachePromise, cacheTimeout]);
+            console.log(`✅ [AUTO-ANALYSIS] Verificação de cache concluída`);
+          } catch (cacheErr) {
+            console.warn(`⚠️ [AUTO-ANALYSIS] Erro ou timeout na verificação de cache: ${cacheErr.message}`);
+            console.log(`📊 [AUTO-ANALYSIS] Continuando com análise OCR...`);
+            analysis = null;
+          }
           
           if (analysis) {
             console.log(`⚡ [AUTO-ANALYSIS] Cache encontrado! Usando resultado em cache (confiança: ${analysis.confidence}%)`);
