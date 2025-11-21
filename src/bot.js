@@ -237,36 +237,82 @@ Esta transação foi cancelada automaticamente.
       // Salvar comprovante primeiro
       await db.updateTransactionProof(transaction.txid, fileId);
       
-      // Obter URL do arquivo para análise (suporta imagens e PDFs)
+      // 🆕 DETECÇÃO MELHORADA DE TIPO DE ARQUIVO (PDF vs Imagem)
       let fileUrl = null;
       let fileType = 'image'; // 'image' ou 'pdf'
+      let fileExtension = '';
+      
       try {
         const file = await ctx.telegram.getFile(fileId);
         fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
         
-        // Detectar tipo de arquivo (PDF ou imagem)
+        // Detectar tipo de arquivo (PDF ou imagem) - múltiplos critérios
         if (ctx.message.document) {
           const mimeType = (ctx.message.document.mime_type || '').toLowerCase();
           const fileName = (ctx.message.document.file_name || '').toLowerCase();
           const filePath = (file.file_path || '').toLowerCase();
           
-          // Verificar se é PDF por múltiplos critérios
-          if (mimeType.includes('pdf') || 
-              fileName.endsWith('.pdf') || 
-              filePath.includes('.pdf') ||
-              mimeType === 'application/pdf') {
+          // Extrair extensão do arquivo
+          if (fileName) {
+            const parts = fileName.split('.');
+            fileExtension = parts.length > 1 ? parts[parts.length - 1] : '';
+          } else if (filePath) {
+            const parts = filePath.split('.');
+            fileExtension = parts.length > 1 ? parts[parts.length - 1] : '';
+          }
+          
+          // 🔍 VERIFICAÇÃO ROBUSTA: Verificar se é PDF por múltiplos critérios
+          const isPDF = (
+            mimeType === 'application/pdf' ||
+            mimeType.includes('pdf') ||
+            fileName.endsWith('.pdf') ||
+            filePath.includes('.pdf') ||
+            fileExtension === 'pdf'
+          );
+          
+          if (isPDF) {
             fileType = 'pdf';
-            console.log('📄 PDF detectado:', { mimeType, fileName, filePath });
+            console.log('📄 PDF DETECTADO:', { 
+              mimeType, 
+              fileName, 
+              filePath, 
+              fileExtension,
+              fileSize: ctx.message.document.file_size 
+            });
           } else {
-            console.log('🖼️ Imagem detectada:', { mimeType, fileName, filePath });
+            // Se não é PDF, verificar se é imagem
+            const isImage = (
+              mimeType.startsWith('image/') ||
+              ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension)
+            );
+            
+            if (isImage) {
+              fileType = 'image';
+              console.log('🖼️ IMAGEM DETECTADA (documento):', { 
+                mimeType, 
+                fileName, 
+                fileExtension 
+              });
+            } else {
+              console.warn('⚠️ TIPO DE ARQUIVO DESCONHECIDO:', { 
+                mimeType, 
+                fileName, 
+                fileExtension 
+              });
+              // Assumir imagem como fallback
+              fileType = 'image';
+            }
           }
         } else if (ctx.message.photo) {
-          // Se for foto, já sabemos que é imagem
+          // Se for foto (não documento), sempre é imagem
           fileType = 'image';
-          console.log('📷 Foto detectada');
+          console.log('📷 FOTO DETECTADA (photo)');
         }
+        
+        console.log(`✅ Tipo de arquivo determinado: ${fileType.toUpperCase()}`);
       } catch (err) {
-        console.error('Erro ao obter URL do arquivo:', err);
+        console.error('❌ Erro ao obter URL do arquivo:', err.message);
+        console.error('Stack:', err.stack);
       }
       
       // Analisar com IA (se URL disponível) - suporta imagens e PDFs
@@ -312,13 +358,15 @@ Esta transação foi cancelada automaticamente.
       // IMPORTANTE: Esta função DEVE ser chamada em TODOS os casos (aprovado, rejeitado, pendente, erro)
       const notifyAdmins = async (status, analysisData = null) => {
         try {
-          console.log(`📤 notifyAdmins chamado - Status: ${status}, FileType: ${fileType}, FileId: ${fileId?.substring(0, 20)}...`);
+          console.log(`📤 [NOTIFY] Iniciando notificação - Status: ${status}, FileType: ${fileType}`);
+          console.log(`📤 [NOTIFY] FileId: ${fileId?.substring(0, 30)}...`);
+          console.log(`📤 [NOTIFY] TXID: ${transaction.txid}`);
           
           const admins = await db.getAllAdmins();
-          console.log(`👥 Admins encontrados: ${admins.length}`);
+          console.log(`👥 [NOTIFY] Admins encontrados: ${admins.length}`);
           
           if (admins.length === 0) {
-            console.warn('⚠️ Nenhum admin encontrado para notificar');
+            console.warn('⚠️ [NOTIFY] Nenhum admin encontrado para notificar');
             return;
           }
           
@@ -328,14 +376,18 @@ Esta transação foi cancelada automaticamente.
           const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
           const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
           
+          // 🆕 INCLUIR TIPO DE ARQUIVO CLARAMENTE NA MENSAGEM
+          const fileTypeEmoji = fileType === 'pdf' ? '📄' : '🖼️';
+          const fileTypeText = fileType === 'pdf' ? 'PDF' : 'Imagem';
+          
           const caption = `${statusEmoji} *COMPROVANTE RECEBIDO - ${statusText}*
 
 ${analysisData ? `🤖 Análise automática: ${analysisData.confidence}% de confiança\n` : ''}💰 Valor: R$ ${transaction.amount}
 👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
 🆔 ID Usuário: ${ctx.from.id}
 📦 Produto: ${productName}
+${fileTypeEmoji} Tipo: *${fileTypeText}*
 📅 Enviado: ${new Date().toLocaleString('pt-BR')}
-${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
 
 🆔 TXID: ${transaction.txid}`;
           
@@ -352,61 +404,75 @@ ${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
             ]
           } : undefined;
           
-          console.log(`📋 Preparando envio para ${admins.length} admin(s) - Tipo: ${fileType}, Botões: ${replyMarkup ? 'Sim' : 'Não'}`);
+          console.log(`📋 [NOTIFY] Preparando envio: Tipo=${fileTypeText}, Botões=${replyMarkup ? 'Sim' : 'Não'}`);
+          console.log(`📋 [NOTIFY] Caption (primeiros 100 chars): ${caption.substring(0, 100)}...`);
+          
+          let successCount = 0;
+          let failureCount = 0;
           
           for (const admin of admins) {
             try {
-              console.log(`📨 Enviando para admin ${admin.telegram_id} (${admin.first_name || admin.username || 'N/A'})...`);
+              console.log(`📨 [NOTIFY] Enviando para admin ${admin.telegram_id} (${admin.first_name || admin.username || 'N/A'})...`);
               
-              // 🆕 USAR sendDocument PARA PDFs E sendPhoto PARA IMAGENS
+              // 🆕 MÉTODO CORRETO: sendDocument para PDFs, sendPhoto para imagens
               if (fileType === 'pdf') {
-                console.log(`📄 Enviando PDF para admin ${admin.telegram_id}...`);
+                console.log(`📄 [NOTIFY] Usando sendDocument (PDF) para admin ${admin.telegram_id}`);
                 await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
                   caption: caption,
                   parse_mode: 'Markdown',
                   reply_markup: replyMarkup
                 });
-                console.log(`✅ PDF enviado para admin ${admin.telegram_id} - Status: ${status}`);
+                console.log(`✅ [NOTIFY] PDF enviado com sucesso para admin ${admin.telegram_id}`);
               } else {
-                console.log(`🖼️ Enviando imagem para admin ${admin.telegram_id}...`);
+                console.log(`🖼️ [NOTIFY] Usando sendPhoto (Imagem) para admin ${admin.telegram_id}`);
                 await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
                   caption: caption,
                   parse_mode: 'Markdown',
                   reply_markup: replyMarkup
                 });
-                console.log(`✅ Imagem enviada para admin ${admin.telegram_id} - Status: ${status}`);
+                console.log(`✅ [NOTIFY] Imagem enviada com sucesso para admin ${admin.telegram_id}`);
               }
+              
+              successCount++;
             } catch (err) {
-              console.error(`❌ Erro ao notificar admin ${admin.telegram_id}:`, err.message);
-              console.error('Stack:', err.stack);
-              // Tentar método alternativo em caso de erro
+              failureCount++;
+              console.error(`❌ [NOTIFY] Erro ao notificar admin ${admin.telegram_id}:`, err.message);
+              console.error(`❌ [NOTIFY] Erro completo:`, err);
+              
+              // 🆕 MÉTODO ALTERNATIVO: Enviar mensagem separada do arquivo
               try {
-                console.log(`🔄 Tentando método alternativo para admin ${admin.telegram_id}...`);
+                console.log(`🔄 [NOTIFY] Tentando método alternativo (mensagem + arquivo séparados) para admin ${admin.telegram_id}...`);
+                
+                // Enviar mensagem com botões primeiro
+                await ctx.telegram.sendMessage(admin.telegram_id, caption, {
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                
+                // Depois enviar arquivo separadamente
                 if (fileType === 'pdf') {
-                  await ctx.telegram.sendMessage(admin.telegram_id, `${caption}\n\n📄 *Arquivo PDF anexado*`, {
-                    parse_mode: 'Markdown',
-                    reply_markup: replyMarkup
+                  await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                    caption: `📄 Comprovante em PDF - TXID: ${transaction.txid}`
                   });
-                  await ctx.telegram.sendDocument(admin.telegram_id, fileId);
-                  console.log(`✅ Método alternativo funcionou para admin ${admin.telegram_id}`);
                 } else {
-                  await ctx.telegram.sendMessage(admin.telegram_id, `${caption}\n\n🖼️ *Imagem anexada*`, {
-                    parse_mode: 'Markdown',
-                    reply_markup: replyMarkup
+                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                    caption: `🖼️ Comprovante em imagem - TXID: ${transaction.txid}`
                   });
-                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId);
-                  console.log(`✅ Método alternativo funcionou para admin ${admin.telegram_id}`);
                 }
+                
+                console.log(`✅ [NOTIFY] Método alternativo funcionou para admin ${admin.telegram_id}`);
+                successCount++;
+                failureCount--;
               } catch (fallbackErr) {
-                console.error(`❌ Erro no fallback para admin ${admin.telegram_id}:`, fallbackErr.message);
-                console.error('Stack:', fallbackErr.stack);
+                console.error(`❌ [NOTIFY] Erro no fallback para admin ${admin.telegram_id}:`, fallbackErr.message);
+                console.error(`❌ [NOTIFY] Stack:`, fallbackErr.stack);
               }
             }
           }
           
-          console.log(`✅ Processo de notificação concluído para ${admins.length} admin(s)`);
+          console.log(`✅ [NOTIFY] Notificação concluída: ${successCount} sucesso(s), ${failureCount} falha(s) de ${admins.length} admin(s)`);
         } catch (err) {
-          console.error('❌ Erro ao buscar admins:', err.message);
+          console.error('❌ [NOTIFY] Erro crítico ao buscar admins:', err.message);
           console.error('Stack:', err.stack);
         }
       };
@@ -537,8 +603,11 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           }
         }
         
-        // Mensagem para o usuário
-        let userMessage = `⚠️ *Comprovante recebido!*\n\n`;
+        // 🆕 MENSAGEM PARA O USUÁRIO (com informação sobre tipo de arquivo)
+        const fileTypeEmoji = fileType === 'pdf' ? '📄' : '🖼️';
+        const fileTypeText = fileType === 'pdf' ? 'PDF' : 'Imagem';
+        
+        let userMessage = `${fileTypeEmoji} *Comprovante ${fileTypeText} recebido!*\n\n`;
         
         if (analysis) {
           userMessage += `🤖 A análise automática precisa de confirmação manual.\n📊 Confiança da IA: ${analysis.confidence || 0}%\n\n`;
@@ -549,13 +618,21 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
             userMessage += `⚠️ Erro na análise: ${analysis.details.error}\n\n`;
           }
         } else if (analysisError) {
-          userMessage += `🤖 Análise automática não pôde ser concluída.\n⚠️ Erro: ${analysisError.message}\n\n`;
+          userMessage += `🤖 Análise automática não pôde ser concluída.\n`;
+          if (fileType === 'pdf') {
+            userMessage += `📄 *PDFs* precisam de validação manual.\n`;
+          }
+          userMessage += `⚠️ Erro: ${analysisError.message}\n\n`;
           console.error('📋 Detalhes do erro de análise:', {
             message: analysisError.message,
             stack: analysisError.stack
           });
         } else {
-          userMessage += `🤖 Análise automática não disponível ou falhou.\n\n`;
+          userMessage += `🤖 Análise automática não disponível ou falhou.\n`;
+          if (fileType === 'pdf') {
+            userMessage += `📄 *PDFs* serão validados manualmente pelo administrador.\n`;
+          }
+          userMessage += `\n`;
         }
         
         userMessage += `⏳ Um admin irá validar em breve.\n\n🆔 TXID: ${transaction.txid}`;
@@ -564,7 +641,7 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           await ctx.reply(userMessage, {
             parse_mode: 'Markdown'
           });
-          console.log('✅ Mensagem enviada ao usuário sobre status do comprovante');
+          console.log(`✅ Mensagem enviada ao usuário sobre status do comprovante ${fileTypeText}`);
         } catch (err) {
           console.error('❌ Erro ao enviar mensagem ao usuário:', err.message);
           console.error('Stack:', err.stack);
@@ -597,17 +674,22 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
           }
         }
         
-        // Se todas as tentativas falharam, tentar método alternativo simples
+        // 🆕 MÉTODO ALTERNATIVO MELHORADO - Se todas as tentativas falharam
         if (!notificationSuccess) {
-          console.error('❌ Todas as tentativas de notificação falharam, tentando método alternativo...');
+          console.error('❌ [FALLBACK] Todas as tentativas de notificação falharam, tentando método alternativo...');
           try {
             const admins = await db.getAllAdmins();
             const product = await db.getProduct(transaction.product_id);
             const productName = product ? product.name : transaction.product_id;
             
+            const fileTypeEmoji = fileType === 'pdf' ? '📄' : '🖼️';
+            const fileTypeText = fileType === 'pdf' ? 'PDF' : 'Imagem';
+            
             for (const admin of admins) {
               try {
-                // Enviar mensagem simples primeiro
+                console.log(`🔄 [FALLBACK] Tentando método alternativo para admin ${admin.telegram_id}...`);
+                
+                // Enviar mensagem simples primeiro com botões
                 await ctx.telegram.sendMessage(admin.telegram_id, 
                   `⚠️ *COMPROVANTE RECEBIDO - VALIDAÇÃO MANUAL NECESSÁRIA*
 
@@ -615,12 +697,12 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
 👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
 🆔 ID Usuário: ${ctx.from.id}
 📦 Produto: ${productName}
-📄 Tipo: ${fileType === 'pdf' ? 'PDF' : 'Imagem'}
+${fileTypeEmoji} Tipo: *${fileTypeText}*
 📅 Enviado: ${new Date().toLocaleString('pt-BR')}
 
 🆔 TXID: ${transaction.txid}
 
-⚠️ *Erro ao enviar arquivo anexado. Verifique manualmente.*`, {
+⚠️ *Arquivo sendo enviado separadamente...*`, {
                     parse_mode: 'Markdown',
                     reply_markup: {
                       inline_keyboard: [
@@ -635,20 +717,34 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
                     }
                   });
                 
+                console.log(`✅ [FALLBACK] Mensagem enviada para admin ${admin.telegram_id}`);
+                
+                // Aguardar um pouco antes de enviar o arquivo
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
                 // Tentar enviar arquivo separadamente
                 if (fileType === 'pdf') {
-                  await ctx.telegram.sendDocument(admin.telegram_id, fileId);
+                  console.log(`📄 [FALLBACK] Enviando PDF para admin ${admin.telegram_id}...`);
+                  await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                    caption: `📄 Comprovante PDF - TXID: ${transaction.txid}`
+                  });
+                  console.log(`✅ [FALLBACK] PDF enviado para admin ${admin.telegram_id}`);
                 } else {
-                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId);
+                  console.log(`🖼️ [FALLBACK] Enviando imagem para admin ${admin.telegram_id}...`);
+                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                    caption: `🖼️ Comprovante - TXID: ${transaction.txid}`
+                  });
+                  console.log(`✅ [FALLBACK] Imagem enviada para admin ${admin.telegram_id}`);
                 }
                 
-                console.log(`✅ Método alternativo funcionou para admin ${admin.telegram_id}`);
+                console.log(`✅ [FALLBACK] Método alternativo funcionou completamente para admin ${admin.telegram_id}`);
               } catch (altErr) {
-                console.error(`❌ Erro no método alternativo para admin ${admin.telegram_id}:`, altErr.message);
+                console.error(`❌ [FALLBACK] Erro no método alternativo para admin ${admin.telegram_id}:`, altErr.message);
+                console.error(`❌ [FALLBACK] Stack:`, altErr.stack);
               }
             }
           } catch (altErr) {
-            console.error('❌ Erro crítico no método alternativo:', altErr.message);
+            console.error('❌ [FALLBACK] Erro crítico no método alternativo:', altErr.message);
             console.error('Stack:', altErr.stack);
           }
         }
@@ -657,8 +753,9 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
       console.error('❌ Erro ao receber comprovante:', err.message);
       console.error('Stack:', err.stack);
       
-      // Tentar notificar admin mesmo em caso de erro crítico
+      // 🆕 NOTIFICAÇÃO DE ERRO MELHORADA - Tentar notificar admin mesmo em caso de erro crítico
       try {
+        console.log('⚠️ [ERROR-HANDLER] Tentando notificar admin sobre erro crítico...');
         const transaction = await db.getLastPendingTransaction(ctx.chat.id);
         if (transaction) {
           const fileId = ctx.message.photo 
@@ -666,13 +763,28 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
             : (ctx.message.document?.file_id || null);
           
           if (fileId) {
-            const notifyAdmins = async (status, analysisData = null) => {
+            console.log(`📎 [ERROR-HANDLER] FileId encontrado: ${fileId.substring(0, 30)}...`);
+            
+            const notifyAdminsError = async (status, analysisData = null) => {
               try {
                 const admins = await db.getAllAdmins();
                 const product = await db.getProduct(transaction.product_id);
                 const productName = product ? product.name : transaction.product_id;
                 
-                const fileType = ctx.message.document ? 'pdf' : 'image';
+                // Detectar tipo de arquivo
+                let detectedFileType = 'image';
+                if (ctx.message.document) {
+                  const mimeType = (ctx.message.document.mime_type || '').toLowerCase();
+                  const fileName = (ctx.message.document.file_name || '').toLowerCase();
+                  
+                  if (mimeType.includes('pdf') || fileName.endsWith('.pdf')) {
+                    detectedFileType = 'pdf';
+                  }
+                }
+                
+                const fileTypeEmoji = detectedFileType === 'pdf' ? '📄' : '🖼️';
+                const fileTypeText = detectedFileType === 'pdf' ? 'PDF' : 'Imagem';
+                
                 const caption = `⚠️ *ERRO NO PROCESSAMENTO - COMPROVANTE RECEBIDO*
 
 ❌ Erro: ${err.message}
@@ -680,8 +792,8 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
 👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
 🆔 ID Usuário: ${ctx.from.id}
 📦 Produto: ${productName}
+${fileTypeEmoji} Tipo: *${fileTypeText}*
 📅 Enviado: ${new Date().toLocaleString('pt-BR')}
-${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
 
 🆔 TXID: ${transaction.txid}`;
                 
@@ -697,35 +809,48 @@ ${fileType === 'pdf' ? '📄 Tipo: PDF\n' : '🖼️ Tipo: Imagem\n'}
                   ]
                 };
                 
+                console.log(`👥 [ERROR-HANDLER] Notificando ${admins.length} admin(s)...`);
+                
                 for (const admin of admins) {
                   try {
-                    if (fileType === 'pdf') {
+                    if (detectedFileType === 'pdf') {
+                      console.log(`📄 [ERROR-HANDLER] Enviando PDF para admin ${admin.telegram_id}...`);
                       await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
                         caption: caption,
                         parse_mode: 'Markdown',
                         reply_markup: replyMarkup
                       });
+                      console.log(`✅ [ERROR-HANDLER] PDF enviado para admin ${admin.telegram_id}`);
                     } else {
+                      console.log(`🖼️ [ERROR-HANDLER] Enviando imagem para admin ${admin.telegram_id}...`);
                       await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
                         caption: caption,
                         parse_mode: 'Markdown',
                         reply_markup: replyMarkup
                       });
+                      console.log(`✅ [ERROR-HANDLER] Imagem enviada para admin ${admin.telegram_id}`);
                     }
                   } catch (notifyErr) {
-                    console.error(`❌ Erro ao notificar admin ${admin.telegram_id}:`, notifyErr.message);
+                    console.error(`❌ [ERROR-HANDLER] Erro ao notificar admin ${admin.telegram_id}:`, notifyErr.message);
                   }
                 }
+                
+                console.log(`✅ [ERROR-HANDLER] Notificação de erro concluída`);
               } catch (notifyErr) {
-                console.error('❌ Erro ao buscar admins:', notifyErr.message);
+                console.error('❌ [ERROR-HANDLER] Erro ao buscar admins:', notifyErr.message);
               }
             };
             
-            await notifyAdmins('pending', null);
+            await notifyAdminsError('pending', null);
+          } else {
+            console.warn('⚠️ [ERROR-HANDLER] FileId não encontrado');
           }
+        } else {
+          console.warn('⚠️ [ERROR-HANDLER] Transação não encontrada');
         }
       } catch (notifyErr) {
-        console.error('❌ Erro ao tentar notificar admin em caso de erro:', notifyErr.message);
+        console.error('❌ [ERROR-HANDLER] Erro ao tentar notificar admin em caso de erro:', notifyErr.message);
+        console.error('Stack:', notifyErr.stack);
       }
       
       try {
