@@ -451,15 +451,33 @@ async function getRecentUsers(limit = 20) {
 
 async function getAllAdmins() {
   try {
+    console.log('🔍 [DB] Buscando admins na tabela users...');
+    
     const { data, error } = await supabase
       .from('users')
       .select('*')
       .eq('is_admin', true);
     
-    if (error) throw error;
+    if (error) {
+      console.error('❌ [DB] Erro ao buscar admins:', error);
+      throw error;
+    }
+    
+    console.log(`✅ [DB] Admins encontrados: ${data?.length || 0}`);
+    
+    if (data && data.length > 0) {
+      data.forEach(admin => {
+        console.log(`👤 [DB] Admin: ${admin.telegram_id} - ${admin.first_name || admin.username || 'N/A'} (is_admin: ${admin.is_admin})`);
+      });
+    } else {
+      console.warn('⚠️ [DB] NENHUM ADMIN ENCONTRADO! Verifique a tabela users.');
+      console.warn('⚠️ [DB] Execute: UPDATE users SET is_admin = true WHERE telegram_id = SEU_ID;');
+    }
+    
     return data || [];
   } catch (err) {
-    console.error('Erro ao buscar admins:', err.message);
+    console.error('❌ [DB] Erro crítico ao buscar admins:', err.message);
+    console.error('Stack:', err.stack);
     return [];
   }
 }

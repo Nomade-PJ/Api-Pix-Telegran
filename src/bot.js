@@ -185,6 +185,22 @@ Esta transação foi cancelada automaticamente.
     }
   });
 
+  // 🆕 DEBUG: Log TODOS os tipos de mensagem
+  bot.use(async (ctx, next) => {
+    if (ctx.message) {
+      console.log('📨 [BOT-USE] Mensagem recebida:', {
+        message_id: ctx.message.message_id,
+        from: ctx.from.id,
+        text: ctx.message.text?.substring(0, 50) || 'N/A',
+        photo: !!ctx.message.photo,
+        document: !!ctx.message.document,
+        video: !!ctx.message.video,
+        audio: !!ctx.message.audio
+      });
+    }
+    return next();
+  });
+
   // Receber comprovante (foto ou documento)
   bot.on(['photo', 'document'], async (ctx) => {
     try {
