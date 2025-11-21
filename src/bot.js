@@ -46,7 +46,358 @@ function createBot(token) {
     }
   });
 
-  // Registrar comandos admin DEPOIS do /start
+  // 🆕 REGISTRAR HANDLER DE COMPROVANTES ANTES DO ADMIN (CRÍTICO!)
+  // Isso garante que comprovantes sejam processados antes de qualquer handler do admin
+  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes...');
+  
+  // 🆕 DEBUG: Log TODOS os tipos de mensagem
+  bot.use(async (ctx, next) => {
+    if (ctx.message) {
+      console.log('📨 [BOT-USE] Mensagem recebida:', {
+        message_id: ctx.message.message_id,
+        from: ctx.from.id,
+        text: ctx.message.text?.substring(0, 50) || 'N/A',
+        photo: !!ctx.message.photo,
+        document: !!ctx.message.document,
+        video: !!ctx.message.video,
+        audio: !!ctx.message.audio
+      });
+    }
+    return next();
+  });
+
+  // Receber comprovante (foto ou documento) - DEVE VIR ANTES DO ADMIN!
+  bot.on(['photo', 'document'], async (ctx) => {
+    try {
+      // 🆕 LOG INICIAL - CRÍTICO PARA DEBUG
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🎯 [HANDLER] COMPROVANTE RECEBIDO!');
+      console.log(`📋 [HANDLER] Tipo: ${ctx.message.photo ? 'PHOTO' : 'DOCUMENT'}`);
+      console.log(`👤 [HANDLER] User: ${ctx.from.id} (@${ctx.from.username || 'N/A'})`);
+      console.log(`📅 [HANDLER] Timestamp: ${new Date().toISOString()}`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      const transaction = await db.getLastPendingTransaction(ctx.chat.id);
+      
+      if (!transaction) {
+        console.warn('⚠️ [HANDLER] Nenhuma transação pendente encontrada');
+        // 🆕 Se não há transação pendente, deixar passar para admin handler
+        return;
+      }
+      
+      console.log(`✅ [HANDLER] Transação encontrada: ${transaction.txid}`);
+
+      // Verificar se a transação está expirada (30 minutos)
+      const createdAt = new Date(transaction.created_at);
+      const now = new Date();
+      const diffMinutes = (now - createdAt) / (1000 * 60);
+      
+      if (diffMinutes > 30) {
+        // Cancelar transação expirada
+        await db.cancelTransaction(transaction.txid);
+        
+        return ctx.reply(`⏰ *Transação expirada!*
+
+❌ Esta transação ultrapassou o prazo de 30 minutos para pagamento.
+
+🔄 *Para comprar novamente:*
+1. Use o comando /start
+2. Selecione o produto desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+🆔 Transação expirada: ${transaction.txid}`, {
+          parse_mode: 'Markdown'
+        });
+      }
+
+      const fileId = ctx.message.photo 
+        ? ctx.message.photo.slice(-1)[0].file_id 
+        : (ctx.message.document?.file_id || null);
+      
+      if (!fileId) {
+        console.error('❌ [HANDLER] FileId não encontrado');
+        return ctx.reply('❌ Erro ao processar comprovante. Envie uma foto ou documento válido.');
+      }
+
+      console.log(`📎 [HANDLER] FileId: ${fileId.substring(0, 30)}...`);
+
+      // Calcular tempo restante
+      const minutesElapsed = Math.floor(diffMinutes);
+      const minutesRemaining = 30 - minutesElapsed;
+
+      console.log(`⏰ [HANDLER] Tempo decorrido: ${minutesElapsed} minutos (${minutesRemaining} minutos restantes)`);
+
+      // 🆕 OTIMIZAÇÃO CRÍTICA: SALVAR NO BANCO PRIMEIRO (NÃO BLOQUEAR)
+      console.log(`💾 [HANDLER] Salvando comprovante no banco IMEDIATAMENTE...`);
+      
+      try {
+        const saveResult = await db.updateTransactionProof(transaction.txid, fileId);
+        console.log(`✅ [HANDLER] Comprovante salvo no banco: ${saveResult ? 'Sucesso' : 'Falha'}`);
+      } catch (saveErr) {
+        console.error(`❌ [HANDLER] Erro ao salvar comprovante:`, saveErr.message);
+        // Continuar mesmo com erro - notificar admin é mais importante
+      }
+      
+      // 🆕 RESPOSTA IMEDIATA AO USUÁRIO (NÃO ESPERAR ANÁLISE)
+      console.log(`💬 [HANDLER] Enviando confirmação ao usuário...`);
+      const userResponsePromise = ctx.reply('✅ *Comprovante recebido!*\n\n⏳ Um admin irá validar em breve.\n\n🆔 TXID: ' + transaction.txid, { 
+        parse_mode: 'Markdown' 
+      }).catch(err => console.error('❌ Erro ao enviar confirmação:', err.message));
+      
+      // 🆕 DETECÇÃO MELHORADA DE TIPO DE ARQUIVO (PDF vs Imagem)
+      let fileUrl = null;
+      let fileType = 'image'; // 'image' ou 'pdf'
+      let fileExtension = '';
+      
+      try {
+        const file = await ctx.telegram.getFile(fileId);
+        fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        
+        // Detectar tipo de arquivo (PDF ou imagem) - múltiplos critérios
+        if (ctx.message.document) {
+          const mimeType = (ctx.message.document.mime_type || '').toLowerCase();
+          const fileName = (ctx.message.document.file_name || '').toLowerCase();
+          const filePath = (file.file_path || '').toLowerCase();
+          
+          // Extrair extensão do arquivo
+          if (fileName) {
+            const parts = fileName.split('.');
+            fileExtension = parts.length > 1 ? parts[parts.length - 1] : '';
+          } else if (filePath) {
+            const parts = filePath.split('.');
+            fileExtension = parts.length > 1 ? parts[parts.length - 1] : '';
+          }
+          
+          // 🔍 VERIFICAÇÃO ROBUSTA: Verificar se é PDF por múltiplos critérios
+          const isPDF = (
+            mimeType === 'application/pdf' ||
+            mimeType.includes('pdf') ||
+            fileName.endsWith('.pdf') ||
+            filePath.includes('.pdf') ||
+            fileExtension === 'pdf'
+          );
+          
+          if (isPDF) {
+            fileType = 'pdf';
+            console.log('📄 [HANDLER] PDF DETECTADO:', { 
+              mimeType, 
+              fileName, 
+              filePath, 
+              fileExtension,
+              fileSize: ctx.message.document.file_size 
+            });
+          } else {
+            // Se não é PDF, verificar se é imagem
+            const isImage = (
+              mimeType.startsWith('image/') ||
+              ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension)
+            );
+            
+            if (isImage) {
+              fileType = 'image';
+              console.log('🖼️ [HANDLER] IMAGEM DETECTADA (documento):', { 
+                mimeType, 
+                fileName, 
+                fileExtension 
+              });
+            } else {
+              console.warn('⚠️ [HANDLER] TIPO DE ARQUIVO DESCONHECIDO:', { 
+                mimeType, 
+                fileName, 
+                fileExtension 
+              });
+              // Assumir imagem como fallback
+              fileType = 'image';
+            }
+          }
+        } else if (ctx.message.photo) {
+          // Se for foto (não documento), sempre é imagem
+          fileType = 'image';
+          console.log('📷 [HANDLER] FOTO DETECTADA (photo)');
+        }
+        
+        console.log(`✅ [HANDLER] Tipo de arquivo determinado: ${fileType.toUpperCase()}`);
+      } catch (err) {
+        console.error('❌ [HANDLER] Erro ao obter URL do arquivo:', err.message);
+        console.error('Stack:', err.stack);
+      }
+      
+      // 🆕 NOTIFICAR ADMIN IMEDIATAMENTE (ANTES DE QUALQUER ANÁLISE)
+      // Isso garante que o admin SEMPRE receba o comprovante, mesmo se a análise falhar ou der timeout
+      console.log(`📤 [HANDLER] NOTIFICANDO ADMIN IMEDIATAMENTE (sem esperar análise)...`);
+      
+      // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE (suporta imagens e PDFs)
+      // IMPORTANTE: Esta função DEVE ser chamada em TODOS os casos (aprovado, rejeitado, pendente, erro)
+      const notifyAdmins = async (status, analysisData = null) => {
+        try {
+          console.log(`📤 [NOTIFY] Iniciando notificação - Status: ${status}, FileType: ${fileType}`);
+          console.log(`📤 [NOTIFY] FileId: ${fileId?.substring(0, 30)}...`);
+          console.log(`📤 [NOTIFY] TXID: ${transaction.txid}`);
+          
+          const admins = await db.getAllAdmins();
+          console.log(`👥 [NOTIFY] Admins encontrados: ${admins.length}`);
+          
+          if (admins.length === 0) {
+            console.warn('⚠️ [NOTIFY] Nenhum admin encontrado para notificar');
+            return;
+          }
+          
+          const product = await db.getProduct(transaction.product_id);
+          const productName = product ? product.name : transaction.product_id;
+          
+          const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
+          const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
+          
+          // 🆕 INCLUIR TIPO DE ARQUIVO CLARAMENTE NA MENSAGEM
+          const fileTypeEmoji = fileType === 'pdf' ? '📄' : '🖼️';
+          const fileTypeText = fileType === 'pdf' ? 'PDF' : 'Imagem';
+          
+          const caption = `${statusEmoji} *COMPROVANTE RECEBIDO - ${statusText}*
+
+${analysisData ? `🤖 Análise automática: ${analysisData.confidence}% de confiança\n` : ''}💰 Valor: R$ ${transaction.amount}
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 ID Usuário: ${ctx.from.id}
+📦 Produto: ${productName}
+${fileTypeEmoji} Tipo: *${fileTypeText}*
+📅 Enviado: ${new Date().toLocaleString('pt-BR')}
+
+🆔 TXID: ${transaction.txid}`;
+          
+          // 🆕 BOTÕES PARA TODOS OS STATUS (pending e rejected) - admin pode revisar
+          const replyMarkup = (status === 'pending' || status === 'rejected') ? {
+            inline_keyboard: [
+              [
+                { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
+                { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
+              ],
+              [
+                { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
+              ]
+            ]
+          } : undefined;
+          
+          console.log(`📋 [NOTIFY] Preparando envio: Tipo=${fileTypeText}, Botões=${replyMarkup ? 'Sim' : 'Não'}`);
+          console.log(`📋 [NOTIFY] Caption (primeiros 100 chars): ${caption.substring(0, 100)}...`);
+          
+          let successCount = 0;
+          let failureCount = 0;
+          
+          for (const admin of admins) {
+            try {
+              console.log(`📨 [NOTIFY] Enviando para admin ${admin.telegram_id} (${admin.first_name || admin.username || 'N/A'})...`);
+              
+              // 🆕 MÉTODO CORRETO: sendDocument para PDFs, sendPhoto para imagens
+              if (fileType === 'pdf') {
+                console.log(`📄 [NOTIFY] Usando sendDocument (PDF) para admin ${admin.telegram_id}`);
+                await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                  caption: caption,
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                console.log(`✅ [NOTIFY] PDF enviado com sucesso para admin ${admin.telegram_id}`);
+              } else {
+                console.log(`🖼️ [NOTIFY] Usando sendPhoto (Imagem) para admin ${admin.telegram_id}`);
+                await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                  caption: caption,
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                console.log(`✅ [NOTIFY] Imagem enviada com sucesso para admin ${admin.telegram_id}`);
+              }
+              
+              successCount++;
+            } catch (err) {
+              failureCount++;
+              console.error(`❌ [NOTIFY] Erro ao notificar admin ${admin.telegram_id}:`, err.message);
+              console.error(`❌ [NOTIFY] Erro completo:`, err);
+              
+              // 🆕 MÉTODO ALTERNATIVO: Enviar mensagem separada do arquivo
+              try {
+                console.log(`🔄 [NOTIFY] Tentando método alternativo (mensagem + arquivo séparados) para admin ${admin.telegram_id}...`);
+                
+                // Enviar mensagem com botões primeiro
+                await ctx.telegram.sendMessage(admin.telegram_id, caption, {
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                
+                // Depois enviar arquivo separadamente
+                if (fileType === 'pdf') {
+                  await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                    caption: `📄 Comprovante em PDF - TXID: ${transaction.txid}`
+                  });
+                } else {
+                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                    caption: `🖼️ Comprovante em imagem - TXID: ${transaction.txid}`
+                  });
+                }
+                
+                console.log(`✅ [NOTIFY] Método alternativo funcionou para admin ${admin.telegram_id}`);
+                successCount++;
+                failureCount--;
+              } catch (fallbackErr) {
+                console.error(`❌ [NOTIFY] Erro no fallback para admin ${admin.telegram_id}:`, fallbackErr.message);
+                console.error(`❌ [NOTIFY] Stack:`, fallbackErr.stack);
+              }
+            }
+          }
+          
+          console.log(`✅ [NOTIFY] Notificação concluída: ${successCount} sucesso(s), ${failureCount} falha(s) de ${admins.length} admin(s)`);
+        } catch (err) {
+          console.error('❌ [NOTIFY] Erro crítico ao buscar admins:', err.message);
+          console.error('Stack:', err.stack);
+        }
+      };
+      
+      // 🆕 CHAMAR NOTIFICAÇÃO IMEDIATAMENTE (SEM ESPERAR ANÁLISE)
+      console.log(`📤 [HANDLER] Chamando notifyAdmins AGORA...`);
+      
+      try {
+        await notifyAdmins('pending', null);
+        console.log(`✅ [HANDLER] Admin notificado com sucesso!`);
+      } catch (notifyErr) {
+        console.error(`❌ [HANDLER] Erro ao notificar admin:`, notifyErr.message);
+        console.error('Stack:', notifyErr.stack);
+        
+        // 🆕 MÉTODO ALTERNATIVO se falhar
+        try {
+          console.log(`🔄 [HANDLER] Tentando método alternativo...`);
+          // Aguardar 1 segundo e tentar novamente
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await notifyAdmins('pending', null);
+          console.log(`✅ [HANDLER] Admin notificado na segunda tentativa!`);
+        } catch (retryErr) {
+          console.error(`❌ [HANDLER] Erro na segunda tentativa:`, retryErr.message);
+        }
+      }
+      
+      console.log(`✅ [HANDLER] Processo concluído com sucesso!`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+    } catch (err) {
+      console.error('❌ [HANDLER] Erro crítico ao receber comprovante:', err.message);
+      console.error('Stack:', err.stack);
+      
+      // 🆕 NOTIFICAÇÃO SIMPLES EM CASO DE ERRO
+      try {
+        await ctx.reply(`❌ *Erro ao processar comprovante*
+
+Ocorreu um erro inesperado, mas seu comprovante foi salvo.
+Um administrador irá validar manualmente.
+
+🔄 Tente novamente ou aguarde a validação.`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (replyErr) {
+        console.error('❌ [HANDLER] Erro ao enviar mensagem de erro:', replyErr.message);
+      }
+    }
+  });
+
+  console.log('✅ [BOT-INIT] Handler de comprovantes registrado');
+
+  // Registrar comandos admin DEPOIS do handler de comprovantes
   admin.registerAdminCommands(bot);
 
   bot.action(/buy:(.+)/, async (ctx) => {
@@ -185,24 +536,8 @@ Esta transação foi cancelada automaticamente.
     }
   });
 
-  // 🆕 DEBUG: Log TODOS os tipos de mensagem
-  bot.use(async (ctx, next) => {
-    if (ctx.message) {
-      console.log('📨 [BOT-USE] Mensagem recebida:', {
-        message_id: ctx.message.message_id,
-        from: ctx.from.id,
-        text: ctx.message.text?.substring(0, 50) || 'N/A',
-        photo: !!ctx.message.photo,
-        document: !!ctx.message.document,
-        video: !!ctx.message.video,
-        audio: !!ctx.message.audio
-      });
-    }
-    return next();
-  });
-
-  // Receber comprovante (foto ou documento)
-  bot.on(['photo', 'document'], async (ctx) => {
+  // ===== ASSINATURA DE GRUPO =====
+  bot.action(/subscribe:(.+)/, async (ctx) => {
     try {
       // 🆕 LOG INICIAL - CRÍTICO PARA DEBUG
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
