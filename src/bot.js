@@ -12,7 +12,7 @@ function createBot(token) {
   // Registrar handler do /start PRIMEIRO (antes dos comandos admin)
   bot.start(async (ctx) => {
     try {
-      // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD
+      // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD (DISCRETA)
       // Primeiro, verificar se o usuário já existe no banco
       const { data: existingUser, error: userError } = await db.supabase
         .from('users')
@@ -27,7 +27,7 @@ function createBot(token) {
           // Solicitar telefone
           return ctx.reply(
             '📱 *Bem-vindo!*\n\n' +
-            'Para acessar nossos produtos, precisamos verificar sua região.\n\n' +
+            'Para acessar nossos produtos, precisamos verificar sua conta.\n\n' +
             'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
             {
               parse_mode: 'Markdown',
@@ -55,9 +55,8 @@ function createBot(token) {
             if (isBlocked) {
               console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
               return ctx.reply(
-                '⚠️ *Serviço Indisponível*\n\n' +
-                'Desculpe, nosso serviço ainda não está disponível na sua região.\n\n' +
-                `📍 DDD: ${areaCode}\n\n` +
+                '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+                'No momento, não conseguimos processar seu acesso.\n\n' +
                 'Estamos trabalhando para expandir nosso atendimento em breve!',
                 { 
                   parse_mode: 'Markdown',
@@ -117,26 +116,6 @@ function createBot(token) {
     }
   });
 
-  // 🆕 REGISTRAR HANDLER DE COMPROVANTES ANTES DO ADMIN (CRÍTICO!)
-  // Isso garante que comprovantes sejam processados antes de qualquer handler do admin
-  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes...');
-  
-  // 🆕 DEBUG: Log TODOS os tipos de mensagem
-  bot.use(async (ctx, next) => {
-    if (ctx.message) {
-      console.log('📨 [BOT-USE] Mensagem recebida:', {
-        message_id: ctx.message.message_id,
-        from: ctx.from.id,
-        text: ctx.message.text?.substring(0, 50) || 'N/A',
-        photo: !!ctx.message.photo,
-        document: !!ctx.message.document,
-        video: !!ctx.message.video,
-        audio: !!ctx.message.audio
-      });
-    }
-    return next();
-  });
-
   // Handler para contato compartilhado (verificação de DDD)
   bot.on('contact', async (ctx) => {
     try {
@@ -153,7 +132,7 @@ function createBot(token) {
       console.log(`📞 [CONTACT] Contato recebido - User: ${ctx.from.id}, Phone: ${phoneNumber}, DDD: ${areaCode}`);
       
       if (!areaCode) {
-        return ctx.reply('❌ Não foi possível identificar o DDD do seu telefone. Tente novamente.', {
+        return ctx.reply('❌ Não foi possível identificar seu número de telefone. Tente novamente.', {
           reply_markup: { remove_keyboard: true }
         });
       }
@@ -164,10 +143,9 @@ function createBot(token) {
       if (isBlocked) {
         console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
         return ctx.reply(
-          '⚠️ *Serviço Indisponível*\n\n' +
-          'Desculpe, nosso serviço ainda não está disponível na sua região.\n\n' +
-          `📍 DDD: ${areaCode}\n\n` +
-          'Estamos trabalhando para expandir nosso atendimento em breve!',
+          '⚠️ *Acesso Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar sua solicitação.\n\n' +
+          'Por favor, tente novamente mais tarde ou entre em contato com o suporte.',
           { 
             parse_mode: 'Markdown',
             reply_markup: { remove_keyboard: true }
@@ -194,6 +172,26 @@ function createBot(token) {
       console.error('❌ [CONTACT] Erro ao processar contato:', err);
       return ctx.reply('❌ Erro ao processar seu contato. Tente novamente.');
     }
+  });
+
+  // 🆕 REGISTRAR HANDLER DE COMPROVANTES ANTES DO ADMIN (CRÍTICO!)
+  // Isso garante que comprovantes sejam processados antes de qualquer handler do admin
+  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes...');
+  
+  // 🆕 DEBUG: Log TODOS os tipos de mensagem
+  bot.use(async (ctx, next) => {
+    if (ctx.message) {
+      console.log('📨 [BOT-USE] Mensagem recebida:', {
+        message_id: ctx.message.message_id,
+        from: ctx.from.id,
+        text: ctx.message.text?.substring(0, 50) || 'N/A',
+        photo: !!ctx.message.photo,
+        document: !!ctx.message.document,
+        video: !!ctx.message.video,
+        audio: !!ctx.message.audio
+      });
+    }
+    return next();
   });
 
   // Receber comprovante (foto ou documento) - DEVE VIR ANTES DO ADMIN!
@@ -387,15 +385,8 @@ function createBot(token) {
             return;
           }
           
-          // Buscar nome do produto ou media pack
-          let productName = 'N/A';
-          if (transaction.product_id) {
-            const product = await db.getProduct(transaction.product_id);
-            productName = product ? product.name : transaction.product_id;
-          } else if (transaction.media_pack_id) {
-            const pack = await db.getMediaPackById(transaction.media_pack_id);
-            productName = pack ? pack.name : transaction.media_pack_id;
-          }
+          const product = await db.getProduct(transaction.product_id);
+          const productName = product ? product.name : transaction.product_id;
           
           const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
           const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
@@ -626,18 +617,8 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             console.log(`⚠️ [AUTO-ANALYSIS] DECISÃO: VALIDAÇÃO MANUAL (confiança ${analysis?.confidence}% entre 40% e 70%)`);
           }
           
-          // Buscar nome do produto ou media pack
-          let productName = 'N/A';
-          let product = null;  // 🔧 Declarar fora do if para estar disponível em todo o escopo
-          let pack = null;
-          
-          if (transactionData.product_id) {
-            product = await db.getProduct(transactionData.product_id);
-            productName = product ? product.name : transactionData.product_id;
-          } else if (transactionData.media_pack_id) {
-            pack = await db.getMediaPackById(transactionData.media_pack_id);
-            productName = pack ? pack.name : transactionData.media_pack_id;
-          }
+          const product = await db.getProduct(transactionData.product_id);
+          const productName = product ? product.name : transactionData.product_id;
           
           // ✅ APROVAÇÃO AUTOMÁTICA (confidence >= 70 e isValid = true)
           if (analysis && analysis.isValid === true && analysis.confidence >= 70) {
@@ -680,42 +661,7 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               }
               
               // Entregar produto ao usuário
-              if (transactionData.media_pack_id) {
-                // 📸 Media Pack (fotos/vídeos aleatórios)
-                console.log(`📸 [AUTO-ANALYSIS] Entregando media pack ${transactionData.media_pack_id}`);
-                const deliver = require('./deliver');
-                
-                try {
-                  // Buscar o internal ID da transação
-                  const { data: transData, error: transError } = await db.supabase
-                    .from('transactions')
-                    .select('id')
-                    .eq('txid', transactionData.txid)
-                    .single();
-                  
-                  if (transError) throw transError;
-                  
-                  // Entregar media pack
-                  await deliver.deliverMediaPack(
-                    chatId,
-                    transactionData.media_pack_id,
-                    transactionData.user_id,
-                    transData.id,
-                    db
-                  );
-                  
-                  await db.markAsDelivered(transactionData.txid);
-                  console.log(`✅ [AUTO-ANALYSIS] Media pack entregue com sucesso`);
-                } catch (deliverErr) {
-                  console.error(`❌ [AUTO-ANALYSIS] Erro ao entregar media pack:`, deliverErr);
-                  await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
-
-⚠️ Seu pagamento foi confirmado, mas ocorreu um erro ao enviar as mídias.
-Entre em contato com o suporte.
-
-🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
-                }
-              } else if (transactionData.product_id && transactionData.product_id.startsWith('group_')) {
+              if (transactionData.product_id && transactionData.product_id.startsWith('group_')) {
                 // Assinatura de grupo
                 const groupTelegramId = parseInt(transactionData.product_id.replace('group_', ''));
                 const group = await db.getGroupById(groupTelegramId);
@@ -755,23 +701,25 @@ Entre em contato com o suporte.
                   await db.markAsDelivered(transactionData.txid);
                   console.log(`✅ [AUTO-ANALYSIS] Assinatura de grupo entregue`);
                 }
-              } else if (product && product.delivery_url) {
+              } else {
                 // Produto digital
-                console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação (produto digital) para cliente ${chatId}`);
-                await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                if (product && product.file_url) {
+                  console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação (produto digital) para cliente ${chatId}`);
+                  await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
 💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
 
 📦 *Produto:* ${productName}
-🔗 *Link para download:* ${product.delivery_url}
+🔗 *Link para download:* ${product.file_url}
 
 ✅ Produto entregue com sucesso!
 
 🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
-                
-                await db.markAsDelivered(transactionData.txid);
-                console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
+                  
+                  await db.markAsDelivered(transactionData.txid);
+                  console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
+                }
               }
               
             } catch (approvalErr) {
@@ -933,11 +881,7 @@ Um administrador irá validar manualmente.
 
       // Calcular tempo de expiração (30 minutos)
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'America/Sao_Paulo'
-      });
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       
       // Agendar lembretes de pagamento
       // Lembrete aos 15 minutos (15 minutos restantes)
@@ -1036,168 +980,6 @@ Esta transação foi cancelada automaticamente.
     }
   });
 
-  // ===== COMPRA DE MEDIA PACK (FOTOS/VÍDEOS ALEATÓRIOS) =====
-  bot.action(/buy_media:(.+)/, async (ctx) => {
-    try {
-      const packId = ctx.match[1];
-      
-      // OTIMIZAÇÃO #1: Responder imediatamente ao clique (feedback visual instantâneo)
-      await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
-      
-      // OTIMIZAÇÃO #4: Paralelizar busca de pack e usuário
-      const [pack, user] = await Promise.all([
-        db.getMediaPackById(packId),
-        db.getOrCreateUser(ctx.from)
-      ]);
-      
-      if (!pack) {
-        return ctx.reply('❌ Pack não encontrado.');
-      }
-      
-      // Verificar se há itens no pack
-      const items = await db.getMediaItems(packId);
-      if (items.length === 0) {
-        return ctx.reply('❌ Este pack ainda não tem mídias cadastradas. Entre em contato com o suporte.');
-      }
-      
-      // 🎲 PREÇO ALEATÓRIO: Sortear entre os 3 valores
-      const precos = [29.90, 21.90, 25.90];
-      const precoAleatorio = precos[Math.floor(Math.random() * precos.length)];
-      const amount = precoAleatorio.toFixed(2);
-
-      // Gerar cobrança PIX e salvar transação em paralelo
-      const resp = await manualPix.createManualCharge({ amount, productId: `mediapack_${packId}` });
-      const charge = resp.charge;
-      const txid = charge.txid;
-      
-      // Salvar no banco (não precisa aguardar para enviar QR Code)
-      db.createTransaction({
-        txid,
-        userId: user.id,
-        telegramId: ctx.chat.id,
-        mediaPackId: packId,  // 📦 Usar mediaPackId em vez de productId
-        amount,
-        pixKey: charge.key,
-        pixPayload: charge.copiaCola
-      }).catch(err => console.error('Erro ao salvar transação:', err));
-
-      // Calcular tempo de expiração (30 minutos)
-      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'America/Sao_Paulo'
-      });
-      
-      // Agendar lembretes de pagamento
-      // Lembrete aos 15 minutos (15 minutos restantes)
-      setTimeout(async () => {
-        try {
-          const trans = await db.getTransactionByTxid(txid);
-          // Verificar se ainda está pendente e não paga
-          if (trans && trans.status === 'pending') {
-            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *LEMBRETE DE PAGAMENTO*
-
-⚠️ *Faltam 15 minutos* para expirar!
-
-💰 Valor: R$ ${amount}
-🔑 Chave: ${charge.key}
-
-📋 Cópia & Cola:
-\`${charge.copiaCola}\`
-
-⏰ *Expira às:* ${expirationStr}
-
-📸 Após pagar, envie o comprovante.
-
-🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
-          }
-        } catch (err) {
-          console.error('Erro no lembrete 15 min:', err);
-        }
-      }, 15 * 60 * 1000); // 15 minutos
-      
-      // Aviso de expiração e cancelamento automático aos 30 minutos
-      setTimeout(async () => {
-        try {
-          const trans = await db.getTransactionByTxid(txid);
-          // Se ainda está pendente, cancelar
-          if (trans && trans.status === 'pending') {
-            await db.cancelTransaction(txid);
-            
-            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
-
-❌ O prazo de 30 minutos foi atingido.
-Esta transação foi cancelada automaticamente.
-
-🔄 *Para comprar novamente:*
-1. Use o comando /start
-2. Selecione o produto desejado
-3. Realize o pagamento em até 30 minutos
-4. Envie o comprovante
-
-💰 Valor: R$ ${amount}
-🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
-          }
-        } catch (err) {
-          console.error('Erro no cancelamento automático:', err);
-        }
-      }, 30 * 60 * 1000); // 30 minutos
-      
-      // Enviar QR Code imediatamente
-      const description = pack.description || `${pack.items_per_delivery} fotos/vídeos aleatórios`;
-      
-      if (charge.qrcodeBuffer) {
-        return await ctx.replyWithPhoto(
-          { source: charge.qrcodeBuffer },
-          {
-            caption: `${pack.name}
-
-💰 Pague *R$ ${amount}* usando PIX
-
-📦 Você receberá: *${pack.items_per_delivery} fotos/vídeos aleatórios*
-📊 Total disponível: ${items.length} itens
-
-🔑 Chave: ${charge.key}
-
-📋 Cópia & Cola:
-\`${charge.copiaCola}\`
-
-⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
-
-📸 Após pagar, envie o comprovante (foto) aqui.
-
-🆔 TXID: ${txid}`,
-            parse_mode: 'Markdown'
-          }
-        );
-      } else {
-        return await ctx.reply(`${pack.name}
-
-💰 Pague *R$ ${amount}* usando PIX
-
-📦 Você receberá: *${pack.items_per_delivery} fotos/vídeos aleatórios*
-📊 Total disponível: ${items.length} itens
-
-🔑 Chave: ${charge.key}
-
-📋 Cópia & Cola:
-\`${charge.copiaCola}\`
-
-⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
-
-📸 Envie o comprovante quando pagar.
-
-🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
-      }
-    } catch (err) {
-      console.error('Erro na compra de media pack:', err.message);
-      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
-    }
-  });
-
   // ===== ASSINATURA DE GRUPO =====
   bot.action(/subscribe:(.+)/, async (ctx) => {
     try {
@@ -1253,11 +1035,7 @@ Esta transação foi cancelada automaticamente.
       
       // Calcular tempo de expiração (30 minutos)
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'America/Sao_Paulo'
-      });
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       
       // Enviar QR Code
       if (charge.qrcodeBuffer) {

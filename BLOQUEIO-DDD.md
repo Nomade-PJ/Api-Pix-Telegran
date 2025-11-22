@@ -39,11 +39,9 @@ Por favor, compartilhe seu número de telefone usando o botão abaixo:
 
 **Se DDD está BLOQUEADO (98, 99, 86, 89):**
 ```
-⚠️ Serviço Indisponível
+⚠️ Serviço Temporariamente Indisponível
 
-Desculpe, nosso serviço ainda não está disponível na sua região.
-
-📍 DDD: 98
+No momento, não conseguimos processar seu acesso.
 
 Estamos trabalhando para expandir nosso atendimento em breve!
 ```
