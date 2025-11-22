@@ -25,19 +25,29 @@ function createBot(token) {
         // Usuário novo - verificar se compartilhou contato
         if (!ctx.from.phone_number && !ctx.message?.contact) {
           // Solicitar telefone
-          return ctx.reply(
-            '📱 *Bem-vindo!*\n\n' +
-            'Para acessar nossos produtos, precisamos verificar sua conta.\n\n' +
-            'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
-            {
-              parse_mode: 'Markdown',
-              reply_markup: Markup.keyboard([
-                [Markup.button.contactRequest('📱 Compartilhar Telefone')]
-              ])
-                .resize()
-                .oneTime()
-            }
-          );
+          try {
+            await ctx.telegram.sendMessage(
+              ctx.chat.id,
+              '📱 *Bem-vindo!*\n\n' +
+              'Para acessar nossos produtos, precisamos verificar sua conta.\n\n' +
+              'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
+              {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  keyboard: [[{
+                    text: '📱 Compartilhar Telefone',
+                    request_contact: true
+                  }]],
+                  resize_keyboard: true,
+                  one_time_keyboard: true
+                }
+              }
+            );
+            return;
+          } catch (err) {
+            console.error('Erro ao enviar mensagem com botão de contato:', err);
+            return ctx.reply('📱 *Bem-vindo!*\n\nPara acessar nossos produtos, precisamos verificar sua conta.\n\nPor favor, compartilhe seu número de telefone usando o botão abaixo:', { parse_mode: 'Markdown' });
+          }
         }
         
         // Verificar DDD do telefone compartilhado
