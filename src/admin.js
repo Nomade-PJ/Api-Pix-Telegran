@@ -493,11 +493,11 @@ Cancelar: /cancelar`);
       
       let message = `🗑️ *DELETAR PRODUTO*
 
-⚠️ *ATENÇÃO:*
-• Isso *DELETARÁ PERMANENTEMENTE* o produto ❌
-• *TODAS as transações* associadas serão removidas 🗑️
-• *Histórico de vendas* será perdido 📊
-• *Esta ação NÃO pode ser desfeita!* ⚠️
+⚠️ *ATENÇÃO - Esta ação é irreversível\\!*
+
+• Produto será deletado permanentemente ❌
+• Todas as transações associadas serão removidas 🗑️
+• Histórico de vendas será perdido 📊
 
 Digite o ID do produto:
 
@@ -1483,7 +1483,9 @@ Digite o ID do grupo que deseja editar:
     
     let message = `🗑️ *DELETAR GRUPO*
 
-⚠️ *ATENÇÃO:* Isso deletará permanentemente o grupo e todas as assinaturas associadas!
+⚠️ *ATENÇÃO:* Ação irreversível\\!
+• Grupo será deletado permanentemente
+• Todas as assinaturas serão removidas
 
 Digite o ID do grupo:
 
