@@ -1790,7 +1790,8 @@ Seu comprovante foi analisado e não foi aprovado.
         return ctx.reply('❌ Transação não encontrada.');
       }
       
-      const user = transaction.user_id ? await db.getOrCreateUser({ id: transaction.user_id }) : null;
+      // 🔧 Buscar usuário por UUID, não por telegram_id
+      const user = transaction.user_id ? await db.getUserByUUID(transaction.user_id) : null;
       
       // Buscar produto OU media pack
       let productName = 'N/A';

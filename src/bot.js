@@ -512,11 +512,14 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
           
           // Buscar nome do produto ou media pack
           let productName = 'N/A';
+          let product = null;  // 🔧 Declarar fora do if para estar disponível em todo o escopo
+          let pack = null;
+          
           if (transactionData.product_id) {
-            const product = await db.getProduct(transactionData.product_id);
+            product = await db.getProduct(transactionData.product_id);
             productName = product ? product.name : transactionData.product_id;
           } else if (transactionData.media_pack_id) {
-            const pack = await db.getMediaPackById(transactionData.media_pack_id);
+            pack = await db.getMediaPackById(transactionData.media_pack_id);
             productName = pack ? pack.name : transactionData.media_pack_id;
           }
           
@@ -561,7 +564,42 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               }
               
               // Entregar produto ao usuário
-              if (transactionData.product_id && transactionData.product_id.startsWith('group_')) {
+              if (transactionData.media_pack_id) {
+                // 📸 Media Pack (fotos/vídeos aleatórios)
+                console.log(`📸 [AUTO-ANALYSIS] Entregando media pack ${transactionData.media_pack_id}`);
+                const deliver = require('./deliver');
+                
+                try {
+                  // Buscar o internal ID da transação
+                  const { data: transData, error: transError } = await db.supabase
+                    .from('transactions')
+                    .select('id')
+                    .eq('txid', transactionData.txid)
+                    .single();
+                  
+                  if (transError) throw transError;
+                  
+                  // Entregar media pack
+                  await deliver.deliverMediaPack(
+                    chatId,
+                    transactionData.media_pack_id,
+                    transactionData.user_id,
+                    transData.id,
+                    db
+                  );
+                  
+                  await db.markAsDelivered(transactionData.txid);
+                  console.log(`✅ [AUTO-ANALYSIS] Media pack entregue com sucesso`);
+                } catch (deliverErr) {
+                  console.error(`❌ [AUTO-ANALYSIS] Erro ao entregar media pack:`, deliverErr);
+                  await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+
+⚠️ Seu pagamento foi confirmado, mas ocorreu um erro ao enviar as mídias.
+Entre em contato com o suporte.
+
+🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
+                }
+              } else if (transactionData.product_id && transactionData.product_id.startsWith('group_')) {
                 // Assinatura de grupo
                 const groupTelegramId = parseInt(transactionData.product_id.replace('group_', ''));
                 const group = await db.getGroupById(groupTelegramId);
@@ -601,25 +639,23 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                   await db.markAsDelivered(transactionData.txid);
                   console.log(`✅ [AUTO-ANALYSIS] Assinatura de grupo entregue`);
                 }
-              } else {
+              } else if (product && product.delivery_url) {
                 // Produto digital
-                if (product && product.file_url) {
-                  console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação (produto digital) para cliente ${chatId}`);
-                  await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação (produto digital) para cliente ${chatId}`);
+                await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
 💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
 
 📦 *Produto:* ${productName}
-🔗 *Link para download:* ${product.file_url}
+🔗 *Link para download:* ${product.delivery_url}
 
 ✅ Produto entregue com sucesso!
 
 🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
-                  
-                  await db.markAsDelivered(transactionData.txid);
-                  console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
-                }
+                
+                await db.markAsDelivered(transactionData.txid);
+                console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
               }
               
             } catch (approvalErr) {

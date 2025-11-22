@@ -9,6 +9,22 @@ const supabase = createClient(
 
 // ===== USUÁRIOS =====
 
+async function getUserByUUID(userId) {
+  try {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return user || null;
+  } catch (err) {
+    console.error('Erro ao buscar usuário por UUID:', err);
+    return null;
+  }
+}
+
 async function getOrCreateUser(telegramUser) {
   try {
     const { id, username, first_name, language_code } = telegramUser;
@@ -1177,6 +1193,7 @@ async function deleteMediaItem(itemId) {
 module.exports = {
   supabase,
   getOrCreateUser,
+  getUserByUUID,
   isUserAdmin,
   getRecentUsers,
   getAllAdmins,
