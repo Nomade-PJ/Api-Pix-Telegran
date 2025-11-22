@@ -35,9 +35,8 @@ function createBot(token) {
       // Adicionar botões de media packs (fotos/vídeos aleatórios)
       const activeMediaPacks = mediaPacks.filter(p => p.is_active);
       for (const pack of activeMediaPacks) {
-        const emoji = '📸';
-        const buttonText = `${emoji} ${pack.name} (R$${parseFloat(pack.price).toFixed(2)})`;
-        buttons.push([Markup.button.callback(buttonText, `buy_media:${pack.pack_id}`)]);
+        // Não mostrar preço no botão (será aleatório a cada clique)
+        buttons.push([Markup.button.callback(pack.name, `buy_media:${pack.pack_id}`)]);
       }
       
       // Adicionar botão de grupo se houver grupos ativos
@@ -895,7 +894,10 @@ Esta transação foi cancelada automaticamente.
         return ctx.reply('❌ Este pack ainda não tem mídias cadastradas. Entre em contato com o suporte.');
       }
       
-      const amount = pack.price.toString();
+      // 🎲 PREÇO ALEATÓRIO: Sortear entre os 3 valores
+      const precos = [29.90, 21.90, 25.90];
+      const precoAleatorio = precos[Math.floor(Math.random() * precos.length)];
+      const amount = precoAleatorio.toFixed(2);
 
       // Gerar cobrança PIX e salvar transação em paralelo
       const resp = await manualPix.createManualCharge({ amount, productId: `mediapack_${packId}` });
@@ -983,9 +985,9 @@ Esta transação foi cancelada automaticamente.
         return await ctx.replyWithPhoto(
           { source: charge.qrcodeBuffer },
           {
-            caption: `📸 *${pack.name}*
+            caption: `${pack.name}
 
-💰 Pague R$ ${amount} usando PIX
+💰 Pague *R$ ${amount}* usando PIX
 
 📦 Você receberá: *${pack.items_per_delivery} fotos/vídeos aleatórios*
 📊 Total disponível: ${items.length} itens
@@ -1005,9 +1007,9 @@ Esta transação foi cancelada automaticamente.
           }
         );
       } else {
-        return await ctx.reply(`📸 *${pack.name}*
+        return await ctx.reply(`${pack.name}
 
-💰 Pague R$ ${amount} usando PIX
+💰 Pague *R$ ${amount}* usando PIX
 
 📦 Você receberá: *${pack.items_per_delivery} fotos/vídeos aleatórios*
 📊 Total disponível: ${items.length} itens
