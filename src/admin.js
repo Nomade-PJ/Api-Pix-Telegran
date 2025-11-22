@@ -1815,26 +1815,14 @@ Seu comprovante foi analisado e não foi aprovado.
         productName = transaction.media_pack_id || transaction.product_id || 'N/A';
       }
       
-      // Escapar caracteres especiais do MarkdownV2
-      const escapeMarkdownV2 = (text) => {
-        if (!text) return 'N/A';
-        return String(text).replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
-      };
-      
-      const escapedProductName = escapeMarkdownV2(productName);
-      const escapedUsername = escapeMarkdownV2(user?.username);
-      const escapedFirstName = escapeMarkdownV2(user?.first_name);
-      const escapedTxid = escapeMarkdownV2(txid);
-      const escapedPixKey = escapeMarkdownV2(transaction.pix_key);
-      const escapedStatus = escapeMarkdownV2(transaction.status);
-      
+      // Construir mensagem - usar Markdown simples para evitar problemas de escape
       let message = `📋 *DETALHES DA TRANSAÇÃO*\n\n`;
-      message += `🆔 TXID: \\`${escapedTxid}\\`\n`;
+      message += `🆔 TXID: \`${txid}\`\n`;
       message += `💰 Valor: R$ ${transaction.amount}\n`;
-      message += `📦 Produto: ${escapedProductName}\n`;
-      message += `👤 Usuário: ${escapedFirstName || 'N/A'} (@${escapedUsername || 'N/A'})\n`;
-      message += `🔑 Chave PIX: \\`${escapedPixKey}\\`\n`;
-      message += `📊 Status: ${escapedStatus}\n`;
+      message += `📦 Produto: ${productName}\n`;
+      message += `👤 Usuário: ${user ? user.first_name : 'N/A'} (@${user?.username || 'N/A'})\n`;
+      message += `🔑 Chave PIX: \`${transaction.pix_key}\`\n`;
+      message += `📊 Status: ${transaction.status}\n`;
       message += `📅 Criada: ${new Date(transaction.created_at).toLocaleString('pt-BR')}\n`;
       
       if (transaction.proof_received_at) {
@@ -1842,10 +1830,10 @@ Seu comprovante foi analisado e não foi aprovado.
       }
       
       message += `\n*Ações:*\n`;
-      message += `✅ /validar${escapedTxid} \\- Aprovar\n`;
-      message += `❌ /rejeitar${escapedTxid} \\- Rejeitar`;
+      message += `✅ /validar${txid} - Aprovar\n`;
+      message += `❌ /rejeitar${txid} - Rejeitar`;
       
-      return ctx.reply(message, { parse_mode: 'MarkdownV2' });
+      return ctx.reply(message, { parse_mode: 'Markdown' });
     } catch (err) {
       console.error('Erro ao buscar detalhes:', err);
       return ctx.reply('❌ Erro ao buscar detalhes.');
