@@ -969,9 +969,13 @@ Um administrador irá validar manualmente.
         pixPayload: charge.copiaCola
       }).catch(err => console.error('Erro ao salvar transação:', err));
 
-      // Calcular tempo de expiração (30 minutos)
+      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
       
       // Agendar lembretes de pagamento
       // Lembrete aos 15 minutos (15 minutos restantes)
@@ -1088,8 +1092,17 @@ Esta transação foi cancelada automaticamente.
         return ctx.reply('❌ Pack não encontrado ou inativo.');
       }
       
-      // Usar o preço do pack (ou pode ser aleatório se necessário)
-      const amount = pack.price.toString();
+      // Usar valor aleatório se houver valores variados, senão usar preço fixo
+      let amount;
+      if (pack.variable_prices && Array.isArray(pack.variable_prices) && pack.variable_prices.length > 0) {
+        // Selecionar valor aleatório do array
+        const randomIndex = Math.floor(Math.random() * pack.variable_prices.length);
+        amount = pack.variable_prices[randomIndex].toString();
+        console.log(`🎲 [MEDIA-PACK] Valor aleatório selecionado: R$ ${amount} (de ${pack.variable_prices.length} opções)`);
+      } else {
+        // Usar preço fixo
+        amount = pack.price.toString();
+      }
 
       // Gerar cobrança PIX
       const resp = await manualPix.createManualCharge({ amount, productId: `media_${packId}` });
@@ -1107,9 +1120,13 @@ Esta transação foi cancelada automaticamente.
         pixPayload: charge.copiaCola
       }).catch(err => console.error('Erro ao salvar transação:', err));
 
-      // Calcular tempo de expiração (30 minutos)
+      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
       
       // Agendar lembretes de pagamento
       setTimeout(async () => {

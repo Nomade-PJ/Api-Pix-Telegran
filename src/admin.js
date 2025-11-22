@@ -1622,7 +1622,10 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
             db
           );
           
-          console.log(`✅ Media pack ${packId} entregue com sucesso`);
+          // Marcar como entregue após entrega bem-sucedida
+          await db.markAsDelivered(txid);
+          
+          console.log(`✅ Media pack ${packId} entregue com sucesso e marcado como entregue`);
         } catch (err) {
           console.error('Erro ao entregar media pack:', err);
           
