@@ -31,14 +31,11 @@ function createBot(token) {
             'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
             {
               parse_mode: 'Markdown',
-              reply_markup: {
-                keyboard: [[{
-                  text: '📱 Compartilhar Telefone',
-                  request_contact: true
-                }]],
-                resize_keyboard: true,
-                one_time_keyboard: true
-              }
+              reply_markup: Markup.keyboard([
+                [Markup.button.contactRequest('📱 Compartilhar Telefone')]
+              ])
+                .resize()
+                .oneTime()
             }
           );
         }
