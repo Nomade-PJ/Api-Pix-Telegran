@@ -117,6 +117,12 @@ Selecione uma opção abaixo:`;
       
       // Entregar automaticamente
       try {
+        // Verificar se é media pack ou produto
+        if (transaction.media_pack_id) {
+          // É um media pack - não tentar buscar produto
+          return ctx.reply(`✅ Transação validada!\n\nMedia pack será entregue através do painel admin.\n\n🆔 TXID: ${txid}\n👤 Cliente: ${transaction.user?.first_name}\n💰 Valor: R$ ${transaction.amount}`);
+        }
+        
         const product = await db.getProduct(transaction.product_id);
         
         if (!product) {
@@ -1667,7 +1673,7 @@ Entre em contato com o suporte.
             console.error('Erro ao notificar usuário:', err);
           }
         }
-      } else {
+      } else if (transaction.product_id) {
         // Entregar produto normal
         const product = await db.getProduct(transaction.product_id);
         if (product && product.delivery_url) {
@@ -1785,12 +1791,21 @@ Seu comprovante foi analisado e não foi aprovado.
       }
       
       const user = transaction.user_id ? await db.getOrCreateUser({ id: transaction.user_id }) : null;
-      const product = await db.getProduct(transaction.product_id);
+      
+      // Buscar produto OU media pack
+      let productName = 'N/A';
+      if (transaction.product_id) {
+        const product = await db.getProduct(transaction.product_id);
+        productName = product ? product.name : transaction.product_id;
+      } else if (transaction.media_pack_id) {
+        const pack = await db.getMediaPackById(transaction.media_pack_id);
+        productName = pack ? pack.name : transaction.media_pack_id;
+      }
       
       let message = `📋 *DETALHES DA TRANSAÇÃO*\n\n`;
       message += `🆔 TXID: ${txid}\n`;
       message += `💰 Valor: R$ ${transaction.amount}\n`;
-      message += `📦 Produto: ${product ? product.name : transaction.product_id}\n`;
+      message += `📦 Produto: ${productName}\n`;
       message += `👤 Usuário: ${user ? user.first_name : 'N/A'} (@${user?.username || 'N/A'})\n`;
       message += `🔑 Chave PIX: ${transaction.pix_key}\n`;
       message += `📊 Status: ${transaction.status}\n`;

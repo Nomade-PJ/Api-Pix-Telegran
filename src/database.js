@@ -960,11 +960,24 @@ async function getAllMediaPacks() {
   try {
     const { data, error } = await supabase
       .from('media_packs')
-      .select('*, items:media_items(count)')
+      .select('*')
       .order('created_at', { ascending: false });
     
     if (error) throw error;
-    return data || [];
+    
+    const packs = data || [];
+    
+    // Buscar contagem de itens para cada pack separadamente
+    for (const pack of packs) {
+      const { count } = await supabase
+        .from('media_items')
+        .select('*', { count: 'exact', head: true })
+        .eq('pack_id', pack.pack_id);
+      
+      pack.items_count = count || 0;
+    }
+    
+    return packs;
   } catch (err) {
     console.error('Erro ao buscar media packs:', err.message);
     return [];

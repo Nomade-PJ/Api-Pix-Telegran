@@ -271,8 +271,15 @@ function createBot(token) {
             return;
           }
           
-          const product = await db.getProduct(transaction.product_id);
-          const productName = product ? product.name : transaction.product_id;
+          // Buscar nome do produto ou media pack
+          let productName = 'N/A';
+          if (transaction.product_id) {
+            const product = await db.getProduct(transaction.product_id);
+            productName = product ? product.name : transaction.product_id;
+          } else if (transaction.media_pack_id) {
+            const pack = await db.getMediaPackById(transaction.media_pack_id);
+            productName = pack ? pack.name : transaction.media_pack_id;
+          }
           
           const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
           const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
@@ -503,8 +510,15 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             console.log(`⚠️ [AUTO-ANALYSIS] DECISÃO: VALIDAÇÃO MANUAL (confiança ${analysis?.confidence}% entre 40% e 70%)`);
           }
           
-          const product = await db.getProduct(transactionData.product_id);
-          const productName = product ? product.name : transactionData.product_id;
+          // Buscar nome do produto ou media pack
+          let productName = 'N/A';
+          if (transactionData.product_id) {
+            const product = await db.getProduct(transactionData.product_id);
+            productName = product ? product.name : transactionData.product_id;
+          } else if (transactionData.media_pack_id) {
+            const pack = await db.getMediaPackById(transactionData.media_pack_id);
+            productName = pack ? pack.name : transactionData.media_pack_id;
+          }
           
           // ✅ APROVAÇÃO AUTOMÁTICA (confidence >= 70 e isValid = true)
           if (analysis && analysis.isValid === true && analysis.confidence >= 70) {
