@@ -143,9 +143,9 @@ function createBot(token) {
       if (isBlocked) {
         console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
         return ctx.reply(
-          '⚠️ *Acesso Temporariamente Indisponível*\n\n' +
-          'No momento, não conseguimos processar sua solicitação.\n\n' +
-          'Por favor, tente novamente mais tarde ou entre em contato com o suporte.',
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.\n\n' +
+          'Estamos trabalhando para expandir nosso atendimento em breve!',
           { 
             parse_mode: 'Markdown',
             reply_markup: { remove_keyboard: true }
