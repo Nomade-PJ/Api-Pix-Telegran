@@ -254,3 +254,4 @@ O bot agora está mais profissional, com:
 
 *Desenvolvido com ❤️ e ☕*
 
+

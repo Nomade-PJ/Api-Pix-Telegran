@@ -160,7 +160,7 @@ function createBot(token) {
       console.log(`✅ [DDD-ALLOWED] DDD ${areaCode} permitido - Usuário: ${ctx.from.id} criado`);
       
       return ctx.reply(
-        '✅ *Verificação Concluída!*\n\n' +
+        '✅ *Verificação Concluída\\!*\n\n' +
         'Seu acesso foi liberado\\! Use /start para ver nossos produtos\\.',
         { 
           parse_mode: 'MarkdownV2',
