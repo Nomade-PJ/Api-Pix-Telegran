@@ -392,8 +392,28 @@ function createBot(token) {
             return;
           }
           
-          const product = await db.getProduct(transaction.product_id);
-          const productName = product ? product.name : transaction.product_id;
+          // Verificar se é media pack ou produto normal
+          let productName = 'Produto não encontrado';
+          try {
+            if (transaction.media_pack_id) {
+              // É um media pack
+              const pack = await db.getMediaPackById(transaction.media_pack_id);
+              productName = pack ? pack.name : transaction.media_pack_id || 'Media Pack';
+            } else if (transaction.product_id) {
+              // É um produto normal
+              const product = await db.getProduct(transaction.product_id);
+              productName = product ? product.name : transaction.product_id || 'Produto';
+            }
+          } catch (err) {
+            console.error('Erro ao buscar produto/pack:', err);
+            // Usar fallback baseado no que temos
+            productName = transaction.media_pack_id || transaction.product_id || 'Produto não encontrado';
+          }
+          
+          // Garantir que productName nunca seja null ou undefined
+          if (!productName || productName === 'null' || productName === 'undefined') {
+            productName = transaction.media_pack_id || transaction.product_id || 'Produto não encontrado';
+          }
           
           const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
           const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
@@ -537,6 +557,7 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
         pix_key: transaction.pix_key,
         pix_payload: transaction.pix_payload || transaction.pixPayload, // Código PIX (copia e cola)
         product_id: transaction.product_id,
+        media_pack_id: transaction.media_pack_id,
         user_id: transaction.user_id
       };
       
@@ -624,8 +645,27 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             console.log(`⚠️ [AUTO-ANALYSIS] DECISÃO: VALIDAÇÃO MANUAL (confiança ${analysis?.confidence}% entre 40% e 70%)`);
           }
           
-          const product = await db.getProduct(transactionData.product_id);
-          const productName = product ? product.name : transactionData.product_id;
+          // Verificar se é media pack ou produto normal
+          let productName = 'Produto não encontrado';
+          if (transactionData.media_pack_id) {
+            // É um media pack
+            try {
+              const pack = await db.getMediaPackById(transactionData.media_pack_id);
+              productName = pack ? pack.name : transactionData.media_pack_id;
+            } catch (err) {
+              console.error('Erro ao buscar media pack:', err);
+              productName = transactionData.media_pack_id || 'Media Pack';
+            }
+          } else if (transactionData.product_id) {
+            // É um produto normal
+            try {
+              const product = await db.getProduct(transactionData.product_id);
+              productName = product ? product.name : transactionData.product_id;
+            } catch (err) {
+              console.error('Erro ao buscar produto:', err);
+              productName = transactionData.product_id || 'Produto';
+            }
+          }
           
           // ✅ APROVAÇÃO AUTOMÁTICA (confidence >= 70 e isValid = true)
           if (analysis && analysis.isValid === true && analysis.confidence >= 70) {
@@ -707,6 +747,49 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                   
                   await db.markAsDelivered(transactionData.txid);
                   console.log(`✅ [AUTO-ANALYSIS] Assinatura de grupo entregue`);
+                }
+              } else if (transactionData.media_pack_id) {
+                // Media pack (Packs de Agora)
+                const packId = transactionData.media_pack_id;
+                
+                try {
+                  // Buscar o internal ID da transação
+                  const { data: transData, error: transError } = await db.supabase
+                    .from('transactions')
+                    .select('id')
+                    .eq('txid', transactionData.txid)
+                    .single();
+                  
+                  if (transError) throw transError;
+                  
+                  // Entregar media pack (fotos/vídeos aleatórios)
+                  await deliver.deliverMediaPack(
+                    chatId,
+                    packId,
+                    transactionData.user_id,
+                    transData.id,
+                    db
+                  );
+                  
+                  await db.markAsDelivered(transactionData.txid);
+                  console.log(`✅ [AUTO-ANALYSIS] Media pack ${packId} entregue com sucesso`);
+                } catch (err) {
+                  console.error(`❌ [AUTO-ANALYSIS] Erro ao entregar media pack:`, err.message);
+                  
+                  // Notificar usuário sobre erro
+                  try {
+                    await telegram.sendMessage(chatId, `⚠️ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+
+Seu pagamento foi confirmado, mas ocorreu um erro ao enviar as mídias.
+
+Entre em contato com o suporte.
+
+🆔 TXID: ${transactionData.txid}`, {
+                      parse_mode: 'Markdown'
+                    });
+                  } catch (notifyErr) {
+                    console.error('❌ [AUTO-ANALYSIS] Erro ao notificar usuário:', notifyErr);
+                  }
                 }
               } else {
                 // Produto digital
