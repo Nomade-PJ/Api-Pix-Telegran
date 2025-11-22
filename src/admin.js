@@ -2100,6 +2100,142 @@ Exemplo: 30.00 ou 50`, {
       }
     });
   });
+  // ===== GERENCIAR DDDs BLOQUEADOS =====
+  
+  bot.command('ddds', async (ctx) => {
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+    
+    try {
+      const blockedDDDs = await db.getBlockedAreaCodes();
+      
+      let message = `🚫 *DDDs BLOQUEADOS*\n\n`;
+      
+      if (blockedDDDs.length === 0) {
+        message += `Nenhum DDD bloqueado no momento.\n\n`;
+      } else {
+        for (const ddd of blockedDDDs) {
+          message += `📍 *${ddd.area_code}* - ${ddd.state}\n`;
+          if (ddd.reason) {
+            message += `   └ ${ddd.reason}\n`;
+          }
+        }
+        message += `\n`;
+      }
+      
+      message += `*Comandos:*\n`;
+      message += `➕ /addddd <DDD> <Estado> <Motivo> - Bloquear DDD\n`;
+      message += `➖ /removeddd <DDD> - Desbloquear DDD\n\n`;
+      message += `*Exemplo:*\n`;
+      message += `/addddd 11 São Paulo Região não atendida`;
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao listar DDDs:', err);
+      return ctx.reply('❌ Erro ao buscar DDDs bloqueados.');
+    }
+  });
+  
+  bot.command('addddd', async (ctx) => {
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+    
+    try {
+      // Extrair argumentos: /addddd 11 São Paulo Região não atendida
+      const args = ctx.message.text.split(' ').slice(1);
+      
+      if (args.length < 2) {
+        return ctx.reply(
+          '❌ *Uso incorreto*\n\n' +
+          'Formato: `/addddd <DDD> <Estado> [Motivo]`\n\n' +
+          '*Exemplo:*\n' +
+          '`/addddd 98 Maranhão Região não atendida`',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      const areaCode = args[0];
+      const state = args[1];
+      const reason = args.slice(2).join(' ') || 'Região não atendida';
+      
+      // Validar DDD (2 dígitos)
+      if (!/^\d{2}$/.test(areaCode)) {
+        return ctx.reply('❌ DDD inválido. Use 2 dígitos (ex: 11, 98, 86)');
+      }
+      
+      // Verificar se já existe
+      const isBlocked = await db.isAreaCodeBlocked(areaCode);
+      if (isBlocked) {
+        return ctx.reply(`⚠️ DDD ${areaCode} já está bloqueado.`);
+      }
+      
+      // Adicionar
+      const result = await db.addBlockedAreaCode(areaCode, state, reason);
+      
+      if (result) {
+        return ctx.reply(
+          `✅ *DDD Bloqueado*\n\n` +
+          `📍 DDD: ${areaCode}\n` +
+          `📌 Estado: ${state}\n` +
+          `💬 Motivo: ${reason}`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        return ctx.reply('❌ Erro ao bloquear DDD.');
+      }
+    } catch (err) {
+      console.error('Erro ao adicionar DDD:', err);
+      return ctx.reply('❌ Erro ao bloquear DDD.');
+    }
+  });
+  
+  bot.command('removeddd', async (ctx) => {
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+    
+    try {
+      const args = ctx.message.text.split(' ').slice(1);
+      
+      if (args.length === 0) {
+        return ctx.reply(
+          '❌ *Uso incorreto*\n\n' +
+          'Formato: `/removeddd <DDD>`\n\n' +
+          '*Exemplo:*\n' +
+          '`/removeddd 98`',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      const areaCode = args[0];
+      
+      // Validar DDD
+      if (!/^\d{2}$/.test(areaCode)) {
+        return ctx.reply('❌ DDD inválido. Use 2 dígitos (ex: 11, 98, 86)');
+      }
+      
+      // Verificar se existe
+      const isBlocked = await db.isAreaCodeBlocked(areaCode);
+      if (!isBlocked) {
+        return ctx.reply(`⚠️ DDD ${areaCode} não está bloqueado.`);
+      }
+      
+      // Remover
+      const success = await db.removeBlockedAreaCode(areaCode);
+      
+      if (success) {
+        return ctx.reply(
+          `✅ *DDD Desbloqueado*\n\n` +
+          `📍 DDD ${areaCode} foi removido da lista de bloqueios.`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        return ctx.reply('❌ Erro ao desbloquear DDD.');
+      }
+    } catch (err) {
+      console.error('Erro ao remover DDD:', err);
+      return ctx.reply('❌ Erro ao desbloquear DDD.');
+    }
+  });
 }
 
 module.exports = { registerAdminCommands };

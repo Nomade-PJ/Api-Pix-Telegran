@@ -12,6 +12,63 @@ function createBot(token) {
   // Registrar handler do /start PRIMEIRO (antes dos comandos admin)
   bot.start(async (ctx) => {
     try {
+      // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD
+      // Primeiro, verificar se o usuário já existe no banco
+      const { data: existingUser, error: userError } = await db.supabase
+        .from('users')
+        .select('*')
+        .eq('telegram_id', ctx.from.id)
+        .single();
+      
+      // Se usuário não existe E tem telefone no Telegram, verificar DDD
+      if (userError && userError.code === 'PGRST116') {
+        // Usuário novo - verificar se compartilhou contato
+        if (!ctx.from.phone_number && !ctx.message?.contact) {
+          // Solicitar telefone
+          return ctx.reply(
+            '📱 *Bem-vindo!*\n\n' +
+            'Para acessar nossos produtos, precisamos verificar sua região.\n\n' +
+            'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                keyboard: [[{
+                  text: '📱 Compartilhar Telefone',
+                  request_contact: true
+                }]],
+                resize_keyboard: true,
+                one_time_keyboard: true
+              }
+            }
+          );
+        }
+        
+        // Verificar DDD do telefone compartilhado
+        const phoneNumber = ctx.from.phone_number || ctx.message?.contact?.phone_number;
+        if (phoneNumber) {
+          const areaCode = db.extractAreaCode(phoneNumber);
+          console.log(`🔍 [DDD-CHECK] Novo usuário - DDD: ${areaCode}, Telefone: ${phoneNumber}`);
+          
+          if (areaCode) {
+            const isBlocked = await db.isAreaCodeBlocked(areaCode);
+            
+            if (isBlocked) {
+              console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
+              return ctx.reply(
+                '⚠️ *Serviço Indisponível*\n\n' +
+                'Desculpe, nosso serviço ainda não está disponível na sua região.\n\n' +
+                `📍 DDD: ${areaCode}\n\n` +
+                'Estamos trabalhando para expandir nosso atendimento em breve!',
+                { 
+                  parse_mode: 'Markdown',
+                  reply_markup: { remove_keyboard: true }
+                }
+              );
+            }
+          }
+        }
+      }
+      
       // Paralelizar queries (OTIMIZAÇÃO #4)
       const [user, products, groups, mediaPacks, supportLink] = await Promise.all([
         db.getOrCreateUser(ctx.from),
@@ -78,6 +135,65 @@ function createBot(token) {
       });
     }
     return next();
+  });
+
+  // Handler para contato compartilhado (verificação de DDD)
+  bot.on('contact', async (ctx) => {
+    try {
+      const contact = ctx.message.contact;
+      
+      // Verificar se é o próprio contato do usuário
+      if (contact.user_id !== ctx.from.id) {
+        return ctx.reply('❌ Por favor, compartilhe SEU próprio número de telefone.');
+      }
+      
+      const phoneNumber = contact.phone_number;
+      const areaCode = db.extractAreaCode(phoneNumber);
+      
+      console.log(`📞 [CONTACT] Contato recebido - User: ${ctx.from.id}, Phone: ${phoneNumber}, DDD: ${areaCode}`);
+      
+      if (!areaCode) {
+        return ctx.reply('❌ Não foi possível identificar o DDD do seu telefone. Tente novamente.', {
+          reply_markup: { remove_keyboard: true }
+        });
+      }
+      
+      // Verificar se o DDD está bloqueado
+      const isBlocked = await db.isAreaCodeBlocked(areaCode);
+      
+      if (isBlocked) {
+        console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
+        return ctx.reply(
+          '⚠️ *Serviço Indisponível*\n\n' +
+          'Desculpe, nosso serviço ainda não está disponível na sua região.\n\n' +
+          `📍 DDD: ${areaCode}\n\n` +
+          'Estamos trabalhando para expandir nosso atendimento em breve!',
+          { 
+            parse_mode: 'Markdown',
+            reply_markup: { remove_keyboard: true }
+          }
+        );
+      }
+      
+      // DDD permitido - criar usuário e salvar telefone
+      const user = await db.getOrCreateUser(ctx.from);
+      await db.updateUserPhone(ctx.from.id, phoneNumber);
+      
+      console.log(`✅ [DDD-ALLOWED] DDD ${areaCode} permitido - Usuário: ${ctx.from.id} criado`);
+      
+      return ctx.reply(
+        '✅ *Verificação Concluída!*\n\n' +
+        'Seu acesso foi liberado\\! Use /start para ver nossos produtos\\.',
+        { 
+          parse_mode: 'MarkdownV2',
+          reply_markup: { remove_keyboard: true }
+        }
+      );
+      
+    } catch (err) {
+      console.error('❌ [CONTACT] Erro ao processar contato:', err);
+      return ctx.reply('❌ Erro ao processar seu contato. Tente novamente.');
+    }
   });
 
   // Receber comprovante (foto ou documento) - DEVE VIR ANTES DO ADMIN!
