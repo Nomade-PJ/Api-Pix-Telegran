@@ -1803,12 +1803,17 @@ Seu comprovante foi analisado e não foi aprovado.
         productName = pack ? pack.name : transaction.media_pack_id;
       }
       
+      // Escapar caracteres especiais do Markdown
+      const escapedProductName = productName.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+      const escapedUsername = (user?.username || 'N/A').replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+      const escapedTxid = txid.replace(/_/g, '\\_');
+      
       let message = `📋 *DETALHES DA TRANSAÇÃO*\n\n`;
-      message += `🆔 TXID: ${txid}\n`;
+      message += `🆔 TXID: \`${txid}\`\n`;
       message += `💰 Valor: R$ ${transaction.amount}\n`;
-      message += `📦 Produto: ${productName}\n`;
-      message += `👤 Usuário: ${user ? user.first_name : 'N/A'} (@${user?.username || 'N/A'})\n`;
-      message += `🔑 Chave PIX: ${transaction.pix_key}\n`;
+      message += `📦 Produto: ${escapedProductName}\n`;
+      message += `👤 Usuário: ${user ? user.first_name : 'N/A'} (@${escapedUsername})\n`;
+      message += `🔑 Chave PIX: \`${transaction.pix_key}\`\n`;
       message += `📊 Status: ${transaction.status}\n`;
       message += `📅 Criada: ${new Date(transaction.created_at).toLocaleString('pt-BR')}\n`;
       
@@ -1817,8 +1822,8 @@ Seu comprovante foi analisado e não foi aprovado.
       }
       
       message += `\n*Ações:*\n`;
-      message += `✅ /validar_${txid} - Aprovar\n`;
-      message += `❌ /rejeitar_${txid} - Rejeitar`;
+      message += `✅ /validar${escapedTxid} - Aprovar\n`;
+      message += `❌ /rejeitar${escapedTxid} - Rejeitar`;
       
       return ctx.reply(message, { parse_mode: 'Markdown' });
     } catch (err) {
