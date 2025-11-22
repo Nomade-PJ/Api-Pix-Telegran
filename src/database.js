@@ -218,20 +218,28 @@ async function productHasTransactions(productId) {
 
 // ===== TRANSAÇÕES =====
 
-async function createTransaction({ txid, userId, telegramId, productId, amount, pixKey, pixPayload }) {
+async function createTransaction({ txid, userId, telegramId, productId, mediaPackId, amount, pixKey, pixPayload }) {
   try {
+    const insertData = {
+      txid,
+      user_id: userId,
+      telegram_id: telegramId,
+      amount,
+      pix_key: pixKey,
+      pix_payload: pixPayload,
+      status: 'pending'
+    };
+    
+    // Adicionar product_id OU media_pack_id (nunca os dois ao mesmo tempo)
+    if (mediaPackId) {
+      insertData.media_pack_id = mediaPackId;
+    } else if (productId) {
+      insertData.product_id = productId;
+    }
+    
     const { data, error } = await supabase
       .from('transactions')
-      .insert([{
-        txid,
-        user_id: userId,
-        telegram_id: telegramId,
-        product_id: productId,
-        amount,
-        pix_key: pixKey,
-        pix_payload: pixPayload,
-        status: 'pending'
-      }])
+      .insert([insertData])
       .select()
       .single();
     
@@ -248,15 +256,48 @@ async function getTransactionByTxid(txid) {
   try {
     const { data, error } = await supabase
       .from('transactions')
-      .select(`
-        *,
-        user:user_id(telegram_id, username, first_name),
-        product:product_id(name, price)
-      `)
+      .select('*')
       .eq('txid', txid)
       .single();
     
     if (error) throw error;
+    
+    // Buscar informações do usuário separadamente se necessário
+    if (data.user_id) {
+      const { data: userData } = await supabase
+        .from('users')
+        .select('telegram_id, username, first_name')
+        .eq('id', data.user_id)
+        .single();
+      
+      if (userData) {
+        data.user = userData;
+      }
+    }
+    
+    // Buscar informações do produto OU media pack separadamente
+    if (data.product_id) {
+      const { data: productData } = await supabase
+        .from('products')
+        .select('name, price')
+        .eq('product_id', data.product_id)
+        .single();
+      
+      if (productData) {
+        data.product = productData;
+      }
+    } else if (data.media_pack_id) {
+      const { data: packData } = await supabase
+        .from('media_packs')
+        .select('name, price')
+        .eq('pack_id', data.media_pack_id)
+        .single();
+      
+      if (packData) {
+        data.media_pack = packData;
+      }
+    }
+    
     return data;
   } catch (err) {
     console.error('Erro ao buscar transação:', err);
@@ -375,18 +416,56 @@ async function getPendingTransactions(limit = 10) {
     
     const { data, error } = await supabase
       .from('transactions')
-      .select(`
-        *,
-        user:user_id(telegram_id, username, first_name),
-        product:product_id(name, price)
-      `)
+      .select('*')
       .eq('status', 'proof_sent')
       .gte('created_at', thirtyMinutesAgo.toISOString())
       .order('proof_received_at', { ascending: true })
       .limit(limit);
     
     if (error) throw error;
-    return data || [];
+    
+    const transactions = data || [];
+    
+    // Buscar informações adicionais para cada transação
+    for (const transaction of transactions) {
+      // Buscar usuário
+      if (transaction.user_id) {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('telegram_id, username, first_name')
+          .eq('id', transaction.user_id)
+          .single();
+        
+        if (userData) {
+          transaction.user = userData;
+        }
+      }
+      
+      // Buscar produto OU media pack
+      if (transaction.product_id) {
+        const { data: productData } = await supabase
+          .from('products')
+          .select('name, price')
+          .eq('product_id', transaction.product_id)
+          .single();
+        
+        if (productData) {
+          transaction.product = productData;
+        }
+      } else if (transaction.media_pack_id) {
+        const { data: packData } = await supabase
+          .from('media_packs')
+          .select('name, price')
+          .eq('pack_id', transaction.media_pack_id)
+          .single();
+        
+        if (packData) {
+          transaction.media_pack = packData;
+        }
+      }
+    }
+    
+    return transactions;
   } catch (err) {
     console.error('Erro ao buscar transações pendentes:', err);
     return [];

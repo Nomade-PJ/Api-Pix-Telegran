@@ -909,7 +909,7 @@ Esta transação foi cancelada automaticamente.
         txid,
         userId: user.id,
         telegramId: ctx.chat.id,
-        productId: `mediapack_${packId}`,
+        mediaPackId: packId,  // 📦 Usar mediaPackId em vez de productId
         amount,
         pixKey: charge.key,
         pixPayload: charge.copiaCola

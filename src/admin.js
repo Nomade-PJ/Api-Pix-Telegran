@@ -1594,8 +1594,8 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
       await db.validateTransaction(txid, transaction.user_id);
       
       // Verificar se é media pack (fotos/vídeos aleatórios)
-      if (transaction.product_id && transaction.product_id.startsWith('mediapack_')) {
-        const packId = transaction.product_id.replace('mediapack_', '');
+      if (transaction.media_pack_id) {
+        const packId = transaction.media_pack_id;
         
         try {
           // Buscar o internal ID da transação
