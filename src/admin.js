@@ -36,10 +36,13 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos'),
           Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
         ],
-        [
-          Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),
-          Markup.button.callback('🔑 Alterar PIX', 'admin_setpix')
-        ],
+      [
+        Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),
+        Markup.button.callback('🔑 Alterar PIX', 'admin_setpix')
+      ],
+      [
+        Markup.button.callback('💬 Configurar Suporte', 'admin_support')
+      ],
         [
           Markup.button.callback('👤 Usuários', 'admin_users'),
           Markup.button.callback('📢 Broadcast', 'admin_broadcast')
@@ -389,7 +392,14 @@ Todos os novos pagamentos usarão esta chave automaticamente.`;
 *Passo 1/4:* Digite o *nome* do produto:
 Exemplo: Pack Premium, Curso Avançado, etc.
 
-_Digite /cancelar para cancelar_`, { parse_mode: 'Markdown' });
+_Digite /cancelar para cancelar_`, { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+          ]]
+        }
+      });
       
     } catch (err) {
       console.error('Erro ao iniciar criação:', err);
@@ -584,44 +594,80 @@ Digite o ID do produto:
           return ctx.reply(`✅ Nome: *${session.data.name}*
 
 *Passo 2/4:* Digite o *preço* (apenas números):
-Exemplo: 30.00 ou 50
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+Exemplo: 30.00 ou 50`, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '⬅️ Voltar', callback_data: 'product_back_name' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+                ]
+              ]
+            }
+          });
         }
         
         if (session.step === 'price') {
           const price = parseFloat(ctx.message.text.replace(',', '.'));
           if (isNaN(price) || price <= 0) {
-            return ctx.reply('❌ Preço inválido. Digite apenas números (ex: 30.00)');
+            return ctx.reply('❌ Preço inválido. Digite apenas números (ex: 30.00)', {
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '⬅️ Voltar', callback_data: 'product_back_name' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+                ]]
+              }
+            });
           }
           session.data.price = price;
           session.step = 'description';
           return ctx.reply(`✅ Preço: *R$ ${price.toFixed(2)}*
 
-*Passo 3/4:* Digite uma *descrição* (ou envie "-" para pular):
-Exemplo: Acesso completo ao conteúdo premium
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+*Passo 3/4:* Digite uma *descrição*:
+Exemplo: Acesso completo ao conteúdo premium`, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '⏭️ Pular', callback_data: 'product_skip_description' }
+                ],
+                [
+                  { text: '⬅️ Voltar', callback_data: 'product_back_price' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+                ]
+              ]
+            }
+          });
         }
         
         if (session.step === 'description') {
           const desc = ctx.message.text.trim();
-          session.data.description = desc === '-' ? null : desc;
+          session.data.description = desc;
           session.step = 'url';
           return ctx.reply(`✅ Descrição salva!
 
 *Passo 4/4:* Envie a *URL de entrega* ou envie um *arquivo*:
 
 📎 *Arquivo:* Envie um arquivo (ZIP, PDF, etc.)
-🔗 *Link:* Digite a URL (Google Drive, Mega, etc.)
-➖ *Pular:* Digite "-" para configurar depois
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+🔗 *Link:* Digite a URL (Google Drive, Mega, etc.)`, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '⏭️ Pular', callback_data: 'product_skip_url' }
+                ],
+                [
+                  { text: '⬅️ Voltar', callback_data: 'product_back_description' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+                ]
+              ]
+            }
+          });
         }
         
         if (session.step === 'url') {
           const url = ctx.message.text.trim();
-          session.data.deliveryUrl = url === '-' ? null : url;
+          session.data.deliveryUrl = url;
           session.data.deliveryType = 'link';
           
           // Gerar ID do produto
@@ -639,10 +685,10 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
             await db.createProduct({
               productId: session.data.productId,
               name: session.data.name,
-              description: session.data.description,
+              description: session.data.description || null,
               price: session.data.price,
               deliveryType: session.data.deliveryType,
-              deliveryUrl: session.data.deliveryUrl
+              deliveryUrl: session.data.deliveryUrl || null
             });
             
             delete global._SESSIONS[ctx.from.id];
@@ -697,7 +743,13 @@ Use /produtos para ver as alterações.`, { parse_mode: 'Markdown' });
         if (session.step === 'group_id') {
           const groupId = parseInt(ctx.message.text.trim());
           if (isNaN(groupId)) {
-            return ctx.reply('❌ ID inválido. Digite apenas números (ex: -1001234567890)');
+            return ctx.reply('❌ ID inválido. Digite apenas números (ex: -1001234567890)', {
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                ]]
+              }
+            });
           }
           session.data.groupId = groupId;
           session.step = 'group_name';
@@ -705,9 +757,17 @@ Use /produtos para ver as alterações.`, { parse_mode: 'Markdown' });
 
 *Passo 2/5:* Digite o *nome do grupo*:
 
-Exemplo: Grupo Premium VIP
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+Exemplo: Grupo Premium VIP`, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '⬅️ Voltar', callback_data: 'group_back_id' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                ]
+              ]
+            }
+          });
         }
         
         if (session.step === 'group_name') {
@@ -717,15 +777,32 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
 
 *Passo 3/5:* Envie o *link do grupo*:
 
-Exemplo: https://t.me/seugrupo
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+Exemplo: https://t.me/seugrupo`, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '⬅️ Voltar', callback_data: 'group_back_name' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                ]
+              ]
+            }
+          });
         }
         
         if (session.step === 'group_link') {
           const link = ctx.message.text.trim();
           if (!link.startsWith('http')) {
-            return ctx.reply('❌ Link inválido. Deve começar com http:// ou https://');
+            return ctx.reply('❌ Link inválido. Deve começar com http:// ou https://', {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '⬅️ Voltar', callback_data: 'group_back_name' },
+                    { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                  ]
+                ]
+              }
+            });
           }
           session.data.groupLink = link;
           session.step = 'price';
@@ -733,15 +810,32 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
 
 *Passo 4/5:* Digite o *preço da assinatura* (mensal):
 
-Exemplo: 30.00 ou 50
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+Exemplo: 30.00 ou 50`, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '⬅️ Voltar', callback_data: 'group_back_link' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                ]
+              ]
+            }
+          });
         }
         
         if (session.step === 'price') {
           const price = parseFloat(ctx.message.text.replace(',', '.'));
           if (isNaN(price) || price <= 0) {
-            return ctx.reply('❌ Preço inválido. Digite apenas números (ex: 30.00)');
+            return ctx.reply('❌ Preço inválido. Digite apenas números (ex: 30.00)', {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '⬅️ Voltar', callback_data: 'group_back_link' },
+                    { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                  ]
+                ]
+              }
+            });
           }
           session.data.price = price;
           session.step = 'days';
@@ -749,15 +843,32 @@ _Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
 
 *Passo 5/5:* Digite a *duração da assinatura* (em dias):
 
-Exemplo: 30 (para 30 dias)
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+Exemplo: 30 (para 30 dias)`, { 
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '⬅️ Voltar', callback_data: 'group_back_price' },
+                  { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                ]
+              ]
+            }
+          });
         }
         
         if (session.step === 'days') {
           const days = parseInt(ctx.message.text.trim());
           if (isNaN(days) || days <= 0) {
-            return ctx.reply('❌ Número de dias inválido. Digite apenas números (ex: 30)');
+            return ctx.reply('❌ Número de dias inválido. Digite apenas números (ex: 30)', {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '⬅️ Voltar', callback_data: 'group_back_price' },
+                    { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+                  ]
+                ]
+              }
+            });
           }
           session.data.days = days;
           
@@ -1181,6 +1292,86 @@ Para enviar uma mensagem para todos os usuários, use:
 ⚠️ *Atenção:* A mensagem será enviada para TODOS os usuários cadastrados no bot.`, { parse_mode: 'Markdown' });
   });
 
+  // ===== CONFIGURAR SUPORTE =====
+  bot.action('admin_support', async (ctx) => {
+    await ctx.answerCbQuery('💬 Configurando suporte...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    const currentSupport = await db.getSetting('support_link');
+    
+    return ctx.reply(`💬 *CONFIGURAR SUPORTE*
+
+🔗 *Link atual:* ${currentSupport || 'Não configurado'}
+
+*Para configurar o suporte, use:*
+/setsuporte [link do Telegram]
+
+*Exemplos:*
+• /setsuporte https://t.me/seususuario
+• /setsuporte https://t.me/seugruposuporte
+
+*Nota:* O link será exibido como botão no menu principal do bot, abaixo dos produtos.`, { parse_mode: 'Markdown' });
+  });
+
+  bot.command('setsuporte', async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
+      const args = ctx.message.text.split(' ').slice(1);
+      if (args.length === 0) {
+        const currentSupport = await db.getSetting('support_link');
+        return ctx.reply(`❌ *Uso incorreto!*
+
+🔗 *Link atual:* ${currentSupport || 'Não configurado'}
+
+*Formato:* /setsuporte [link]
+
+*Exemplos:*
+• /setsuporte https://t.me/seususuario
+• /setsuporte https://t.me/seugruposuporte
+
+*Para remover o suporte:*
+/setsuporte remover`, { parse_mode: 'Markdown' });
+      }
+      
+      const link = args.join(' ').trim();
+      
+      // Remover suporte
+      if (link.toLowerCase() === 'remover') {
+        await db.setSetting('support_link', null, ctx.from.id);
+        return ctx.reply(`✅ *Link de suporte removido com sucesso!*
+
+O botão de suporte não será mais exibido no menu principal.`, { parse_mode: 'Markdown' });
+      }
+      
+      // Validação básica de link do Telegram
+      if (!link.startsWith('http://') && !link.startsWith('https://')) {
+        return ctx.reply('❌ Link inválido! Deve começar com http:// ou https://');
+      }
+      
+      if (!link.includes('t.me/') && !link.includes('telegram.me/')) {
+        return ctx.reply('❌ O link deve ser do Telegram (contendo t.me/ ou telegram.me/)');
+      }
+      
+      // Salvar no banco
+      await db.setSetting('support_link', link, ctx.from.id);
+      
+      return ctx.reply(`✅ *Link de suporte configurado com sucesso!*
+
+🔗 *Link:* ${link}
+
+O botão de suporte agora aparecerá no menu principal do bot, abaixo dos produtos!
+
+*Para testar:* Use /start e veja o botão "💬 Suporte"`, { parse_mode: 'Markdown' });
+      
+    } catch (err) {
+      console.error('Erro ao configurar suporte:', err.message);
+      return ctx.reply('❌ Erro ao configurar suporte. Tente novamente.');
+    }
+  });
+
   // ===== GERENCIAR GRUPOS =====
   bot.action('admin_groups', async (ctx) => {
     await ctx.answerCbQuery('👥 Carregando grupos...');
@@ -1245,9 +1436,14 @@ Para enviar uma mensagem para todos os usuários, use:
 📝 *Como obter o ID:*
 1. Adicione o bot @userinfobot ao grupo
 2. Copie o ID que aparece (ex: -1001234567890)
-3. Cole aqui
-
-_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
+3. Cole aqui`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+        ]]
+      }
+    });
   });
 
   bot.command('editargrupo', async (ctx) => {
@@ -1395,8 +1591,51 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
       // Validar transação
       await db.validateTransaction(txid, transaction.user_id);
       
+      // Verificar se é media pack (fotos/vídeos aleatórios)
+      if (transaction.product_id && transaction.product_id.startsWith('mediapack_')) {
+        const packId = transaction.product_id.replace('mediapack_', '');
+        
+        try {
+          // Buscar o internal ID da transação
+          const { data: transData, error: transError } = await db.supabase
+            .from('transactions')
+            .select('id')
+            .eq('txid', txid)
+            .single();
+          
+          if (transError) throw transError;
+          
+          // Entregar media pack (fotos/vídeos aleatórios)
+          await deliver.deliverMediaPack(
+            transaction.telegram_id,
+            packId,
+            transaction.user_id,
+            transData.id,
+            db
+          );
+          
+          console.log(`✅ Media pack ${packId} entregue com sucesso`);
+        } catch (err) {
+          console.error('Erro ao entregar media pack:', err);
+          
+          // Notificar usuário sobre erro
+          try {
+            await ctx.telegram.sendMessage(transaction.telegram_id, `⚠️ *PAGAMENTO APROVADO!*
+
+Seu pagamento foi confirmado, mas ocorreu um erro ao enviar as mídias.
+
+Entre em contato com o suporte.
+
+🆔 TXID: ${txid}`, {
+              parse_mode: 'Markdown'
+            });
+          } catch (notifyErr) {
+            console.error('Erro ao notificar usuário:', notifyErr);
+          }
+        }
+      }
       // Verificar se é assinatura de grupo
-      if (transaction.product_id && transaction.product_id.startsWith('group_')) {
+      else if (transaction.product_id && transaction.product_id.startsWith('group_')) {
         const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
         const group = await db.getGroupById(groupTelegramId);
         
@@ -1568,6 +1807,275 @@ Seu comprovante foi analisado e não foi aprovado.
       console.error('Erro ao buscar detalhes:', err);
       return ctx.reply('❌ Erro ao buscar detalhes.');
     }
+  });
+
+  // ===== HANDLERS DE NAVEGAÇÃO PARA CRIAR PRODUTO =====
+  
+  bot.action('cancel_create_product', async (ctx) => {
+    await ctx.answerCbQuery('❌ Cancelado');
+    global._SESSIONS = global._SESSIONS || {};
+    if (global._SESSIONS[ctx.from.id]) {
+      delete global._SESSIONS[ctx.from.id];
+    }
+    return ctx.reply('❌ Operação cancelada.');
+  });
+
+  bot.action('product_back_name', async (ctx) => {
+    await ctx.answerCbQuery('⬅️ Voltando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_product') return;
+    
+    session.step = 'name';
+    return ctx.reply(`🎯 *CRIAR NOVO PRODUTO*
+
+*Passo 1/4:* Digite o *nome* do produto:
+Exemplo: Pack Premium, Curso Avançado, etc.`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+        ]]
+      }
+    });
+  });
+
+  bot.action('product_back_price', async (ctx) => {
+    await ctx.answerCbQuery('⬅️ Voltando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_product') return;
+    
+    session.step = 'price';
+    return ctx.reply(`✅ Nome: *${session.data.name}*
+
+*Passo 2/4:* Digite o *preço* (apenas números):
+Exemplo: 30.00 ou 50`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '⬅️ Voltar', callback_data: 'product_back_name' },
+            { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+          ]
+        ]
+      }
+    });
+  });
+
+  bot.action('product_back_description', async (ctx) => {
+    await ctx.answerCbQuery('⬅️ Voltando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_product') return;
+    
+    session.step = 'description';
+    return ctx.reply(`✅ Preço: *R$ ${session.data.price.toFixed(2)}*
+
+*Passo 3/4:* Digite uma *descrição*:
+Exemplo: Acesso completo ao conteúdo premium`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '⏭️ Pular', callback_data: 'product_skip_description' }
+          ],
+          [
+            { text: '⬅️ Voltar', callback_data: 'product_back_price' },
+            { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+          ]
+        ]
+      }
+    });
+  });
+
+  bot.action('product_skip_description', async (ctx) => {
+    await ctx.answerCbQuery('⏭️ Pulando descrição...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_product') return;
+    
+    session.data.description = null;
+    session.step = 'url';
+    
+    return ctx.reply(`⏭️ *Descrição pulada!*
+
+*Passo 4/4:* Envie a *URL de entrega* ou envie um *arquivo*:
+
+📎 *Arquivo:* Envie um arquivo (ZIP, PDF, etc.)
+🔗 *Link:* Digite a URL (Google Drive, Mega, etc.)`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '⏭️ Pular', callback_data: 'product_skip_url' }
+          ],
+          [
+            { text: '⬅️ Voltar', callback_data: 'product_back_description' },
+            { text: '❌ Cancelar', callback_data: 'cancel_create_product' }
+          ]
+        ]
+      }
+    });
+  });
+
+  bot.action('product_skip_url', async (ctx) => {
+    await ctx.answerCbQuery('⏭️ Finalizando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_product') return;
+    
+    session.data.deliveryUrl = null;
+    session.data.deliveryType = 'link';
+    
+    // Gerar ID do produto
+    const productId = session.data.name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '')
+      .substring(0, 20);
+    
+    session.data.productId = productId;
+    
+    // Criar produto
+    try {
+      await db.createProduct({
+        productId: session.data.productId,
+        name: session.data.name,
+        description: session.data.description || null,
+        price: session.data.price,
+        deliveryType: session.data.deliveryType,
+        deliveryUrl: session.data.deliveryUrl || null
+      });
+      
+      delete global._SESSIONS[ctx.from.id];
+      
+      return ctx.reply(`🎉 *PRODUTO CRIADO COM SUCESSO!*
+
+🛍️ *Nome:* ${session.data.name}
+🆔 *ID:* ${session.data.productId}
+💰 *Preço:* R$ ${session.data.price.toFixed(2)}
+📝 *Descrição:* ${session.data.description || 'Nenhuma'}
+🔗 *URL:* Não configurada
+
+⚠️ *Lembre-se de configurar a URL de entrega depois!*
+
+O produto já está disponível no menu de compras!
+Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
+      
+    } catch (err) {
+      delete global._SESSIONS[ctx.from.id];
+      console.error('Erro ao criar produto:', err);
+      return ctx.reply('❌ Erro ao criar produto. Tente novamente.');
+    }
+  });
+
+  // ===== HANDLERS DE NAVEGAÇÃO PARA CRIAR GRUPO =====
+  
+  bot.action('cancel_create_group', async (ctx) => {
+    await ctx.answerCbQuery('❌ Cancelado');
+    global._SESSIONS = global._SESSIONS || {};
+    if (global._SESSIONS[ctx.from.id]) {
+      delete global._SESSIONS[ctx.from.id];
+    }
+    return ctx.reply('❌ Operação cancelada.');
+  });
+
+  bot.action('group_back_id', async (ctx) => {
+    await ctx.answerCbQuery('⬅️ Voltando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_group') return;
+    
+    session.step = 'group_id';
+    return ctx.reply(`➕ *CADASTRAR NOVO GRUPO*
+
+*Passo 1/5:* Envie o *ID do grupo*
+
+📝 *Como obter o ID:*
+1. Adicione o bot @userinfobot ao grupo
+2. Copie o ID que aparece (ex: -1001234567890)
+3. Cole aqui`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+        ]]
+      }
+    });
+  });
+
+  bot.action('group_back_name', async (ctx) => {
+    await ctx.answerCbQuery('⬅️ Voltando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_group') return;
+    
+    session.step = 'group_name';
+    return ctx.reply(`✅ ID: *${session.data.groupId}*
+
+*Passo 2/5:* Digite o *nome do grupo*:
+
+Exemplo: Grupo Premium VIP`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '⬅️ Voltar', callback_data: 'group_back_id' },
+            { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+          ]
+        ]
+      }
+    });
+  });
+
+  bot.action('group_back_link', async (ctx) => {
+    await ctx.answerCbQuery('⬅️ Voltando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_group') return;
+    
+    session.step = 'group_link';
+    return ctx.reply(`✅ Nome: *${session.data.groupName}*
+
+*Passo 3/5:* Envie o *link do grupo*:
+
+Exemplo: https://t.me/seugrupo`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '⬅️ Voltar', callback_data: 'group_back_name' },
+            { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+          ]
+        ]
+      }
+    });
+  });
+
+  bot.action('group_back_price', async (ctx) => {
+    await ctx.answerCbQuery('⬅️ Voltando...');
+    global._SESSIONS = global._SESSIONS || {};
+    const session = global._SESSIONS[ctx.from.id];
+    if (!session || session.type !== 'create_group') return;
+    
+    session.step = 'price';
+    return ctx.reply(`✅ Link: *${session.data.groupLink}*
+
+*Passo 4/5:* Digite o *preço da assinatura* (mensal):
+
+Exemplo: 30.00 ou 50`, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '⬅️ Voltar', callback_data: 'group_back_link' },
+            { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
+          ]
+        ]
+      }
+    });
   });
 }
 

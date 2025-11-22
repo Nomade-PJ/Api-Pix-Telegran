@@ -13,13 +13,15 @@ function createBot(token) {
   bot.start(async (ctx) => {
     try {
       // Paralelizar queries (OTIMIZAÇÃO #4)
-      const [user, products, groups] = await Promise.all([
+      const [user, products, groups, mediaPacks, supportLink] = await Promise.all([
         db.getOrCreateUser(ctx.from),
         db.getAllProducts(),
-        db.getAllGroups()
+        db.getAllGroups(),
+        db.getAllMediaPacks(),
+        db.getSetting('support_link')
       ]);
       
-      if (products.length === 0 && groups.length === 0) {
+      if (products.length === 0 && groups.length === 0 && mediaPacks.length === 0) {
         return ctx.reply('🚧 Nenhum produto ou grupo disponível no momento. Volte mais tarde!');
       }
       
@@ -30,11 +32,24 @@ function createBot(token) {
         return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
       });
       
+      // Adicionar botões de media packs (fotos/vídeos aleatórios)
+      const activeMediaPacks = mediaPacks.filter(p => p.is_active);
+      for (const pack of activeMediaPacks) {
+        const emoji = '📸';
+        const buttonText = `${emoji} ${pack.name} (R$${parseFloat(pack.price).toFixed(2)})`;
+        buttons.push([Markup.button.callback(buttonText, `buy_media:${pack.pack_id}`)]);
+      }
+      
       // Adicionar botão de grupo se houver grupos ativos
       const activeGroups = groups.filter(g => g.is_active);
       if (activeGroups.length > 0) {
         const group = activeGroups[0]; // Usar o primeiro grupo ativo
         buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
+      }
+      
+      // Adicionar botão de suporte se configurado
+      if (supportLink) {
+        buttons.push([Markup.button.url('💬 Suporte', supportLink)]);
       }
       
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
@@ -753,7 +768,11 @@ Um administrador irá validar manualmente.
 
       // Calcular tempo de expiração (30 minutos)
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
       
       // Agendar lembretes de pagamento
       // Lembrete aos 15 minutos (15 minutos restantes)
@@ -852,6 +871,165 @@ Esta transação foi cancelada automaticamente.
     }
   });
 
+  // ===== COMPRA DE MEDIA PACK (FOTOS/VÍDEOS ALEATÓRIOS) =====
+  bot.action(/buy_media:(.+)/, async (ctx) => {
+    try {
+      const packId = ctx.match[1];
+      
+      // OTIMIZAÇÃO #1: Responder imediatamente ao clique (feedback visual instantâneo)
+      await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
+      
+      // OTIMIZAÇÃO #4: Paralelizar busca de pack e usuário
+      const [pack, user] = await Promise.all([
+        db.getMediaPackById(packId),
+        db.getOrCreateUser(ctx.from)
+      ]);
+      
+      if (!pack) {
+        return ctx.reply('❌ Pack não encontrado.');
+      }
+      
+      // Verificar se há itens no pack
+      const items = await db.getMediaItems(packId);
+      if (items.length === 0) {
+        return ctx.reply('❌ Este pack ainda não tem mídias cadastradas. Entre em contato com o suporte.');
+      }
+      
+      const amount = pack.price.toString();
+
+      // Gerar cobrança PIX e salvar transação em paralelo
+      const resp = await manualPix.createManualCharge({ amount, productId: `mediapack_${packId}` });
+      const charge = resp.charge;
+      const txid = charge.txid;
+      
+      // Salvar no banco (não precisa aguardar para enviar QR Code)
+      db.createTransaction({
+        txid,
+        userId: user.id,
+        telegramId: ctx.chat.id,
+        productId: `mediapack_${packId}`,
+        amount,
+        pixKey: charge.key,
+        pixPayload: charge.copiaCola
+      }).catch(err => console.error('Erro ao salvar transação:', err));
+
+      // Calcular tempo de expiração (30 minutos)
+      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
+      
+      // Agendar lembretes de pagamento
+      // Lembrete aos 15 minutos (15 minutos restantes)
+      setTimeout(async () => {
+        try {
+          const trans = await db.getTransactionByTxid(txid);
+          // Verificar se ainda está pendente e não paga
+          if (trans && trans.status === 'pending') {
+            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *LEMBRETE DE PAGAMENTO*
+
+⚠️ *Faltam 15 minutos* para expirar!
+
+💰 Valor: R$ ${amount}
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+⏰ *Expira às:* ${expirationStr}
+
+📸 Após pagar, envie o comprovante.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+          }
+        } catch (err) {
+          console.error('Erro no lembrete 15 min:', err);
+        }
+      }, 15 * 60 * 1000); // 15 minutos
+      
+      // Aviso de expiração e cancelamento automático aos 30 minutos
+      setTimeout(async () => {
+        try {
+          const trans = await db.getTransactionByTxid(txid);
+          // Se ainda está pendente, cancelar
+          if (trans && trans.status === 'pending') {
+            await db.cancelTransaction(txid);
+            
+            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
+
+❌ O prazo de 30 minutos foi atingido.
+Esta transação foi cancelada automaticamente.
+
+🔄 *Para comprar novamente:*
+1. Use o comando /start
+2. Selecione o produto desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+💰 Valor: R$ ${amount}
+🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+          }
+        } catch (err) {
+          console.error('Erro no cancelamento automático:', err);
+        }
+      }, 30 * 60 * 1000); // 30 minutos
+      
+      // Enviar QR Code imediatamente
+      const description = pack.description || `${pack.items_per_delivery} fotos/vídeos aleatórios`;
+      
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: `📸 *${pack.name}*
+
+💰 Pague R$ ${amount} usando PIX
+
+📦 Você receberá: *${pack.items_per_delivery} fotos/vídeos aleatórios*
+📊 Total disponível: ${items.length} itens
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+
+📸 Após pagar, envie o comprovante (foto) aqui.
+
+🆔 TXID: ${txid}`,
+            parse_mode: 'Markdown'
+          }
+        );
+      } else {
+        return await ctx.reply(`📸 *${pack.name}*
+
+💰 Pague R$ ${amount} usando PIX
+
+📦 Você receberá: *${pack.items_per_delivery} fotos/vídeos aleatórios*
+📊 Total disponível: ${items.length} itens
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+
+📸 Envie o comprovante quando pagar.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Erro na compra de media pack:', err.message);
+      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
+    }
+  });
+
   // ===== ASSINATURA DE GRUPO =====
   bot.action(/subscribe:(.+)/, async (ctx) => {
     try {
@@ -907,7 +1085,11 @@ Esta transação foi cancelada automaticamente.
       
       // Calcular tempo de expiração (30 minutos)
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
       
       // Enviar QR Code
       if (charge.qrcodeBuffer) {
