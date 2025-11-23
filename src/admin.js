@@ -123,10 +123,12 @@ Selecione uma opção abaixo:`;
           return ctx.reply(`✅ Transação validada!\n\nMedia pack será entregue através do painel admin.\n\n🆔 TXID: ${txid}\n👤 Cliente: ${transaction.user?.first_name}\n💰 Valor: R$ ${transaction.amount}`);
         }
         
-        const product = await db.getProduct(transaction.product_id);
+        // Buscar produto incluindo inativos (transação já paga, produto pode ter sido desativado depois)
+        const product = await db.getProduct(transaction.product_id, true);
         
         if (!product) {
-          return ctx.reply(`❌ Produto não encontrado: ${transaction.product_id}`);
+          console.error(`❌ [VALIDATE] Produto "${transaction.product_id}" não encontrado na transação ${txid}`);
+          return ctx.reply(`❌ Produto não encontrado: ${transaction.product_id}\n\nO produto pode ter sido removido após a transação.`);
         }
         
         await deliver.deliverContent(transaction.telegram_id, product);
@@ -455,10 +457,12 @@ _Digite /cancelar para cancelar_`, {
       if (!isAdmin) return;
       
       const productId = ctx.match[1];
-      const product = await db.getProduct(productId);
+      // Buscar produto incluindo inativos (pode estar desativado temporariamente)
+      const product = await db.getProduct(productId, true);
       
       if (!product) {
-        return ctx.reply('❌ Produto não encontrado.');
+        console.error(`❌ [EDIT] Produto "${productId}" não encontrado (mesmo incluindo inativos)`);
+        return ctx.reply(`❌ Produto não encontrado.\n\n🆔 ID: ${productId}\n\nVerifique se o ID está correto ou se o produto foi removido.`);
       }
       
       global._SESSIONS = global._SESSIONS || {};
@@ -468,7 +472,10 @@ _Digite /cancelar para cancelar_`, {
         data: { productId, product }
       };
       
+      const statusText = product.is_active ? '🟢 Ativo' : '🔴 Inativo';
+      
       return ctx.reply(`📝 EDITAR: ${product.name}
+${statusText}
 
 O que deseja editar?
 
@@ -481,7 +488,8 @@ O que deseja editar?
 Cancelar: /cancelar`);
       
     } catch (err) {
-      console.error('Erro ao selecionar produto:', err);
+      console.error('❌ [EDIT] Erro ao selecionar produto:', err);
+      return ctx.reply('❌ Erro ao selecionar produto. Tente novamente.');
     }
   });
   
@@ -532,10 +540,12 @@ Digite o ID do produto:
       if (!isAdmin) return;
       
       const productId = ctx.match[1];
-      const product = await db.getProduct(productId);
+      // Buscar produto incluindo inativos (pode estar desativado)
+      const product = await db.getProduct(productId, true);
       
       if (!product) {
-        return ctx.reply('❌ Produto não encontrado.');
+        console.error(`❌ [DELETE] Produto "${productId}" não encontrado (mesmo incluindo inativos)`);
+        return ctx.reply(`❌ Produto não encontrado.\n\n🆔 ID: ${productId}\n\nVerifique se o ID está correto ou se o produto já foi removido.`);
       }
       
       // Verificar se há transações associadas para informar o usuário
@@ -1003,14 +1013,41 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
   async function handleEditField(ctx, field, prompt) {
     try {
       const session = global._SESSIONS?.[ctx.from.id];
-      if (!session || session.type !== 'edit_product') return;
+      
+      // Verificar se há sessão válida
+      if (!session || session.type !== 'edit_product') {
+        console.log(`⚠️ [EDIT] Sessão não encontrada para usuário ${ctx.from.id}. Tipo: ${session?.type || 'nenhuma'}`);
+        return ctx.reply('❌ Sessão de edição não encontrada.\n\nUse /editarproduto para iniciar uma nova edição.');
+      }
+      
+      // Verificar se o produto ainda existe
+      const { productId, product } = session.data || {};
+      if (!productId || !product) {
+        console.log(`⚠️ [EDIT] Produto não encontrado na sessão para usuário ${ctx.from.id}`);
+        // Tentar buscar o produto novamente
+        if (productId) {
+          const productExists = await db.getProduct(productId, true);
+          if (!productExists) {
+            delete global._SESSIONS[ctx.from.id];
+            return ctx.reply(`❌ Produto não encontrado.\n\n🆔 ID: ${productId}\n\nO produto pode ter sido removido. Use /editarproduto para selecionar outro produto.`);
+          }
+          // Atualizar sessão com produto encontrado
+          session.data.product = productExists;
+        } else {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Sessão inválida. Use /editarproduto para iniciar uma nova edição.');
+        }
+      }
       
       session.step = 'edit_value';
       session.data.field = field;
       
+      console.log(`✅ [EDIT] Iniciando edição do campo "${field}" para produto "${productId}"`);
+      
       return ctx.reply(`${prompt}\n\n_Cancelar:_ /cancelar`, { parse_mode: 'Markdown' });
     } catch (err) {
-      console.error('Erro:', err);
+      console.error('❌ [EDIT] Erro em handleEditField:', err);
+      return ctx.reply('❌ Erro ao iniciar edição. Tente novamente.');
     }
   }
 
