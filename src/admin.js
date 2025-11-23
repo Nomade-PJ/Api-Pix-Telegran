@@ -450,8 +450,36 @@ _Digite /cancelar para cancelar_`, {
     }
   });
   
-  // Handler para /edit_[productId]
-  bot.hears(/^\/edit_(.+)$/, async (ctx) => {
+  // IMPORTANTE: Registrar comandos de edição ANTES do bot.hears para ter prioridade
+  // Esses comandos são para editar campos específicos (precisa de sessão ativa)
+  bot.command('edit_name', async (ctx) => handleEditField(ctx, 'name', 'Digite o novo nome:'));
+  bot.command('edit_price', async (ctx) => handleEditField(ctx, 'price', 'Digite o novo preço:'));
+  bot.command('edit_description', async (ctx) => handleEditField(ctx, 'description', 'Digite a nova descrição:'));
+  bot.command('edit_url', async (ctx) => {
+    // Ignorar argumentos extras (ex: /edit_url packsdaval deve ser tratado apenas como /edit_url)
+    console.log(`📝 [EDIT] Comando edit_url recebido para usuário ${ctx.from.id}`);
+    return handleEditField(ctx, 'url', 'Digite a nova URL ou envie um arquivo:');
+  });
+  bot.command('edit_status', async (ctx) => {
+    try {
+      const session = global._SESSIONS?.[ctx.from.id];
+      if (!session || session.type !== 'edit_product') return;
+      
+      const { productId, product } = session.data;
+      const newStatus = !product.is_active;
+      
+      await db.updateProduct(productId, { is_active: newStatus });
+      delete global._SESSIONS[ctx.from.id];
+      
+      return ctx.reply(`✅ Produto ${newStatus ? 'ativado' : 'desativado'} com sucesso!`);
+    } catch (err) {
+      console.error('Erro ao alterar status:', err);
+    }
+  });
+  
+  // Handler para /edit_[productId] - DEVE vir DEPOIS dos comandos edit_name, edit_url, etc
+  // Regex ajustado para não capturar comandos específicos (edit_name, edit_url, edit_price, etc)
+  bot.hears(/^\/edit_(?!name|price|description|url|status)(.+)$/, async (ctx) => {
     try {
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return;
@@ -988,27 +1016,7 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
     }
   });
   
-  // Handlers para edição de campos
-  bot.command('edit_name', async (ctx) => handleEditField(ctx, 'name', 'Digite o novo nome:'));
-  bot.command('edit_price', async (ctx) => handleEditField(ctx, 'price', 'Digite o novo preço:'));
-  bot.command('edit_description', async (ctx) => handleEditField(ctx, 'description', 'Digite a nova descrição:'));
-  bot.command('edit_url', async (ctx) => handleEditField(ctx, 'url', 'Digite a nova URL ou envie um arquivo:'));
-  bot.command('edit_status', async (ctx) => {
-    try {
-      const session = global._SESSIONS?.[ctx.from.id];
-      if (!session || session.type !== 'edit_product') return;
-      
-      const { productId, product } = session.data;
-      const newStatus = !product.is_active;
-      
-      await db.updateProduct(productId, { is_active: newStatus });
-      delete global._SESSIONS[ctx.from.id];
-      
-      return ctx.reply(`✅ Produto ${newStatus ? 'ativado' : 'desativado'} com sucesso!`);
-    } catch (err) {
-      console.error('Erro ao alterar status:', err);
-    }
-  });
+  // Handlers para edição de campos (REMOVIDO - já foram registrados acima antes do bot.hears)
   
   async function handleEditField(ctx, field, prompt) {
     try {
