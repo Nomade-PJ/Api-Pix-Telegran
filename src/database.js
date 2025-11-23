@@ -99,19 +99,54 @@ async function isUserAdmin(telegramId) {
 
 // ===== PRODUTOS =====
 
-async function getProduct(productId) {
+async function getProduct(productId, includeInactive = false) {
   try {
-    const { data, error } = await supabase
+    if (!productId) {
+      console.log('⚠️ [GET_PRODUCT] productId está vazio ou undefined');
+      return null;
+    }
+    
+    let query = supabase
       .from('products')
       .select('*')
-      .eq('product_id', productId)
-      .eq('is_active', true)
-      .single();
+      .eq('product_id', productId);
     
-    if (error) throw error;
+    // Só filtrar por is_active se não for para incluir inativos
+    if (!includeInactive) {
+      query = query.eq('is_active', true);
+    }
+    
+    const { data, error } = await query.single();
+    
+    if (error) {
+      // PGRST116 = produto não encontrado (0 rows) - isso é esperado e não é um erro
+      if (error.code === 'PGRST116') {
+        // Logar apenas se estiver buscando produtos inativos também (para debug)
+        if (includeInactive) {
+          console.log(`ℹ️ [GET_PRODUCT] Produto "${productId}" não encontrado (mesmo incluindo inativos). Verifique se o product_id está correto no banco de dados.`);
+        }
+        return null;
+      }
+      // Outros erros devem ser tratados
+      throw error;
+    }
+    
+    // Logar sucesso apenas se produto estava inativo e foi encontrado
+    if (includeInactive && data && !data.is_active) {
+      console.log(`ℹ️ [GET_PRODUCT] Produto "${productId}" encontrado, mas está INATIVO (is_active = false)`);
+    }
+    
     return data;
   } catch (err) {
-    console.error('Erro ao buscar produto:', err);
+    // Só logar se não for o erro esperado de "não encontrado"
+    if (err.code !== 'PGRST116') {
+      console.error(`❌ [GET_PRODUCT] Erro ao buscar produto "${productId}":`, {
+        code: err.code,
+        message: err.message,
+        details: err.details,
+        includeInactive
+      });
+    }
     return null;
   }
 }
@@ -280,37 +315,72 @@ async function getTransactionByTxid(txid) {
     
     // Buscar informações do usuário separadamente se necessário
     if (data.user_id) {
-      const { data: userData } = await supabase
-        .from('users')
-        .select('telegram_id, username, first_name')
-        .eq('id', data.user_id)
-        .single();
-      
-      if (userData) {
-        data.user = userData;
+      try {
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('telegram_id, username, first_name')
+          .eq('id', data.user_id)
+          .single();
+        
+        // PGRST116 = usuário não encontrado - isso é esperado
+        if (!userError && userData) {
+          data.user = userData;
+        }
+      } catch (err) {
+        // Ignorar erro se usuário não foi encontrado
+        if (err.code !== 'PGRST116') {
+          console.error('Erro ao buscar usuário na transação:', err);
+        }
       }
     }
     
     // Buscar informações do produto OU media pack separadamente
     if (data.product_id) {
-      const { data: productData } = await supabase
-        .from('products')
-        .select('name, price')
-        .eq('product_id', data.product_id)
-        .single();
-      
-      if (productData) {
-        data.product = productData;
+      try {
+        const { data: productData, error: productError } = await supabase
+          .from('products')
+          .select('name, price')
+          .eq('product_id', data.product_id)
+          // Não filtrar por is_active aqui, pois pode ser transação antiga com produto desativado
+          .single();
+        
+        // PGRST116 = produto não encontrado - isso é esperado (produto pode ter sido removido)
+        if (productError) {
+          if (productError.code !== 'PGRST116') {
+            console.error(`❌ [GET_TRANSACTION] Erro ao buscar produto "${data.product_id}":`, productError);
+          }
+          // Não fazer nada se produto não foi encontrado (é esperado)
+        } else if (productData) {
+          data.product = productData;
+        }
+      } catch (err) {
+        // Ignorar erro PGRST116 se produto não foi encontrado
+        if (err.code !== 'PGRST116') {
+          console.error('❌ [GET_TRANSACTION] Erro ao buscar produto na transação:', err);
+        }
       }
     } else if (data.media_pack_id) {
-      const { data: packData } = await supabase
-        .from('media_packs')
-        .select('name, price')
-        .eq('pack_id', data.media_pack_id)
-        .single();
-      
-      if (packData) {
-        data.media_pack = packData;
+      try {
+        const { data: packData, error: packError } = await supabase
+          .from('media_packs')
+          .select('name, price')
+          .eq('pack_id', data.media_pack_id)
+          .single();
+        
+        // PGRST116 = pack não encontrado - isso é esperado (pack pode ter sido removido)
+        if (packError) {
+          if (packError.code !== 'PGRST116') {
+            console.error(`❌ [GET_TRANSACTION] Erro ao buscar media pack "${data.media_pack_id}":`, packError);
+          }
+          // Não fazer nada se pack não foi encontrado (é esperado)
+        } else if (packData) {
+          data.media_pack = packData;
+        }
+      } catch (err) {
+        // Ignorar erro PGRST116 se pack não foi encontrado
+        if (err.code !== 'PGRST116') {
+          console.error('❌ [GET_TRANSACTION] Erro ao buscar media pack na transação:', err);
+        }
       }
     }
     
@@ -1008,10 +1078,19 @@ async function getMediaPackById(packId) {
       .eq('pack_id', packId)
       .single();
     
-    if (error) throw error;
+    if (error) {
+      // PGRST116 = pack não encontrado (0 rows) - isso é esperado e não é um erro
+      if (error.code === 'PGRST116') {
+        return null;
+      }
+      throw error;
+    }
     return data;
   } catch (err) {
-    console.error('Erro ao buscar media pack:', err.message);
+    // Só logar se não for o erro esperado de "não encontrado"
+    if (err.code !== 'PGRST116') {
+      console.error('Erro ao buscar media pack:', err.message);
+    }
     return null;
   }
 }

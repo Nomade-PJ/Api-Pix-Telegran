@@ -1677,8 +1677,8 @@ Entre em contato com o suporte.
           }
         }
       } else if (transaction.product_id) {
-        // Entregar produto normal
-        const product = await db.getProduct(transaction.product_id);
+        // Entregar produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+        const product = await db.getProduct(transaction.product_id, true);
         if (product && product.delivery_url) {
           await deliver.deliverByLink(transaction.telegram_id, product.delivery_url, `✅ *Produto aprovado e entregue!*\n\n${product.delivery_url}`);
         }
@@ -1801,11 +1801,11 @@ Seu comprovante foi analisado e não foi aprovado.
       try {
         if (transaction.media_pack_id) {
           // É um media pack
-          const pack = await db.getMediaPackById(transaction.media_pack_id);
+        const pack = await db.getMediaPackById(transaction.media_pack_id);
           productName = pack ? pack.name : transaction.media_pack_id || 'Media Pack';
         } else if (transaction.product_id) {
-          // É um produto normal
-          const product = await db.getProduct(transaction.product_id);
+          // É um produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+          const product = await db.getProduct(transaction.product_id, true);
           productName = product ? product.name : transaction.product_id || 'Produto';
         }
       } catch (err) {

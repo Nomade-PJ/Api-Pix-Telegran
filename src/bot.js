@@ -28,21 +28,21 @@ function createBot(token) {
           try {
             await ctx.telegram.sendMessage(
               ctx.chat.id,
-              '📱 *Bem-vindo!*\n\n' +
-              'Para acessar nossos produtos, precisamos verificar sua conta.\n\n' +
-              'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
-              {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                  keyboard: [[{
-                    text: '📱 Compartilhar Telefone',
-                    request_contact: true
-                  }]],
-                  resize_keyboard: true,
-                  one_time_keyboard: true
-                }
+            '📱 *Bem-vindo!*\n\n' +
+            'Para acessar nossos produtos, precisamos verificar sua conta.\n\n' +
+            'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                keyboard: [[{
+                  text: '📱 Compartilhar Telefone',
+                  request_contact: true
+                }]],
+                resize_keyboard: true,
+                one_time_keyboard: true
               }
-            );
+            }
+          );
             return;
           } catch (err) {
             console.error('Erro ao enviar mensagem com botão de contato:', err);
@@ -400,8 +400,8 @@ function createBot(token) {
               const pack = await db.getMediaPackById(transaction.media_pack_id);
               productName = pack ? pack.name : transaction.media_pack_id || 'Media Pack';
             } else if (transaction.product_id) {
-              // É um produto normal
-              const product = await db.getProduct(transaction.product_id);
+              // É um produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+          const product = await db.getProduct(transaction.product_id, true);
               productName = product ? product.name : transaction.product_id || 'Produto';
             }
           } catch (err) {
@@ -657,9 +657,9 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
               productName = transactionData.media_pack_id || 'Media Pack';
             }
           } else if (transactionData.product_id) {
-            // É um produto normal
+            // É um produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
             try {
-              const product = await db.getProduct(transactionData.product_id);
+          const product = await db.getProduct(transactionData.product_id, true);
               productName = product ? product.name : transactionData.product_id;
             } catch (err) {
               console.error('Erro ao buscar produto:', err);
