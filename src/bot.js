@@ -15,8 +15,11 @@ function createBot(token) {
   // Registrar handler do /start
   bot.start(async (ctx) => {
     try {
+      console.log('🎯 [START] Comando /start recebido de:', ctx.from.id);
+      
       // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD (DISCRETA)
       // Primeiro, verificar se o usuário já existe no banco
+      console.log('🔍 [START] Verificando usuário no banco...');
       const { data: existingUser, error: userError } = await db.supabase
         .from('users')
         .select('*')
@@ -79,6 +82,7 @@ function createBot(token) {
       }
       
       // Paralelizar queries (OTIMIZAÇÃO #4)
+      console.log('📦 [START] Buscando produtos, grupos e media packs...');
       const [user, products, groups, mediaPacks, supportLink] = await Promise.all([
         db.getOrCreateUser(ctx.from),
         db.getAllProducts(),
@@ -87,7 +91,10 @@ function createBot(token) {
         db.getSetting('support_link')
       ]);
       
+      console.log(`📊 [START] Produtos: ${products.length}, Grupos: ${groups.length}, Media Packs: ${mediaPacks.length}`);
+      
       if (products.length === 0 && groups.length === 0 && mediaPacks.length === 0) {
+        console.log('⚠️ [START] Nenhum produto/grupo/pack disponível');
         return ctx.reply('🚧 Nenhum produto ou grupo disponível no momento. Volte mais tarde!');
       }
       
@@ -119,9 +126,13 @@ function createBot(token) {
       
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
       
-      return await ctx.reply(text, Markup.inlineKeyboard(buttons));
+      console.log(`✅ [START] Enviando menu com ${buttons.length} botões`);
+      const result = await ctx.reply(text, Markup.inlineKeyboard(buttons));
+      console.log('✅ [START] Menu enviado com sucesso!');
+      return result;
     } catch (err) {
-      console.error('Erro no /start:', err.message);
+      console.error('❌ [START] Erro no /start:', err.message);
+      console.error('❌ [START] Stack:', err.stack);
       return ctx.reply('❌ Erro ao carregar menu. Tente novamente.');
     }
   });
