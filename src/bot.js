@@ -227,6 +227,17 @@ function createBot(token) {
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('🎯 [HANDLER] COMPROVANTE RECEBIDO!');
       console.log(`📋 [HANDLER] Tipo: ${ctx.message.photo ? 'PHOTO' : 'DOCUMENT'}`);
+      
+      // 🆕 LOG DETALHADO PARA PDFs
+      if (ctx.message.document) {
+        console.log(`📄 [HANDLER] Documento detectado:`, {
+          file_name: ctx.message.document.file_name,
+          mime_type: ctx.message.document.mime_type,
+          file_size: ctx.message.document.file_size,
+          file_id: ctx.message.document.file_id?.substring(0, 30)
+        });
+      }
+      
       console.log(`👤 [HANDLER] User: ${ctx.from.id} (@${ctx.from.username || 'N/A'})`);
       console.log(`📅 [HANDLER] Timestamp: ${new Date().toISOString()}`);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -239,10 +250,12 @@ function createBot(token) {
         return; // Deixar passar para o handler do admin
       }
       
+      console.log('🔍 [HANDLER] Buscando transação pendente...');
       const transaction = await db.getLastPendingTransaction(ctx.chat.id);
       
       if (!transaction) {
         console.warn('⚠️ [HANDLER] Nenhuma transação pendente encontrada');
+        console.warn('⚠️ [HANDLER] Deixando passar para handler do admin');
         // 🆕 Se não há transação pendente, deixar passar para admin handler
         return;
       }
@@ -402,6 +415,7 @@ function createBot(token) {
       // 🆕 NOTIFICAR ADMIN IMEDIATAMENTE (ANTES DE QUALQUER ANÁLISE)
       // Isso garante que o admin SEMPRE receba o comprovante, mesmo se a análise falhar ou der timeout
       console.log(`📤 [HANDLER] NOTIFICANDO ADMIN IMEDIATAMENTE (sem esperar análise)...`);
+      console.log(`📤 [HANDLER] FileType detectado: ${fileType}, FileId: ${fileId?.substring(0, 30)}...`);
       
       // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE (suporta imagens e PDFs)
       // IMPORTANTE: Esta função DEVE ser chamada em TODOS os casos (aprovado, rejeitado, pendente, erro)
