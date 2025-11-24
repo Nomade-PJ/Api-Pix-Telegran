@@ -9,10 +9,7 @@ const proofAnalyzer = require('./proofAnalyzer');
 function createBot(token) {
   const bot = new Telegraf(token);
 
-  // Registrar comandos admin PRIMEIRO (antes dos handlers de eventos)
-  admin.registerAdminCommands(bot);
-
-  // Registrar handler do /start
+  // Registrar handler do /start PRIMEIRO (antes de tudo)
   bot.start(async (ctx) => {
     try {
       console.log('🎯 [START] Comando /start recebido de:', ctx.from.id);
@@ -141,6 +138,9 @@ function createBot(token) {
       return ctx.reply('❌ Erro ao carregar menu. Tente novamente.');
     }
   });
+
+  // Registrar comandos admin DEPOIS do /start
+  admin.registerAdminCommands(bot);
 
   // Handler para contato compartilhado (verificação de DDD)
   bot.on('contact', async (ctx) => {
