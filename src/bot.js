@@ -212,6 +212,14 @@ function createBot(token) {
       console.log(`📅 [HANDLER] Timestamp: ${new Date().toISOString()}`);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       
+      // 🆕 Verificar se usuário está em sessão de admin (criar/editar produto)
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      if (session && (session.type === 'create_product' || session.type === 'edit_product')) {
+        console.log('⏭️ [HANDLER] Usuário em sessão de admin, pulando handler de comprovante');
+        return; // Deixar passar para o handler do admin
+      }
+      
       const transaction = await db.getLastPendingTransaction(ctx.chat.id);
       
       if (!transaction) {
