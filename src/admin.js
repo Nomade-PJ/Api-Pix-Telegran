@@ -959,38 +959,27 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
   });
   
   // ===== HANDLER DE ARQUIVOS (PARA UPLOAD) =====
-  bot.on('document', async (ctx) => {
+  bot.on('document', async (ctx, next) => {
     try {
       console.log('📄 [DOCUMENT-ADMIN] Arquivo recebido:', ctx.message.document?.file_name);
+      
+      // 🆕 CRÍTICO: Verificar se há transação pendente PRIMEIRO
+      // Se houver, deixar passar para handler de comprovantes (não processar aqui)
+      const transaction = await db.getLastPendingTransaction(ctx.chat.id);
+      if (transaction) {
+        console.log('📄 [DOCUMENT-ADMIN] Transação pendente encontrada - deixando passar para handler de comprovantes');
+        return next(); // Passar para próximo handler (comprovantes)
+      }
       
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
       
       console.log('📄 [DOCUMENT-ADMIN] Sessão:', session ? `tipo=${session.type}, step=${session.step}` : 'não existe');
       
-      // 🆕 VERIFICAR SE É COMPROVANTE (PDF de transação) ANTES DE PROCESSAR
-      // Se não há sessão de criação de produto, deixar passar para handler de comprovantes
+      // Se não há sessão de criação de produto, deixar passar
       if (!session || session.type !== 'create_product' || session.step !== 'url') {
-        console.log('📄 [DOCUMENT-ADMIN] Arquivo ignorado - não é criação de produto, deixando passar para handler de comprovantes');
-        // NÃO retornar aqui - deixar o handler de comprovantes processar
-        // Mas precisamos verificar se é admin primeiro
-        const isAdmin = await db.isUserAdmin(ctx.from.id);
-        if (!isAdmin) {
-          console.log('📄 [DOCUMENT-ADMIN] Usuário não é admin - deixando passar para handler de comprovantes');
-          return; // Não é admin, deixar passar
-        }
-        
-        // Se é admin mas não está criando produto, pode ser comprovante
-        // Verificar se há transação pendente
-        const transaction = await db.getLastPendingTransaction(ctx.chat.id);
-        if (transaction) {
-          console.log('📄 [DOCUMENT-ADMIN] Transação pendente encontrada - deixando passar para handler de comprovantes');
-          return; // Deixar handler de comprovantes processar
-        }
-        
-        // Se não há transação, não é comprovante nem criação de produto
-        console.log('📄 [DOCUMENT-ADMIN] Nenhuma transação pendente - ignorando');
-        return;
+        console.log('📄 [DOCUMENT-ADMIN] Arquivo ignorado - não é criação de produto');
+        return next(); // Passar para próximo handler
       }
       
       const isAdmin = await db.isUserAdmin(ctx.from.id);
