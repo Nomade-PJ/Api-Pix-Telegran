@@ -850,23 +850,36 @@ Entre em contato com o suporte.
                   }
                 }
               } else {
-                // Produto digital
-                if (product && product.file_url) {
-                  console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação (produto digital) para cliente ${chatId}`);
-                  await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                // Produto digital - usar deliverContent para entregar arquivo ZIP corretamente
+                if (product && product.delivery_url) {
+                  console.log(`📨 [AUTO-ANALYSIS] Entregando produto digital para cliente ${chatId}`);
+                  
+                  try {
+                    await deliver.deliverContent(
+                      chatId, 
+                      product, 
+                      `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*\n\n🤖 Análise de IA: ${analysis.confidence}% de confiança\n💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}\n\n🆔 TXID: ${transactionData.txid}`
+                    );
+                    
+                    await db.markAsDelivered(transactionData.txid);
+                    console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
+                  } catch (deliverErr) {
+                    console.error(`❌ [AUTO-ANALYSIS] Erro ao entregar produto:`, deliverErr.message);
+                    // Fallback: enviar mensagem simples
+                    await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
 💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
 
 📦 *Produto:* ${productName}
-🔗 *Link para download:* ${product.file_url}
+${product.delivery_type === 'file' ? '📄 Arquivo anexado acima' : `🔗 Link: ${product.delivery_url}`}
 
 ✅ Produto entregue com sucesso!
 
 🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
-                  
-                  await db.markAsDelivered(transactionData.txid);
-                  console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
+                    
+                    await db.markAsDelivered(transactionData.txid);
+                  }
                 }
               }
               

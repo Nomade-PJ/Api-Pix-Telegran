@@ -28,9 +28,51 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
   }
   
   if (product.delivery_type === 'file') {
-    const fullCaption = `${caption}\n\nSeu acesso ao **${product.name}** foi liberado!\n\n📄 Aqui está seu arquivo:`;
-    await tg.sendMessage(chatId, fullCaption, { parse_mode: 'Markdown' });
-    return deliverFile(chatId, product.delivery_url);
+    // 🆕 Enviar arquivo ZIP com mensagem personalizada na mesma mensagem
+    // Tentar extrair nome do arquivo de várias formas
+    let fileName = 'arquivo.zip';
+    if (product.fileName) {
+      fileName = product.fileName;
+    } else if (product.delivery_url && !product.delivery_url.startsWith('telegram_file:')) {
+      // Se for URL, extrair nome do final da URL
+      const urlParts = product.delivery_url.split('/');
+      fileName = urlParts[urlParts.length - 1] || 'arquivo.zip';
+    }
+    
+    const isZip = fileName.toLowerCase().endsWith('.zip') || 
+                  fileName.toLowerCase().endsWith('.rar') ||
+                  fileName.toLowerCase().endsWith('.7z');
+    
+    // Mensagem personalizada para arquivos ZIP
+    const fullCaption = `${caption}\n\n📦 *${product.name}*\n\n` +
+      (isZip 
+        ? `📥 *Arquivo ZIP enviado!*\n\n` +
+          `⚠️ *Importante:* Você precisa *descompactar* o arquivo para acessar o conteúdo.\n\n` +
+          `💡 *Como descompactar:*\n` +
+          `• No celular: Use um app como WinRAR, 7-Zip ou Files\n` +
+          `• No computador: Clique com botão direito → Extrair\n\n` +
+          `✅ Produto entregue com sucesso!`
+        : `📄 *Arquivo enviado!*\n\n` +
+          `✅ Produto entregue com sucesso!`);
+    
+    // Se for file_id do Telegram, enviar diretamente com caption
+    if (product.delivery_url && product.delivery_url.startsWith('telegram_file:')) {
+      const fileId = product.delivery_url.replace('telegram_file:', '');
+      console.log(`📤 [DELIVER] Enviando arquivo ZIP via file_id: ${fileId.substring(0, 30)}...`);
+      console.log(`📤 [DELIVER] Nome do arquivo: ${fileName}`);
+      return tg.sendDocument(chatId, fileId, {
+        caption: fullCaption,
+        parse_mode: 'Markdown'
+      });
+    }
+    
+    // Se for URL, enviar via URL com caption
+    console.log(`📤 [DELIVER] Enviando arquivo via URL: ${product.delivery_url?.substring(0, 50)}...`);
+    return tg.sendDocument(chatId, { url: product.delivery_url }, {
+      filename: fileName,
+      caption: fullCaption,
+      parse_mode: 'Markdown'
+    });
   } else {
     return deliverByLink(chatId, product.delivery_url, `${caption}\n\nSeu acesso ao **${product.name}** foi liberado!\n\nAcesse aqui:`);
   }
