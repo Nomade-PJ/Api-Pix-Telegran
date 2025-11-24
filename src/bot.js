@@ -9,7 +9,10 @@ const proofAnalyzer = require('./proofAnalyzer');
 function createBot(token) {
   const bot = new Telegraf(token);
 
-  // Registrar handler do /start PRIMEIRO (antes dos comandos admin)
+  // Registrar comandos admin PRIMEIRO (antes dos handlers de eventos)
+  admin.registerAdminCommands(bot);
+
+  // Registrar handler do /start
   bot.start(async (ctx) => {
     try {
       // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD (DISCRETA)
@@ -938,9 +941,6 @@ Um administrador irá validar manualmente.
   });
 
   console.log('✅ [BOT-INIT] Handler de comprovantes registrado');
-
-  // Registrar comandos admin DEPOIS do handler de comprovantes
-  admin.registerAdminCommands(bot);
 
   bot.action(/buy:(.+)/, async (ctx) => {
     try {
