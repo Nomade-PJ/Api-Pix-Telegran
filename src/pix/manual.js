@@ -16,7 +16,24 @@ function sanitizePixKey(key) {
 
   // Detectar tipo de chave PIX
   
-  // 1. Telefone (contém +, parênteses, hífens, espaços misturados com números)
+  // 1. Chave aleatória (UUID format) - VERIFICAR PRIMEIRO antes de telefone!
+  // Validar formato UUID: 8-4-4-4-12
+  const uuidRegex = /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$/;
+  if (uuidRegex.test(cleanKey)) {
+    return cleanKey.toLowerCase();
+  }
+  
+  // 2. Email (contém @)
+  if (cleanKey.includes('@')) {
+    // Email não precisa sanitização, apenas validar formato básico
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanKey)) {
+      throw new Error('Email inválido');
+    }
+    return cleanKey.toLowerCase();
+  }
+
+  // 3. Telefone (contém +, parênteses, hífens, espaços misturados com números)
   // Exemplos: +(55) 98 9 8540-0784, +55 98 98540-0784, (98) 98540-0784
   const phoneRegex = /[\+\(\)\-\s]/;
   if (phoneRegex.test(cleanKey)) {
@@ -43,31 +60,15 @@ function sanitizePixKey(key) {
     throw new Error(`Telefone inválido: deve ter entre 10 e 13 dígitos (recebido: ${digits.length} dígitos)`);
   }
 
-  // 2. Email (contém @)
-  if (cleanKey.includes('@')) {
-    // Email não precisa sanitização, apenas validar formato básico
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(cleanKey)) {
-      throw new Error('Email inválido');
-    }
-    return cleanKey.toLowerCase();
-  }
-
-  // 3. CPF/CNPJ (apenas dígitos ou com pontuação)
+  // 4. Email já foi verificado acima
+  // 5. CPF/CNPJ (apenas dígitos ou com pontuação)
   const onlyDigits = cleanKey.replace(/\D/g, '');
   if (onlyDigits.length === 11 || onlyDigits.length === 14) {
     // CPF (11) ou CNPJ (14) - retornar apenas números
     return onlyDigits;
   }
 
-  // 4. Chave aleatória (UUID format ou string alfanumérica)
-  // Validar formato UUID: 8-4-4-4-12 ou string com letras e números
-  const uuidRegex = /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$/;
-  if (uuidRegex.test(cleanKey)) {
-    return cleanKey.toLowerCase();
-  }
-
-  // Se chegou aqui, é uma chave que não reconhecemos
+  // 6. Se chegou aqui, é uma chave que não reconhecemos
   // mas pode ser válida (ex: chave EVP do banco)
   // Retornar como está se tiver formato razoável
   if (cleanKey.length >= 8 && /^[a-zA-Z0-9\-]+$/.test(cleanKey)) {
