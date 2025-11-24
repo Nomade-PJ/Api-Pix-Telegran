@@ -28,8 +28,10 @@ function createBot(token) {
       
       // Se usuário não existe E tem telefone no Telegram, verificar DDD
       if (userError && userError.code === 'PGRST116') {
+        console.log('👤 [START] Usuário novo detectado');
         // Usuário novo - verificar se compartilhou contato
         if (!ctx.from.phone_number && !ctx.message?.contact) {
+          console.log('📱 [START] Usuário novo sem telefone - solicitando contato');
           // Solicitar telefone
           try {
             await ctx.telegram.sendMessage(
@@ -49,11 +51,14 @@ function createBot(token) {
               }
             }
           );
+            console.log('📱 [START] Mensagem de solicitação de telefone enviada');
             return;
           } catch (err) {
-            console.error('Erro ao enviar mensagem com botão de contato:', err);
+            console.error('❌ [START] Erro ao enviar mensagem com botão de contato:', err);
             return ctx.reply('📱 *Bem-vindo!*\n\nPara acessar nossos produtos, precisamos verificar sua conta.\n\nPor favor, compartilhe seu número de telefone usando o botão abaixo:', { parse_mode: 'Markdown' });
           }
+        } else {
+          console.log('✅ [START] Usuário novo com telefone ou contato compartilhado');
         }
         
         // Verificar DDD do telefone compartilhado
