@@ -851,6 +851,16 @@ Entre em contato com o suporte.
                 }
               } else {
                 // Produto digital - usar deliverContent para entregar arquivo ZIP corretamente
+                // Buscar produto novamente para ter acesso completo
+                let product = null;
+                if (transactionData.product_id) {
+                  try {
+                    product = await db.getProduct(transactionData.product_id, true);
+                  } catch (err) {
+                    console.error('Erro ao buscar produto para entrega:', err);
+                  }
+                }
+                
                 if (product && product.delivery_url) {
                   console.log(`📨 [AUTO-ANALYSIS] Entregando produto digital para cliente ${chatId}`);
                   
@@ -880,6 +890,8 @@ ${product.delivery_type === 'file' ? '📄 Arquivo anexado acima' : `🔗 Link: 
                     
                     await db.markAsDelivered(transactionData.txid);
                   }
+                } else {
+                  console.warn(`⚠️ [AUTO-ANALYSIS] Produto não encontrado ou sem delivery_url para TXID ${transactionData.txid}`);
                 }
               }
               
