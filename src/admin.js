@@ -961,13 +961,25 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
   // ===== HANDLER DE ARQUIVOS (PARA UPLOAD) =====
   bot.on('document', async (ctx) => {
     try {
+      console.log('📄 [DOCUMENT] Arquivo recebido:', ctx.message.document.file_name);
+      
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
       
-      if (!session || session.type !== 'create_product' || session.step !== 'url') return;
+      console.log('📄 [DOCUMENT] Sessão:', session ? `tipo=${session.type}, step=${session.step}` : 'não existe');
+      
+      if (!session || session.type !== 'create_product' || session.step !== 'url') {
+        console.log('📄 [DOCUMENT] Arquivo ignorado - sessão inválida');
+        return;
+      }
       
       const isAdmin = await db.isUserAdmin(ctx.from.id);
-      if (!isAdmin) return;
+      if (!isAdmin) {
+        console.log('📄 [DOCUMENT] Arquivo ignorado - usuário não é admin');
+        return;
+      }
+      
+      console.log('📄 [DOCUMENT] Processando arquivo...');
       
       const fileId = ctx.message.document.file_id;
       const fileName = ctx.message.document.file_name;
@@ -978,6 +990,7 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
       session.data.fileName = fileName;
       
       // Gerar ID do produto
+      console.log('📄 [DOCUMENT] Gerando ID do produto...');
       const productId = session.data.name
         .toLowerCase()
         .normalize('NFD')
@@ -986,6 +999,8 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
         .substring(0, 20);
       
       session.data.productId = productId;
+      
+      console.log('📄 [DOCUMENT] Criando produto:', session.data);
       
       // Criar produto
       await db.createProduct({
@@ -996,6 +1011,8 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
         deliveryType: session.data.deliveryType,
         deliveryUrl: session.data.deliveryUrl
       });
+      
+      console.log('✅ [DOCUMENT] Produto criado com sucesso!');
       
       delete global._SESSIONS[ctx.from.id];
       
