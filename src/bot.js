@@ -139,8 +139,25 @@ function createBot(token) {
     }
   });
 
-  // Registrar comandos admin DEPOIS do /start
-  admin.registerAdminCommands(bot);
+  // 🆕 REGISTRAR HANDLER DE COMPROVANTES ANTES DO ADMIN (CRÍTICO!)
+  // Isso garante que comprovantes sejam processados antes de qualquer handler do admin
+  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes...');
+  
+  // 🆕 DEBUG: Log TODOS os tipos de mensagem
+  bot.use(async (ctx, next) => {
+    if (ctx.message) {
+      console.log('📨 [BOT-USE] Mensagem recebida:', {
+        message_id: ctx.message.message_id,
+        from: ctx.from.id,
+        text: ctx.message.text?.substring(0, 50) || 'N/A',
+        photo: !!ctx.message.photo,
+        document: !!ctx.message.document,
+        video: !!ctx.message.video,
+        audio: !!ctx.message.audio
+      });
+    }
+    return next();
+  });
 
   // Handler para contato compartilhado (verificação de DDD)
   bot.on('contact', async (ctx) => {
@@ -202,7 +219,7 @@ function createBot(token) {
 
   // 🆕 REGISTRAR HANDLER DE COMPROVANTES ANTES DO ADMIN (CRÍTICO!)
   // Isso garante que comprovantes sejam processados antes de qualquer handler do admin
-  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes...');
+  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes ANTES do admin...');
   
   // 🆕 DEBUG: Log TODOS os tipos de mensagem
   bot.use(async (ctx, next) => {
@@ -971,6 +988,9 @@ Um administrador irá validar manualmente.
   });
 
   console.log('✅ [BOT-INIT] Handler de comprovantes registrado');
+
+  // Registrar comandos admin DEPOIS do handler de comprovantes
+  admin.registerAdminCommands(bot);
 
   bot.action(/buy:(.+)/, async (ctx) => {
     try {
