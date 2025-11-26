@@ -983,41 +983,39 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
   // ===== HANDLER DE ARQUIVOS (PARA UPLOAD) =====
   bot.on('document', async (ctx, next) => {
     try {
-      console.log('📄 [DOCUMENT-ADMIN] Arquivo recebido:', ctx.message.document?.file_name);
-      
-      // 🆕 CRÍTICO: Verificar se há transação pendente PRIMEIRO
-      // Se houver, deixar passar para handler de comprovantes (não processar aqui)
-      const transaction = await db.getLastPendingTransaction(ctx.chat.id);
-      if (transaction) {
-        console.log('📄 [DOCUMENT-ADMIN] Transação pendente encontrada - deixando passar para handler de comprovantes');
-        return next(); // Passar para próximo handler (comprovantes)
-      }
-      
-      global._SESSIONS = global._SESSIONS || {};
-      const session = global._SESSIONS[ctx.from.id];
-      
-      console.log('📄 [DOCUMENT-ADMIN] Sessão:', session ? JSON.stringify({
-        type: session.type,
-        step: session.step,
-        field: session.data?.field,
-        productId: session.data?.productId
-      }) : 'não existe');
+      const fileName = ctx.message.document?.file_name;
+      console.log(`📄 [DOCUMENT-ADMIN] ========== ARQUIVO RECEBIDO: ${fileName} ==========`);
+      console.log(`📄 [DOCUMENT-ADMIN] User ID: ${ctx.from.id}`);
       
       const isAdmin = await db.isUserAdmin(ctx.from.id);
+      console.log(`📄 [DOCUMENT-ADMIN] Is Admin: ${isAdmin}`);
+      
       if (!isAdmin) {
-        console.log('📄 [DOCUMENT] Arquivo ignorado - usuário não é admin');
+        console.log('📄 [DOCUMENT] ❌ Arquivo ignorado - usuário não é admin');
         return next();
       }
       
-      // ===== EDITAR PRODUTO - Arquivo enviado =====
+      // Verificar sessão ANTES de verificar transação
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      
+      console.log('📄 [DOCUMENT-ADMIN] Sessão atual:', session ? JSON.stringify({
+        type: session.type,
+        step: session.step,
+        field: session.data?.field,
+        productId: session.data?.productId,
+        productName: session.data?.product?.name
+      }) : '❌ NÃO EXISTE');
+      
+      // PRIORIDADE 1: Verificar se é EDIÇÃO de produto (URL/Arquivo)
       if (session && session.type === 'edit_product' && session.step === 'edit_value' && session.data?.field === 'url') {
-        console.log('📄 [DOCUMENT] ✅ DETECTADO: Edição de produto (URL/Arquivo)');
+        console.log('📄 [DOCUMENT] 🎯 MATCH: Edição de produto detectada!');
         
         const fileId = ctx.message.document.file_id;
-        const fileName = ctx.message.document.file_name;
         const { productId, product } = session.data;
         
-        console.log(`📄 [DOCUMENT] Atualizando produto ${productId} com arquivo ${fileName}...`);
+        console.log(`📄 [DOCUMENT] 📦 Atualizando produto "${product.name}" (ID: ${productId})`);
+        console.log(`📄 [DOCUMENT] 📎 File ID: ${fileId.substring(0, 30)}...`);
         
         // Atualizar produto com novo arquivo
         const updated = await db.updateProduct(productId, {
@@ -1025,11 +1023,10 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
           delivery_type: 'file'
         });
         
-        console.log(`📄 [DOCUMENT] Update result:`, updated);
+        console.log(`📄 [DOCUMENT] ✅ Update result: ${updated}`);
         
         delete global._SESSIONS[ctx.from.id];
-        
-        console.log(`✅ [DOCUMENT] Arquivo atualizado com sucesso: ${fileName}`);
+        console.log('📄 [DOCUMENT] 🗑️ Sessão deletada');
         
         return ctx.reply(`✅ *Arquivo atualizado com sucesso!*
 
@@ -1038,6 +1035,13 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
 📦 *Tipo:* Arquivo ZIP
 
 Use /admin → Produtos para ver as alterações.`, { parse_mode: 'Markdown' });
+      }
+      
+      // PRIORIDADE 2: Verificar se há transação pendente (comprovante)
+      const transaction = await db.getLastPendingTransaction(ctx.chat.id);
+      if (transaction) {
+        console.log('📄 [DOCUMENT-ADMIN] Transação pendente encontrada - deixando passar para handler de comprovantes');
+        return next(); // Passar para próximo handler (comprovantes)
       }
       
       // ===== CRIAR PRODUTO - Arquivo enviado =====
