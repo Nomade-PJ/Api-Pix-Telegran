@@ -982,16 +982,17 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
   
   // ===== HANDLER DE ARQUIVOS (PARA UPLOAD) =====
   bot.on('document', async (ctx, next) => {
+    console.log(`📄 [DOCUMENT-ADMIN] ========== HANDLER ADMIN.JS EXECUTADO ==========`);
     try {
       const fileName = ctx.message.document?.file_name;
-      console.log(`📄 [DOCUMENT-ADMIN] ========== ARQUIVO RECEBIDO: ${fileName} ==========`);
+      console.log(`📄 [DOCUMENT-ADMIN] Arquivo recebido: ${fileName}`);
       console.log(`📄 [DOCUMENT-ADMIN] User ID: ${ctx.from.id}`);
       
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       console.log(`📄 [DOCUMENT-ADMIN] Is Admin: ${isAdmin}`);
       
       if (!isAdmin) {
-        console.log('📄 [DOCUMENT] ❌ Arquivo ignorado - usuário não é admin');
+        console.log('📄 [DOCUMENT-ADMIN] ❌ Usuário não é admin, passando adiante');
         return next();
       }
       
