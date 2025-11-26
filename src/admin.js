@@ -1053,7 +1053,7 @@ Use /admin → Produtos para ver as alterações.`, { parse_mode: 'Markdown' });
       console.log('📄 [DOCUMENT] Processando arquivo para CRIAÇÃO de produto...');
       
       const fileId = ctx.message.document.file_id;
-      const fileName = ctx.message.document.file_name;
+      // fileName já foi declarado no topo do handler
       
       // Salvar file_id como URL de entrega
       session.data.deliveryUrl = `telegram_file:${fileId}`;
