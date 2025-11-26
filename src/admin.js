@@ -807,32 +807,60 @@ Use /admin → Produtos para ver todas as alterações.`, { parse_mode: 'Markdow
       // ===== CRIAR GRUPO =====
       if (session.type === 'create_group') {
         if (session.step === 'group_id') {
-          const groupId = parseInt(ctx.message.text.trim());
-          if (isNaN(groupId)) {
-            return ctx.reply('❌ ID inválido. Digite apenas números (ex: -1001234567890)', {
-              reply_markup: {
-                inline_keyboard: [[
-                  { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
-                ]]
-              }
+          const inputText = ctx.message.text.trim();
+          
+          // Remover espaços e caracteres especiais, manter apenas números e sinal negativo
+          const cleanId = inputText.replace(/[^\d-]/g, '');
+          const groupId = parseInt(cleanId);
+          
+          if (isNaN(groupId) || groupId >= 0) {
+            return ctx.reply(`❌ *ID inválido!*
+
+O ID do grupo/canal deve ser um *número negativo*.
+
+📝 *Exemplos válidos:*
+• -1001234567890
+• -1003479868247
+
+💡 *Dica:* Adicione @userinfobot ao seu grupo/canal para obter o ID correto.`, {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('❌ Cancelar', 'cancel_create_group')]
+              ])
             });
           }
+          
+          // Verificar se já existe grupo com esse ID
+          const existingGroup = await db.getGroupById(groupId);
+          if (existingGroup) {
+            return ctx.reply(`⚠️ *Grupo já cadastrado!*
+
+🆔 ID: \`${groupId}\`
+👥 Nome: ${existingGroup.group_name || 'Sem nome'}
+
+Use /admin → Gerenciar Grupos para editar.`, {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('👥 Ver Grupos', 'admin_groups')],
+                [Markup.button.callback('❌ Cancelar', 'cancel_create_group')]
+              ])
+            });
+          }
+          
           session.data.groupId = groupId;
           session.step = 'group_name';
-          return ctx.reply(`✅ ID: *${groupId}*
+          return ctx.reply(`✅ *ID confirmado:* \`${groupId}\`
 
-*Passo 2/5:* Digite o *nome do grupo*:
+*Passo 2/5:* Digite o *nome do grupo/canal*:
 
-Exemplo: Grupo Premium VIP`, { 
+📝 *Exemplo:* Grupo Privado 🔞`, { 
             parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '⬅️ Voltar', callback_data: 'group_back_id' },
-                  { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
-                ]
+            ...Markup.inlineKeyboard([
+              [
+                Markup.button.callback('⬅️ Voltar', 'group_back_id'),
+                Markup.button.callback('❌ Cancelar', 'cancel_create_group')
               ]
-            }
+            ])
           });
         }
         
@@ -953,7 +981,7 @@ Exemplo: 30 (para 30 dias)`, {
             return ctx.reply(`🎉 *GRUPO CADASTRADO COM SUCESSO!*
 
 👥 *Nome:* ${session.data.groupName}
-🆔 *ID:* ${session.data.groupId}
+🆔 *ID:* \`${session.data.groupId}\`
 🔗 *Link:* ${session.data.groupLink}
 💰 *Preço:* R$ ${session.data.price.toFixed(2)}/mês
 📅 *Duração:* ${session.data.days} dias
@@ -961,11 +989,17 @@ Exemplo: 30 (para 30 dias)`, {
 ✅ O grupo está pronto para receber assinaturas!
 
 ⚠️ *IMPORTANTE:*
-1. Adicione o bot ao grupo como administrador
-2. Dê permissão para banir/remover membros
-3. O bot controlará automaticamente as assinaturas
+1. ✅ Adicione o bot ao grupo como administrador
+2. ✅ Dê permissão para banir/remover membros
+3. ✅ O bot controlará automaticamente as assinaturas
 
-Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
+O botão "🔞 Grupo Privado 🔞" aparecerá no menu principal!`, { 
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('👥 Ver Todos os Grupos', 'admin_groups')],
+                [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+              ])
+            });
             
           } catch (err) {
             delete global._SESSIONS[ctx.from.id];
@@ -1759,35 +1793,78 @@ O botão de suporte agora aparecerá no menu principal do bot, abaixo dos produt
 
 `;
 
+      const buttons = [];
+      
       if (groups.length === 0) {
         message += `📦 Nenhum grupo cadastrado ainda.
 
-*Para cadastrar:*
-➕ /novogrupo - Cadastrar novo grupo`;
+Clique no botão abaixo para cadastrar o primeiro grupo.`;
+        
+        buttons.push([Markup.button.callback('➕ Novo Grupo', 'admin_novogrupo')]);
       } else {
         for (const group of groups) {
           const status = group.is_active ? '✅' : '❌';
           message += `${status} *${group.group_name || 'Sem nome'}*
-🆔 ID: ${group.group_id}
-💰 Preço: R$ ${group.subscription_price}/mês
+🆔 ID: \`${group.group_id}\`
+💰 Preço: R$ ${parseFloat(group.subscription_price).toFixed(2)}/mês
 📅 Dias: ${group.subscription_days}
 🔗 ${group.group_link}
 ──────────────
 
 `;
+          
+          // Botões para cada grupo
+          buttons.push([
+            Markup.button.callback(`✏️ Editar ${group.group_name || 'Grupo'}`, `edit_group:${group.id}`),
+            Markup.button.callback(`🗑️ Deletar`, `delete_group:${group.id}`)
+          ]);
         }
         
-        message += `*Comandos:*
-➕ /novogrupo - Cadastrar grupo
-✏️ /editargrupo - Editar grupo
-🗑️ /deletargrupo - Remover grupo`;
+        // Botões de ação geral
+        buttons.push([Markup.button.callback('➕ Novo Grupo', 'admin_novogrupo')]);
       }
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      buttons.push([Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
     } catch (err) {
       console.error('Erro ao listar grupos:', err);
       return ctx.reply('❌ Erro ao buscar grupos.');
     }
+  });
+  
+  // Handler para iniciar criação de grupo via botão
+  bot.action('admin_novogrupo', async (ctx) => {
+    await ctx.answerCbQuery('➕ Iniciando criação...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    // Iniciar sessão de criação
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'create_group',
+      step: 'group_id',
+      data: {}
+    };
+    
+    return ctx.reply(`➕ *CADASTRAR NOVO GRUPO*
+
+*Passo 1/5:* Envie o *ID do grupo/canal*
+
+📝 *Como obter o ID:*
+1. Adicione o bot @userinfobot ao grupo/canal
+2. Copie o ID que aparece (ex: -1001234567890)
+3. Cole aqui
+
+💡 *Dica:* O ID deve ser um número negativo`, { 
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_create_group')]
+      ])
+    });
   });
 
   bot.command('novogrupo', async (ctx) => {
@@ -1810,12 +1887,133 @@ O botão de suporte agora aparecerá no menu principal do bot, abaixo dos produt
 2. Copie o ID que aparece (ex: -1001234567890)
 3. Cole aqui`, { 
       parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '❌ Cancelar', callback_data: 'cancel_create_group' }
-        ]]
-      }
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_create_group')]
+      ])
     });
+  });
+  
+  // Handler para cancelar criação de grupo
+  bot.action('cancel_create_group', async (ctx) => {
+    await ctx.answerCbQuery('❌ Cancelado');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    delete global._SESSIONS[ctx.from.id];
+    
+    return ctx.reply('❌ Criação de grupo cancelada.', {
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups')],
+        [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+      ])
+    });
+  });
+  
+  // Handler para deletar grupo via botão
+  bot.action(/^delete_group:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🗑️ Deletando grupo...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const groupUuid = ctx.match[1];
+      
+      // Buscar grupo pelo UUID interno
+      const { data: group, error } = await db.supabase
+        .from('groups')
+        .select('*')
+        .eq('id', groupUuid)
+        .single();
+      
+      if (error || !group) {
+        return ctx.reply('❌ Grupo não encontrado.');
+      }
+      
+      // Deletar grupo
+      const deleted = await db.deleteGroup(group.group_id);
+      
+      if (deleted) {
+        await ctx.reply(`✅ *Grupo deletado com sucesso!*
+
+👥 ${group.group_name || 'Grupo'}
+🆔 ID: \`${group.group_id}\`
+
+🗑️ Grupo removido permanentemente do banco de dados.`, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('👥 Ver Grupos', 'admin_groups')],
+            [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+          ])
+        });
+      } else {
+        return ctx.reply('❌ Erro ao deletar grupo.');
+      }
+      
+    } catch (err) {
+      console.error('Erro ao deletar grupo:', err);
+      return ctx.reply('❌ Erro ao deletar grupo.');
+    }
+  });
+  
+  // Handler para editar grupo via botão
+  bot.action(/^edit_group:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('✏️ Carregando grupo...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const groupUuid = ctx.match[1];
+      
+      // Buscar grupo pelo UUID interno
+      const { data: group, error } = await db.supabase
+        .from('groups')
+        .select('*')
+        .eq('id', groupUuid)
+        .single();
+      
+      if (error || !group) {
+        return ctx.reply('❌ Grupo não encontrado.');
+      }
+      
+      const statusText = group.is_active ? '🟢 Ativo' : '🔴 Inativo';
+      
+      const message = `✏️ *EDITAR GRUPO*
+
+*Grupo:* ${group.group_name || 'Sem nome'}
+*Status:* ${statusText}
+
+📋 *Detalhes atuais:*
+🆔 ID: \`${group.group_id}\`
+💰 Preço: R$ ${parseFloat(group.subscription_price).toFixed(2)}/mês
+📅 Duração: ${group.subscription_days} dias
+🔗 Link: ${group.group_link}
+
+*O que deseja editar?*`;
+
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('📝 Nome', `edit_group_field:name:${groupUuid}`),
+            Markup.button.callback('💰 Preço', `edit_group_field:price:${groupUuid}`)
+          ],
+          [
+            Markup.button.callback('📅 Duração', `edit_group_field:days:${groupUuid}`),
+            Markup.button.callback('🔗 Link', `edit_group_field:link:${groupUuid}`)
+          ],
+          [
+            Markup.button.callback(group.is_active ? '🔴 Desativar' : '🟢 Ativar', `toggle_group:${groupUuid}`)
+          ],
+          [
+            Markup.button.callback('🔙 Voltar', 'admin_groups')
+          ]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao editar grupo:', err);
+      return ctx.reply('❌ Erro ao carregar grupo.');
+    }
   });
 
   bot.command('editargrupo', async (ctx) => {
