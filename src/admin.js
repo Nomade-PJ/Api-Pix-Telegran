@@ -996,7 +996,12 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
       
-      console.log('📄 [DOCUMENT-ADMIN] Sessão:', session ? `tipo=${session.type}, step=${session.step}` : 'não existe');
+      console.log('📄 [DOCUMENT-ADMIN] Sessão:', session ? JSON.stringify({
+        type: session.type,
+        step: session.step,
+        field: session.data?.field,
+        productId: session.data?.productId
+      }) : 'não existe');
       
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) {
@@ -1005,22 +1010,26 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
       }
       
       // ===== EDITAR PRODUTO - Arquivo enviado =====
-      if (session && session.type === 'edit_product' && session.step === 'edit_value' && session.data.field === 'url') {
-        console.log('📄 [DOCUMENT] Processando arquivo para EDIÇÃO de produto...');
+      if (session && session.type === 'edit_product' && session.step === 'edit_value' && session.data?.field === 'url') {
+        console.log('📄 [DOCUMENT] ✅ DETECTADO: Edição de produto (URL/Arquivo)');
         
         const fileId = ctx.message.document.file_id;
         const fileName = ctx.message.document.file_name;
         const { productId, product } = session.data;
         
+        console.log(`📄 [DOCUMENT] Atualizando produto ${productId} com arquivo ${fileName}...`);
+        
         // Atualizar produto com novo arquivo
-        await db.updateProduct(productId, {
+        const updated = await db.updateProduct(productId, {
           delivery_url: `telegram_file:${fileId}`,
           delivery_type: 'file'
         });
         
+        console.log(`📄 [DOCUMENT] Update result:`, updated);
+        
         delete global._SESSIONS[ctx.from.id];
         
-        console.log(`✅ [DOCUMENT] Arquivo atualizado: ${fileName}`);
+        console.log(`✅ [DOCUMENT] Arquivo atualizado com sucesso: ${fileName}`);
         
         return ctx.reply(`✅ *Arquivo atualizado com sucesso!*
 
