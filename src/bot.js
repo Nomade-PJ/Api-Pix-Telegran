@@ -235,9 +235,17 @@ function createBot(token) {
     return next();
   });
 
-  // Receber comprovante (foto ou documento) - DEVE VIR ANTES DO ADMIN!
-  bot.on(['photo', 'document'], async (ctx) => {
+  // Receber comprovante (foto ou documento)
+  bot.on(['photo', 'document'], async (ctx, next) => {
     try {
+      // 🆕 PRIORIDADE: Verificar se usuário está em sessão de admin PRIMEIRO
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      if (session && (session.type === 'create_product' || session.type === 'edit_product')) {
+        console.log('⏭️ [HANDLER-BOT] Sessão de admin detectada, passando para handler do admin.js');
+        return next(); // ✅ Passar para próximo handler (admin.js)
+      }
+      
       // 🆕 LOG INICIAL - CRÍTICO PARA DEBUG
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('🎯 [HANDLER] COMPROVANTE RECEBIDO!');
@@ -257,21 +265,12 @@ function createBot(token) {
       console.log(`📅 [HANDLER] Timestamp: ${new Date().toISOString()}`);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       
-      // 🆕 Verificar se usuário está em sessão de admin (criar/editar produto)
-      global._SESSIONS = global._SESSIONS || {};
-      const session = global._SESSIONS[ctx.from.id];
-      if (session && (session.type === 'create_product' || session.type === 'edit_product')) {
-        console.log('⏭️ [HANDLER] Usuário em sessão de admin, pulando handler de comprovante');
-        return; // Deixar passar para o handler do admin
-      }
-      
       console.log('🔍 [HANDLER] Buscando transação pendente...');
       const transaction = await db.getLastPendingTransaction(ctx.chat.id);
       
       if (!transaction) {
         console.warn('⚠️ [HANDLER] Nenhuma transação pendente encontrada');
-        console.warn('⚠️ [HANDLER] Deixando passar para handler do admin');
-        // 🆕 Se não há transação pendente, deixar passar para admin handler
+        // Não há transação pendente, então não processar como comprovante
         return;
       }
       
