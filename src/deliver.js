@@ -28,7 +28,6 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
   }
   
   if (product.delivery_type === 'file') {
-    // 🆕 Enviar arquivo ZIP com mensagem personalizada na mesma mensagem
     // Tentar extrair nome do arquivo de várias formas
     let fileName = 'arquivo.zip';
     if (product.fileName) {
@@ -43,8 +42,8 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
                   fileName.toLowerCase().endsWith('.rar') ||
                   fileName.toLowerCase().endsWith('.7z');
     
-    // Mensagem personalizada para arquivos ZIP
-    const fullCaption = `${caption}\n\n📦 *${product.name}*\n\n` +
+    // 1️⃣ PRIMEIRO: Enviar mensagem de texto
+    const textMessage = `${caption}\n\n📦 *${product.name}*\n\n` +
       (isZip 
         ? `📥 *Arquivo ZIP enviado!*\n\n` +
           `⚠️ *Importante:* Você precisa *descompactar* o arquivo para acessar o conteúdo.\n\n` +
@@ -55,23 +54,20 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
         : `📄 *Arquivo enviado!*\n\n` +
           `✅ Produto entregue com sucesso!`);
     
-    // Se for file_id do Telegram, enviar diretamente com caption
+    await tg.sendMessage(chatId, textMessage, { parse_mode: 'Markdown' });
+    
+    // 2️⃣ DEPOIS: Enviar arquivo ABAIXO da mensagem
     if (product.delivery_url && product.delivery_url.startsWith('telegram_file:')) {
       const fileId = product.delivery_url.replace('telegram_file:', '');
       console.log(`📤 [DELIVER] Enviando arquivo ZIP via file_id: ${fileId.substring(0, 30)}...`);
       console.log(`📤 [DELIVER] Nome do arquivo: ${fileName}`);
-      return tg.sendDocument(chatId, fileId, {
-        caption: fullCaption,
-        parse_mode: 'Markdown'
-      });
+      return tg.sendDocument(chatId, fileId);
     }
     
-    // Se for URL, enviar via URL com caption
+    // Se for URL, enviar via URL
     console.log(`📤 [DELIVER] Enviando arquivo via URL: ${product.delivery_url?.substring(0, 50)}...`);
     return tg.sendDocument(chatId, { url: product.delivery_url }, {
-      filename: fileName,
-      caption: fullCaption,
-      parse_mode: 'Markdown'
+      filename: fileName
     });
   } else {
     return deliverByLink(chatId, product.delivery_url, `${caption}\n\nSeu acesso ao **${product.name}** foi liberado!\n\nAcesse aqui:`);
