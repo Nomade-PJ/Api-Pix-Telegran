@@ -121,8 +121,8 @@ function createBot(token) {
         buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
       }
       
-      // Botão de suporte fixo (sempre aparece)
-      buttons.push([Markup.button.url('💬 Suporte On-line', 'https://t.me/suportedireto')]);
+      // Botão de suporte fixo (sempre aparece) - callback interno
+      buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
       
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
       
@@ -1452,6 +1452,214 @@ Clique no botão abaixo para renovar:`, {
     } catch (err) {
       console.error('Erro no comando renovar:', err);
       return ctx.reply('❌ Erro ao processar renovação.');
+    }
+  });
+
+  // ===== SISTEMA DE SUPORTE INTERNO =====
+  bot.action('support_menu', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      
+      console.log(`💬 [SUPPORT] Usuário ${ctx.from.id} acessou suporte`);
+      
+      // Buscar transações pendentes do usuário
+      const { data: pendingTransactions, error } = await db.supabase
+        .from('transactions')
+        .select('*')
+        .eq('telegram_id', ctx.from.id)
+        .in('status', ['pending', 'proof_sent'])
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      if (error) {
+        console.error('Erro ao buscar transações:', error);
+      }
+      
+      const hasPending = pendingTransactions && pendingTransactions.length > 0;
+      
+      if (hasPending) {
+        // TEM TRANSAÇÃO PENDENTE - Pedir comprovante automaticamente
+        const transaction = pendingTransactions[0]; // Mais recente
+        const createdAt = new Date(transaction.created_at);
+        const minutesAgo = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60));
+        const minutesRemaining = Math.max(0, 30 - minutesAgo);
+        
+        let statusText = '';
+        if (transaction.status === 'pending') {
+          statusText = '⏳ *Aguardando pagamento*';
+        } else if (transaction.status === 'proof_sent') {
+          statusText = '📸 *Comprovante recebido - Em análise*';
+        }
+        
+        const message = `💬 *SUPORTE ON-LINE*
+
+${statusText}
+
+🆔 TXID: \`${transaction.txid}\`
+💰 Valor: R$ ${transaction.amount}
+⏰ Expira em: ${minutesRemaining} minutos
+
+${transaction.status === 'pending' ? 
+`📸 *ENVIE SEU COMPROVANTE:*
+Após realizar o pagamento PIX, envie a foto ou PDF do comprovante aqui no chat.
+
+💡 *Dica:* Tire uma foto clara e legível do comprovante.` : 
+`✅ Comprovante já foi recebido!
+Um admin está analisando e aprovará em breve.`}
+
+❓ *Precisa de ajuda?*
+Entre em contato: @suportedireto`;
+
+        const buttons = [];
+        
+        if (transaction.status === 'pending') {
+          buttons.push([Markup.button.callback('🔄 Verificar Status', `check_status:${transaction.txid}`)]);
+        }
+        
+        buttons.push([Markup.button.url('💬 Falar com Suporte', 'https://t.me/suportedireto')]);
+        buttons.push([Markup.button.callback('🏠 Voltar ao Menu', 'back_to_start')]);
+        
+        return ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard(buttons)
+        });
+        
+      } else {
+        // SEM TRANSAÇÃO PENDENTE - Menu de ajuda
+        const message = `💬 *SUPORTE ON-LINE*
+
+👋 Olá! Como posso ajudar?
+
+📋 *Opções disponíveis:*
+
+1️⃣ Fazer uma nova compra
+   Use /start e escolha um produto
+
+2️⃣ Ver seus pedidos
+   Use /meuspedidos para ver histórico
+
+3️⃣ Renovar assinatura
+   Use /renovar para grupos
+
+❓ *Dúvidas frequentes:*
+• Quanto tempo demora a entrega?
+  → Imediata após aprovação do pagamento
+
+• Como funciona o PIX?
+  → Gere o QR Code, pague e envie o comprovante
+
+• Não recebi meu produto
+  → Envie seu TXID para @suportedireto
+
+💬 *Falar com atendente:*
+Clique no botão abaixo para contato direto`;
+
+        return ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('💬 Falar com Suporte', 'https://t.me/suportedireto')],
+            [Markup.button.callback('🏠 Voltar ao Menu', 'back_to_start')]
+          ])
+        });
+      }
+      
+    } catch (err) {
+      console.error('Erro no suporte:', err);
+      return ctx.reply('❌ Erro ao carregar suporte. Tente novamente.');
+    }
+  });
+  
+  // Handler para verificar status de transação
+  bot.action(/^check_status:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Verificando status...');
+      
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada'
+      };
+      
+      return ctx.reply(`📊 *STATUS DA TRANSAÇÃO*
+
+${statusEmoji[transaction.status]} *${statusText[transaction.status]}*
+
+🆔 TXID: \`${txid}\`
+💰 Valor: R$ ${transaction.amount}
+📅 Criada: ${new Date(transaction.created_at).toLocaleString('pt-BR')}
+
+${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso!' : 
+  transaction.status === 'validated' ? '⏳ Produto será entregue em instantes!' :
+  transaction.status === 'proof_sent' ? '📸 Aguarde a análise do comprovante...' :
+  transaction.status === 'pending' ? '⏳ Realize o pagamento e envie o comprovante!' :
+  '❌ Entre em contato com o suporte: @suportedireto'}`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao verificar status:', err);
+      return ctx.reply('❌ Erro ao verificar status.');
+    }
+  });
+  
+  // Handler para voltar ao menu inicial
+  bot.action('back_to_start', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      
+      // Buscar dados novamente
+      const [products, groups, mediaPacks] = await Promise.all([
+        db.getAllProducts(),
+        db.getAllGroups(),
+        db.getAllMediaPacks()
+      ]);
+      
+      // Gerar botões
+      const buttons = products.map(product => {
+        const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
+        const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+        return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
+      });
+      
+      const activeMediaPacks = mediaPacks.filter(p => p.is_active);
+      for (const pack of activeMediaPacks) {
+        buttons.push([Markup.button.callback(pack.name, `buy_media:${pack.pack_id}`)]);
+      }
+      
+      const activeGroups = groups.filter(g => g.is_active);
+      if (activeGroups.length > 0) {
+        const group = activeGroups[0];
+        buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
+      }
+      
+      buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
+      
+      const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
+      
+      return ctx.editMessageText(text, Markup.inlineKeyboard(buttons));
+      
+    } catch (err) {
+      console.error('Erro ao voltar ao menu:', err);
+      return ctx.reply('Use /start para ver o menu novamente.');
     }
   });
 
