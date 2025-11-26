@@ -1202,28 +1202,53 @@ Selecione uma opção abaixo:`;
       const products = await db.getAllProducts(true);
       
       if (products.length === 0) {
-        return ctx.reply('📦 Nenhum produto cadastrado.\n\nUse /novoproduto para criar o primeiro produto.');
+        return ctx.editMessageText('📦 Nenhum produto cadastrado.', {
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('➕ Criar Produto', 'admin_novoproduto')],
+            [Markup.button.callback('🔙 Voltar', 'admin_refresh')]
+          ])
+        });
       }
       
-      let message = `🛍️ *PRODUTOS CADASTRADOS:*\n\n`;
+      let message = `🛍️ *PRODUTOS CADASTRADOS:* ${products.length}\n\n`;
+      
+      const buttons = [];
       
       for (const product of products) {
         const status = product.is_active ? '✅' : '❌';
+        
+        // Determinar tipo de entrega de forma limpa
+        let deliveryDisplay = '';
+        if (product.delivery_type === 'file') {
+          deliveryDisplay = '📦 Arquivo ZIP';
+        } else if (product.delivery_url && product.delivery_url.startsWith('http')) {
+          deliveryDisplay = '🔗 Link/URL';
+        } else {
+          deliveryDisplay = '⚠️ Não configurada';
+        }
+        
         message += `${status} *${product.name}*\n`;
-        message += `🆔 ID: ${product.product_id}\n`;
+        message += `🆔 ID: \`${product.product_id}\`\n`;
         message += `💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}\n`;
         message += `📝 Descrição: ${product.description || 'Não tem'}\n`;
-        message += `📦 Entrega: ${product.delivery_type === 'link' ? '🔗 Link' : '📄 Arquivo'}\n`;
-        message += `🔗 ${product.delivery_url || 'Não configurada'}\n`;
+        message += `📦 Entrega: ${deliveryDisplay}\n`;
         message += `——————————\n\n`;
+        
+        // Adicionar botões para cada produto
+        buttons.push([
+          Markup.button.callback(`✏️ Editar ${product.name}`, `edit_product:${product.product_id}`),
+          Markup.button.callback(`🗑️ Deletar`, `delete_product:${product.product_id}`)
+        ]);
       }
       
-      message += `\n*Comandos disponíveis:*\n`;
-      message += `➕ /novoproduto - Criar novo\n`;
-      message += `✏️ /editarproduto - Editar\n`;
-      message += `🗑️ /deletarproduto - Remover`;
+      // Botões de ação geral
+      buttons.push([Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')]);
+      buttons.push([Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]);
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
     } catch (err) {
       console.error('Erro ao listar produtos:', err);
       return ctx.reply('❌ Erro ao buscar produtos.');
@@ -1235,6 +1260,14 @@ Selecione uma opção abaixo:`;
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) return;
     
+    // Iniciar sessão de criação
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'create_product',
+      step: 'name',
+      data: {}
+    };
+    
     return ctx.reply(`➕ *CRIAR NOVO PRODUTO*
 
 Vamos criar um novo produto passo a passo.
@@ -1244,6 +1277,205 @@ Vamos criar um novo produto passo a passo.
 Exemplo: Pack Premium VIP
 
 Cancelar: /cancelar`, { parse_mode: 'Markdown' });
+  });
+  
+  // Handler para editar produto via botão
+  bot.action(/^edit_product:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('✏️ Carregando produto...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const productId = ctx.match[1];
+      const product = await db.getProduct(productId, true);
+      
+      if (!product) {
+        return ctx.reply(`❌ Produto não encontrado: ${productId}`);
+      }
+      
+      // Iniciar sessão de edição
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'edit_product',
+        step: 'field',
+        data: { productId, product }
+      };
+      
+      const statusText = product.is_active ? '🟢 Ativo' : '🔴 Inativo';
+      
+      // Determinar tipo de entrega de forma limpa
+      let deliveryDisplay = '';
+      if (product.delivery_type === 'file') {
+        deliveryDisplay = '📦 Arquivo ZIP';
+      } else if (product.delivery_url && product.delivery_url.startsWith('http')) {
+        deliveryDisplay = '🔗 Link/URL';
+      } else {
+        deliveryDisplay = '⚠️ Não configurada';
+      }
+      
+      const message = `✏️ *EDITAR PRODUTO*
+
+*Produto:* ${product.name}
+*Status:* ${statusText}
+
+📋 *Detalhes atuais:*
+💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}
+📝 Descrição: ${product.description || 'Não tem'}
+📦 Entrega: ${deliveryDisplay}
+
+*O que deseja editar?*`;
+
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('📝 Nome', `edit_field:name:${productId}`),
+            Markup.button.callback('💰 Preço', `edit_field:price:${productId}`)
+          ],
+          [
+            Markup.button.callback('📄 Descrição', `edit_field:description:${productId}`),
+            Markup.button.callback('🔗 URL/Arquivo', `edit_field:url:${productId}`)
+          ],
+          [
+            Markup.button.callback(product.is_active ? '🔴 Desativar' : '🟢 Ativar', `toggle_product:${productId}`)
+          ],
+          [
+            Markup.button.callback('🔙 Voltar', 'admin_produtos')
+          ]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao editar produto:', err);
+      return ctx.reply('❌ Erro ao carregar produto.');
+    }
+  });
+  
+  // Handler para deletar produto via botão (AUTOMÁTICO)
+  bot.action(/^delete_product:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🗑️ Deletando produto...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const productId = ctx.match[1];
+      const product = await db.getProduct(productId, true);
+      
+      if (!product) {
+        return ctx.reply(`❌ Produto não encontrado: ${productId}`);
+      }
+      
+      console.log(`🗑️ [DELETE] Deletando produto ${productId} automaticamente...`);
+      
+      // Deletar produto (cascata deleta transações também)
+      const deleted = await db.deleteProduct(productId);
+      
+      if (deleted) {
+        // Se o produto tinha arquivo no Telegram, deletar também
+        if (product.delivery_url && product.delivery_url.startsWith('telegram_file:')) {
+          try {
+            const fileId = product.delivery_url.replace('telegram_file:', '');
+            console.log(`🗑️ [DELETE] Arquivo do Telegram marcado para remoção: ${fileId.substring(0, 30)}...`);
+            // Nota: Telegram não permite deletar arquivos enviados, mas removemos a referência
+          } catch (fileErr) {
+            console.error('Aviso: Não foi possível remover arquivo do Telegram:', fileErr);
+          }
+        }
+        
+        await ctx.reply(`✅ *Produto deletado com sucesso!*
+
+🛍️ ${product.name}
+🆔 ID: \`${productId}\`
+
+🗑️ Produto removido permanentemente do banco de dados.
+
+${product.delivery_type === 'file' ? '📎 Arquivo também foi removido das referências.' : ''}`, {
+          parse_mode: 'Markdown'
+        });
+        
+        // Atualizar lista de produtos
+        return bot.handleUpdate({
+          callback_query: {
+            ...ctx.callbackQuery,
+            data: 'admin_produtos'
+          }
+        });
+        
+      } else {
+        return ctx.reply('❌ Erro ao deletar produto.');
+      }
+      
+    } catch (err) {
+      console.error('Erro ao deletar produto:', err);
+      return ctx.reply('❌ Erro ao deletar produto.');
+    }
+  });
+  
+  // Handler para alternar status do produto (ativar/desativar)
+  bot.action(/^toggle_product:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Alterando status...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const productId = ctx.match[1];
+      const product = await db.getProduct(productId, true);
+      
+      if (!product) {
+        return ctx.reply(`❌ Produto não encontrado: ${productId}`);
+      }
+      
+      const newStatus = !product.is_active;
+      await db.updateProduct(productId, { is_active: newStatus });
+      
+      return ctx.reply(`✅ Produto ${newStatus ? '*ativado*' : '*desativado*'} com sucesso!\n\n🛍️ ${product.name}`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao alternar status:', err);
+      return ctx.reply('❌ Erro ao alterar status.');
+    }
+  });
+  
+  // Handler para editar campos via botão
+  bot.action(/^edit_field:(.+):(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const field = ctx.match[1];
+      const productId = ctx.match[2];
+      
+      const product = await db.getProduct(productId, true);
+      if (!product) {
+        return ctx.reply(`❌ Produto não encontrado: ${productId}`);
+      }
+      
+      // Iniciar sessão de edição
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'edit_product',
+        step: 'edit_value',
+        data: { productId, product, field }
+      };
+      
+      const prompts = {
+        'name': '📝 Digite o novo *nome* do produto:',
+        'price': '💰 Digite o novo *preço* (apenas números):',
+        'description': '📄 Digite a nova *descrição* (ou "-" para remover):',
+        'url': '🔗 Digite a nova *URL* ou envie um *arquivo*:'
+      };
+      
+      return ctx.reply(`${prompts[field]}\n\n_Cancelar: /cancelar_`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao editar campo:', err);
+      return ctx.reply('❌ Erro ao editar campo.');
+    }
   });
 
   bot.action('admin_setpix', async (ctx) => {
