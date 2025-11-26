@@ -129,7 +129,7 @@ function createBot(token) {
       // Botão Grupo Privado 🔞 (sempre aparece se houver grupo privado ativo)
       const privateGroup = activeGroups.find(g => g.group_name && (g.group_name.includes('Privado') || g.group_name.includes('🔞')));
       if (privateGroup) {
-        buttons.push([Markup.button.callback('🔞 Grupo Privado 🔞', `subscribe:${privateGroup.id}`)]);
+        buttons.push([Markup.button.callback('🔞 Grupo Privado 🔞', `subscribe:${privateGroup.group_id}`)]);
       }
       
       // Botão de suporte fixo (sempre aparece) - callback interno
