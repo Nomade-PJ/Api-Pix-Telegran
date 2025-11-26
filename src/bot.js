@@ -119,17 +119,12 @@ function createBot(token) {
         buttons.push([Markup.button.callback(pack.name, `buy_media:${pack.pack_id}`)]);
       }
       
-      // Adicionar botão de grupo se houver grupos ativos
+      // Adicionar botões de grupos ativos (um botão por grupo, usando o nome cadastrado)
       const activeGroups = groups.filter(g => g.is_active);
-      if (activeGroups.length > 0) {
-        const group = activeGroups[0]; // Usar o primeiro grupo ativo
-        buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
-      }
-      
-      // Botão Grupo Privado 🔞 (sempre aparece se houver grupo privado ativo)
-      const privateGroup = activeGroups.find(g => g.group_name && (g.group_name.includes('Privado') || g.group_name.includes('🔞')));
-      if (privateGroup) {
-        buttons.push([Markup.button.callback('🔞 Grupo Privado 🔞', `subscribe:${privateGroup.group_id}`)]);
+      for (const group of activeGroups) {
+        // Usar o nome do grupo cadastrado no admin, ou um padrão se não tiver nome
+        const groupButtonText = group.group_name || `👥 Grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`;
+        buttons.push([Markup.button.callback(groupButtonText, `subscribe:${group.group_id}`)]);
       }
       
       // Botão de suporte fixo (sempre aparece) - callback interno
@@ -1698,10 +1693,12 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
         buttons.push([Markup.button.callback(pack.name, `buy_media:${pack.pack_id}`)]);
       }
       
+      // Adicionar botões de grupos ativos (um botão por grupo, usando o nome cadastrado)
       const activeGroups = groups.filter(g => g.is_active);
-      if (activeGroups.length > 0) {
-        const group = activeGroups[0];
-        buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
+      for (const group of activeGroups) {
+        // Usar o nome do grupo cadastrado no admin, ou um padrão se não tiver nome
+        const groupButtonText = group.group_name || `👥 Grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`;
+        buttons.push([Markup.button.callback(groupButtonText, `subscribe:${group.group_id}`)]);
       }
       
       buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
