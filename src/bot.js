@@ -5,9 +5,14 @@ const deliver = require('./deliver');
 const db = require('./database');
 const admin = require('./admin');
 const proofAnalyzer = require('./proofAnalyzer');
+const { startExpirationJob } = require('./jobs/expireTransactions');
 
 function createBot(token) {
   const bot = new Telegraf(token);
+  
+  // Iniciar job de expiração automática de transações
+  startExpirationJob();
+  console.log('✅ [BOT-INIT] Job de expiração de transações iniciado');
 
   // Registrar handler do /start PRIMEIRO (antes de tudo)
   bot.start(async (ctx) => {
