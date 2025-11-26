@@ -126,6 +126,12 @@ function createBot(token) {
         buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
       }
       
+      // Botão Grupo Privado 🔞 (sempre aparece se houver grupo privado ativo)
+      const privateGroup = activeGroups.find(g => g.group_name && (g.group_name.includes('Privado') || g.group_name.includes('🔞')));
+      if (privateGroup) {
+        buttons.push([Markup.button.callback('🔞 Grupo Privado 🔞', `subscribe:${privateGroup.id}`)]);
+      }
+      
       // Botão de suporte fixo (sempre aparece) - callback interno
       buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
       
@@ -768,12 +774,37 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
               }
               
               // Entregar produto ao usuário
-              if (transactionData.product_id && transactionData.product_id.startsWith('group_')) {
-                // Assinatura de grupo
-                const groupTelegramId = parseInt(transactionData.product_id.replace('group_', ''));
-                const group = await db.getGroupById(groupTelegramId);
+              // 🆕 Verificar se é renovação de grupo (via group_id OU product_id antigo)
+              const isGroupRenewal = transactionData.group_id || 
+                                    (transactionData.product_id && transactionData.product_id.startsWith('group_'));
+              
+              if (isGroupRenewal) {
+                // Assinatura/Renovação de grupo
+                let group = null;
+                
+                // Método novo: usar group_id direto
+                if (transactionData.group_id) {
+                  const { data: groupData, error: groupError } = await db.supabase
+                    .from('groups')
+                    .select('*')
+                    .eq('id', transactionData.group_id)
+                    .single();
+                  
+                  if (!groupError && groupData) {
+                    group = groupData;
+                  }
+                }
+                
+                // Método antigo: usar product_id (compatibilidade)
+                if (!group && transactionData.product_id && transactionData.product_id.startsWith('group_')) {
+                  const groupTelegramId = parseInt(transactionData.product_id.replace('group_', ''));
+                  group = await db.getGroupById(groupTelegramId);
+                }
                 
                 if (group) {
+                  console.log(`👥 [AUTO-ANALYSIS] Adicionando usuário ${chatId} ao grupo ${group.group_name}`);
+                  
+                  // Adicionar ou renovar assinatura
                   await db.addGroupMember({
                     telegramId: chatId,
                     userId: transactionData.user_id,
@@ -782,9 +813,12 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                   });
                   
                   try {
+                    // Tentar adicionar ao grupo (unban se estiver banido)
                     await telegram.unbanChatMember(group.group_id, chatId, { only_if_banned: true });
-                    console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de aprovação para cliente ${chatId}`);
-                    await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                    
+                    // Tentar adicionar via invite link (se o bot tiver permissão)
+                    try {
+                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
 💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
@@ -794,19 +828,34 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
 🔗 *Link:* ${group.group_link}
 
 ✅ Você foi adicionado ao grupo!
+Clique no link acima para entrar.
 
 🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
+                    } catch (msgErr) {
+                      console.error('Erro ao enviar mensagem:', msgErr);
+                    }
+                    
+                    console.log(`✅ [AUTO-ANALYSIS] Usuário ${chatId} adicionado ao grupo ${group.group_name}`);
                   } catch (err) {
-                    console.error('Erro ao adicionar ao grupo:', err);
+                    console.error('⚠️ [AUTO-ANALYSIS] Erro ao adicionar ao grupo (pode não ter permissão):', err.message);
                     await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
-⚠️ Erro ao adicionar ao grupo. Entre manualmente: ${group.group_link}
+🤖 Análise de IA: ${analysis.confidence}% de confiança
+💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
+
+👥 *Grupo:* ${group.group_name}
+📅 *Acesso válido por:* ${group.subscription_days} dias
+
+⚠️ *Entre no grupo usando o link:*
+${group.group_link}
 
 🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
                   }
                   
                   await db.markAsDelivered(transactionData.txid);
                   console.log(`✅ [AUTO-ANALYSIS] Assinatura de grupo entregue`);
+                } else {
+                  console.error(`❌ [AUTO-ANALYSIS] Grupo não encontrado para transação ${transactionData.txid}`);
                 }
               } else if (transactionData.media_pack_id) {
                 // Media pack (Packs de Agora)

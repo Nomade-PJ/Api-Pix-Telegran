@@ -2011,19 +2011,49 @@ Entre em contato com o suporte.
           }
         }
       }
-      // Verificar se é assinatura de grupo
-      else if (transaction.product_id && transaction.product_id.startsWith('group_')) {
-        const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
-        const group = await db.getGroupById(groupTelegramId);
+      // 🆕 Verificar se é assinatura/renovação de grupo (via group_id OU product_id antigo)
+      const isGroupRenewal = transaction.group_id || 
+                            (transaction.product_id && transaction.product_id.startsWith('group_'));
+      
+      if (isGroupRenewal) {
+        let group = null;
+        
+        // Método novo: usar group_id direto
+        if (transaction.group_id) {
+          const { data: groupData, error: groupError } = await db.supabase
+            .from('groups')
+            .select('*')
+            .eq('id', transaction.group_id)
+            .single();
+          
+          if (!groupError && groupData) {
+            group = groupData;
+          }
+        }
+        
+        // Método antigo: usar product_id (compatibilidade)
+        if (!group && transaction.product_id && transaction.product_id.startsWith('group_')) {
+          const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+          group = await db.getGroupById(groupTelegramId);
+        }
         
         if (group) {
-          // Adicionar membro ao grupo
+          console.log(`👥 [ADMIN] Adicionando usuário ${transaction.telegram_id} ao grupo ${group.group_name}`);
+          
+          // Adicionar ou renovar assinatura
           await db.addGroupMember({
             telegramId: transaction.telegram_id,
             userId: transaction.user_id,
             groupId: group.id,
             days: group.subscription_days
           });
+          
+          // Tentar adicionar ao grupo
+          try {
+            await ctx.telegram.unbanChatMember(group.group_id, transaction.telegram_id, { only_if_banned: true });
+          } catch (unbanErr) {
+            console.error('⚠️ [ADMIN] Erro ao adicionar ao grupo (pode não ter permissão):', unbanErr.message);
+          }
           
           // Notificar usuário
           try {
@@ -2034,6 +2064,7 @@ Entre em contato com o suporte.
 🔗 *Link:* ${group.group_link}
 
 ✅ Você foi adicionado ao grupo!
+Clique no link acima para entrar.
 
 🆔 TXID: ${txid}`, {
               parse_mode: 'Markdown'
@@ -2041,6 +2072,8 @@ Entre em contato com o suporte.
           } catch (err) {
             console.error('Erro ao notificar usuário:', err);
           }
+        } else {
+          console.error(`❌ [ADMIN] Grupo não encontrado para transação ${txid}`);
         }
       } else if (transaction.product_id) {
         // Entregar produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)

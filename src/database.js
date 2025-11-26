@@ -269,7 +269,7 @@ async function productHasTransactions(productId) {
 
 // ===== TRANSAÇÕES =====
 
-async function createTransaction({ txid, userId, telegramId, productId, mediaPackId, amount, pixKey, pixPayload }) {
+async function createTransaction({ txid, userId, telegramId, productId, mediaPackId, groupId, amount, pixKey, pixPayload }) {
   try {
     const insertData = {
       txid,
@@ -281,8 +281,10 @@ async function createTransaction({ txid, userId, telegramId, productId, mediaPac
       status: 'pending'
     };
     
-    // Adicionar product_id OU media_pack_id (nunca os dois ao mesmo tempo)
-    if (mediaPackId) {
+    // Adicionar product_id OU media_pack_id OU group_id (nunca múltiplos ao mesmo tempo)
+    if (groupId) {
+      insertData.group_id = groupId;
+    } else if (mediaPackId) {
       insertData.media_pack_id = mediaPackId;
     } else if (productId) {
       insertData.product_id = productId;
