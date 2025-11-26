@@ -42,8 +42,8 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
                   fileName.toLowerCase().endsWith('.rar') ||
                   fileName.toLowerCase().endsWith('.7z');
     
-    // 1️⃣ PRIMEIRO: Enviar mensagem de texto
-    const textMessage = `${caption}\n\n📦 *${product.name}*\n\n` +
+    // Caption aparece ABAIXO do arquivo na mesma mensagem
+    const fullCaption = `${caption}\n\n📦 *${product.name}*\n\n` +
       (isZip 
         ? `📥 *Arquivo ZIP enviado!*\n\n` +
           `⚠️ *Importante:* Você precisa *descompactar* o arquivo para acessar o conteúdo.\n\n` +
@@ -54,20 +54,23 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
         : `📄 *Arquivo enviado!*\n\n` +
           `✅ Produto entregue com sucesso!`);
     
-    await tg.sendMessage(chatId, textMessage, { parse_mode: 'Markdown' });
-    
-    // 2️⃣ DEPOIS: Enviar arquivo ABAIXO da mensagem
+    // Enviar arquivo com caption (tudo em UMA mensagem)
     if (product.delivery_url && product.delivery_url.startsWith('telegram_file:')) {
       const fileId = product.delivery_url.replace('telegram_file:', '');
       console.log(`📤 [DELIVER] Enviando arquivo ZIP via file_id: ${fileId.substring(0, 30)}...`);
       console.log(`📤 [DELIVER] Nome do arquivo: ${fileName}`);
-      return tg.sendDocument(chatId, fileId);
+      return tg.sendDocument(chatId, fileId, {
+        caption: fullCaption,
+        parse_mode: 'Markdown'
+      });
     }
     
-    // Se for URL, enviar via URL
+    // Se for URL, enviar via URL com caption
     console.log(`📤 [DELIVER] Enviando arquivo via URL: ${product.delivery_url?.substring(0, 50)}...`);
     return tg.sendDocument(chatId, { url: product.delivery_url }, {
-      filename: fileName
+      filename: fileName,
+      caption: fullCaption,
+      parse_mode: 'Markdown'
     });
   } else {
     return deliverByLink(chatId, product.delivery_url, `${caption}\n\nSeu acesso ao **${product.name}** foi liberado!\n\nAcesse aqui:`);
