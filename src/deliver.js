@@ -97,16 +97,21 @@ Enviando *${randomItems.length} ${randomItems.length > 1 ? 'itens' : 'item'}* al
     for (const item of randomItems) {
       try {
         console.log(`📤 [DELIVER] Enviando ${item.file_type}: ${item.file_name}`);
+        console.log(`📎 [DELIVER] URL: ${item.file_url}`);
         
         if (item.file_type === 'photo') {
-          await tg.sendPhoto(chatId, item.file_url, {
+          // Enviar foto via URL (Telegram baixa automaticamente)
+          await tg.sendPhoto(chatId, { url: item.file_url }, {
             caption: `📸 ${item.file_name}`
           });
         } else if (item.file_type === 'video') {
-          await tg.sendVideo(chatId, item.file_url, {
+          // Enviar vídeo via URL (Telegram baixa automaticamente)
+          await tg.sendVideo(chatId, { url: item.file_url }, {
             caption: `🎥 ${item.file_name}`
           });
         }
+        
+        console.log(`✅ [DELIVER] Item enviado com sucesso: ${item.file_name}`);
         
         // Registrar entrega
         await db.recordMediaDelivery({
@@ -118,11 +123,12 @@ Enviando *${randomItems.length} ${randomItems.length > 1 ? 'itens' : 'item'}* al
         
         successCount++;
         
-        // Pequeno delay entre envios para evitar flood
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Delay entre envios para evitar flood
+        await new Promise(resolve => setTimeout(resolve, 800));
         
       } catch (itemErr) {
         console.error(`❌ [DELIVER] Erro ao enviar item ${item.id}:`, itemErr.message);
+        console.error(`❌ [DELIVER] Stack:`, itemErr.stack);
       }
     }
     
