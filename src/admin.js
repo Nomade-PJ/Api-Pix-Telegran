@@ -758,28 +758,50 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
       
       // ===== EDITAR PRODUTO =====
       if (session.type === 'edit_product' && session.step === 'edit_value') {
-        const { productId, field } = session.data;
+        const { productId, field, product } = session.data;
         const value = ctx.message.text.trim();
         
         let updates = {};
+        let fieldName = '';
+        let newValue = '';
         
-        if (field === 'name') updates.name = value;
+        if (field === 'name') {
+          updates.name = value;
+          fieldName = 'Nome';
+          newValue = value;
+        }
         else if (field === 'price') {
           const price = parseFloat(value.replace(',', '.'));
           if (isNaN(price) || price <= 0) {
-            return ctx.reply('❌ Preço inválido.');
+            return ctx.reply('❌ Preço inválido. Digite apenas números.');
           }
           updates.price = price;
+          fieldName = 'Preço';
+          newValue = `R$ ${price.toFixed(2)}`;
         }
-        else if (field === 'description') updates.description = value === '-' ? null : value;
-        else if (field === 'url') updates.delivery_url = value === '-' ? null : value;
+        else if (field === 'description') {
+          updates.description = value === '-' ? null : value;
+          fieldName = 'Descrição';
+          newValue = value === '-' ? 'Removida' : value;
+        }
+        else if (field === 'url') {
+          updates.delivery_url = value === '-' ? null : value;
+          updates.delivery_type = 'link';
+          fieldName = 'URL/Link';
+          newValue = value === '-' ? 'Removida' : value;
+        }
         
         await db.updateProduct(productId, updates);
         delete global._SESSIONS[ctx.from.id];
         
-        return ctx.reply(`✅ *Produto atualizado com sucesso!*
+        return ctx.reply(`✅ *${fieldName} atualizado com sucesso!*
 
-Use /produtos para ver as alterações.`, { parse_mode: 'Markdown' });
+🛍️ *Produto:* ${product.name}
+🆔 *ID:* \`${productId}\`
+✏️ *Campo alterado:* ${fieldName}
+📝 *Novo valor:* ${newValue}
+
+Use /admin → Produtos para ver todas as alterações.`, { parse_mode: 'Markdown' });
       }
 
       // ===== CRIAR GRUPO =====
@@ -976,19 +998,46 @@ Use /admin → Gerenciar Grupos para ver todos.`, { parse_mode: 'Markdown' });
       
       console.log('📄 [DOCUMENT-ADMIN] Sessão:', session ? `tipo=${session.type}, step=${session.step}` : 'não existe');
       
-      // Se não há sessão de criação de produto, deixar passar
-      if (!session || session.type !== 'create_product' || session.step !== 'url') {
-        console.log('📄 [DOCUMENT-ADMIN] Arquivo ignorado - não é criação de produto');
-        return next(); // Passar para próximo handler
-      }
-      
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) {
         console.log('📄 [DOCUMENT] Arquivo ignorado - usuário não é admin');
-        return;
+        return next();
       }
       
-      console.log('📄 [DOCUMENT] Processando arquivo...');
+      // ===== EDITAR PRODUTO - Arquivo enviado =====
+      if (session && session.type === 'edit_product' && session.step === 'edit_value' && session.data.field === 'url') {
+        console.log('📄 [DOCUMENT] Processando arquivo para EDIÇÃO de produto...');
+        
+        const fileId = ctx.message.document.file_id;
+        const fileName = ctx.message.document.file_name;
+        const { productId, product } = session.data;
+        
+        // Atualizar produto com novo arquivo
+        await db.updateProduct(productId, {
+          delivery_url: `telegram_file:${fileId}`,
+          delivery_type: 'file'
+        });
+        
+        delete global._SESSIONS[ctx.from.id];
+        
+        console.log(`✅ [DOCUMENT] Arquivo atualizado: ${fileName}`);
+        
+        return ctx.reply(`✅ *Arquivo atualizado com sucesso!*
+
+🛍️ *Produto:* ${product.name}
+📄 *Novo arquivo:* ${fileName}
+📦 *Tipo:* Arquivo ZIP
+
+Use /admin → Produtos para ver as alterações.`, { parse_mode: 'Markdown' });
+      }
+      
+      // ===== CRIAR PRODUTO - Arquivo enviado =====
+      if (!session || session.type !== 'create_product' || session.step !== 'url') {
+        console.log('📄 [DOCUMENT-ADMIN] Arquivo ignorado - não é criação/edição de produto');
+        return next(); // Passar para próximo handler
+      }
+      
+      console.log('📄 [DOCUMENT] Processando arquivo para CRIAÇÃO de produto...');
       
       const fileId = ctx.message.document.file_id;
       const fileName = ctx.message.document.file_name;
