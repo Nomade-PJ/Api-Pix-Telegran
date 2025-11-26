@@ -1751,21 +1751,28 @@ Entre em contato com o suporte.
         // Entregar produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
         const product = await db.getProduct(transaction.product_id, true);
         if (product && product.delivery_url) {
-          await deliver.deliverByLink(transaction.telegram_id, product.delivery_url, `✅ *Produto aprovado e entregue!*\n\n${product.delivery_url}`);
-        }
-        
-        // Notificar usuário
-        try {
-          await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *PAGAMENTO APROVADO!*
+          // Usar deliverContent que detecta automaticamente se é arquivo ou link
+          await deliver.deliverContent(
+            transaction.telegram_id, 
+            product, 
+            `✅ *PAGAMENTO APROVADO!*\n\n💰 Valor: R$ ${transaction.amount}\n🆔 TXID: ${txid}`
+          );
+          
+          console.log(`✅ Produto entregue com sucesso para ${transaction.telegram_id}`);
+        } else {
+          // Se não tem produto/URL, notificar mesmo assim
+          try {
+            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *PAGAMENTO APROVADO!*
 
 💰 Valor: R$ ${transaction.amount}
-✅ Produto entregue com sucesso!
+⚠️ Aguarde instruções do suporte para receber seu produto.
 
 🆔 TXID: ${txid}`, {
-            parse_mode: 'Markdown'
-          });
-        } catch (err) {
-          console.error('Erro ao notificar usuário:', err);
+              parse_mode: 'Markdown'
+            });
+          } catch (err) {
+            console.error('Erro ao notificar usuário:', err);
+          }
         }
       }
       
