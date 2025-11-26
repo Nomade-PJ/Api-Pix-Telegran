@@ -121,10 +121,8 @@ function createBot(token) {
         buttons.push([Markup.button.callback(`👥 Entrar no grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`, `subscribe:${group.group_id}`)]);
       }
       
-      // Adicionar botão de suporte se configurado
-      if (supportLink) {
-        buttons.push([Markup.button.url('💬 Suporte', supportLink)]);
-      }
+      // Botão de suporte fixo (sempre aparece)
+      buttons.push([Markup.button.url('💬 Suporte On-line', 'https://t.me/suportedireto')]);
       
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
       
