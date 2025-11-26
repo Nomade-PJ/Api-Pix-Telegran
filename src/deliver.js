@@ -38,21 +38,8 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
       fileName = urlParts[urlParts.length - 1] || 'arquivo.zip';
     }
     
-    const isZip = fileName.toLowerCase().endsWith('.zip') || 
-                  fileName.toLowerCase().endsWith('.rar') ||
-                  fileName.toLowerCase().endsWith('.7z');
-    
-    // Caption aparece ABAIXO do arquivo na mesma mensagem
-    const fullCaption = `${caption}\n\n📦 *${product.name}*\n\n` +
-      (isZip 
-        ? `📥 *Arquivo ZIP enviado!*\n\n` +
-          `⚠️ *Importante:* Você precisa *descompactar* o arquivo para acessar o conteúdo.\n\n` +
-          `💡 *Como descompactar:*\n` +
-          `• No celular: Use um app como WinRAR, 7-Zip ou Files\n` +
-          `• No computador: Clique com botão direito → Extrair\n\n` +
-          `✅ Produto entregue com sucesso!`
-        : `📄 *Arquivo enviado!*\n\n` +
-          `✅ Produto entregue com sucesso!`);
+    // Caption simples e curto - aparece ABAIXO do arquivo na mesma mensagem
+    const fullCaption = `✅ *PAGAMENTO APROVADO!*\n\n📦 ${product.name}\n\n✅ Produto entregue com sucesso!`;
     
     // Enviar arquivo com caption (tudo em UMA mensagem)
     if (product.delivery_url && product.delivery_url.startsWith('telegram_file:')) {
