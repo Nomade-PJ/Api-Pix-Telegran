@@ -844,10 +844,11 @@ async function getExpiringMembers() {
       .select(`
         *,
         user:user_id(first_name, telegram_id),
-        group:group_id(group_name, group_id, subscription_price)
+        group:group_id(id, group_name, group_id, subscription_price, subscription_days)
       `)
       .eq('status', 'active')
       .lte('expires_at', threeDaysFromNow.toISOString())
+      .gte('expires_at', new Date().toISOString()) // Ainda não expirou
       .is('reminded_at', null);
     
     if (error) throw error;
@@ -867,7 +868,7 @@ async function getExpiredMembers() {
       .select(`
         *,
         user:user_id(telegram_id),
-        group:group_id(group_id)
+        group:group_id(group_id, group_name, subscription_price, subscription_days)
       `)
       .eq('status', 'active')
       .lt('expires_at', now);
