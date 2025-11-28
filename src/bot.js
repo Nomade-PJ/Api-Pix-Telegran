@@ -138,8 +138,8 @@ function createBot(token) {
       if (isCreator && ctx.from.id === CREATOR_TELEGRAM_ID) {
         console.log(`👑 [START] Primeiro criador detectado (${ctx.from.id}) - mostrando painel do criador`);
         
-        // Buscar estatísticas em tempo real
-        const stats = await db.getStats();
+        // Buscar estatísticas em tempo real (apenas transações aprovadas para criadores)
+        const stats = await db.getCreatorStats();
         const pendingTxs = await db.getPendingTransactions();
         const pendingCount = pendingTxs.length;
         
@@ -147,11 +147,9 @@ function createBot(token) {
 
 📊 *ESTATÍSTICAS EM TEMPO REAL*
 
-💳 *Transações:* ${stats.totalTransactions}
+💳 *Transações Aprovadas:* ${stats.totalTransactions}
 ⏳ *Pendentes:* ${pendingCount}
 💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
-✅ *Aprovadas:* ${stats.approvedTransactions || 0}
-❌ *Rejeitadas:* ${stats.rejectedTransactions || 0}
 
 📅 *Hoje:*
 💰 Vendas: R$ ${parseFloat(stats.todaySales || 0).toFixed(2)}

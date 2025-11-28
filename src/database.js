@@ -624,11 +624,39 @@ async function getStats() {
     
     const totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
     
+    // Transações aprovadas (validated + delivered)
+    const { count: approvedTransactions } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['validated', 'delivered']);
+    
+    // Transações rejeitadas
+    const { count: rejectedTransactions } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'rejected');
+    
+    // Vendas de hoje
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data: todaySalesData } = await supabase
+      .from('transactions')
+      .select('amount, created_at')
+      .eq('status', 'delivered')
+      .gte('created_at', today.toISOString());
+    
+    const todaySales = todaySalesData?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+    const todayTransactions = todaySalesData?.length || 0;
+    
     return {
       totalUsers: totalUsers || 0,
       totalTransactions: totalTransactions || 0,
       pendingTransactions: pendingTransactions || 0,
-      totalSales: totalSales.toFixed(2)
+      totalSales: totalSales.toFixed(2),
+      approvedTransactions: approvedTransactions || 0,
+      rejectedTransactions: rejectedTransactions || 0,
+      todaySales: todaySales.toFixed(2),
+      todayTransactions: todayTransactions || 0
     };
   } catch (err) {
     console.error('Erro ao buscar estatísticas:', err);
@@ -636,7 +664,69 @@ async function getStats() {
       totalUsers: 0,
       totalTransactions: 0,
       pendingTransactions: 0,
-      totalSales: '0.00'
+      totalSales: '0.00',
+      approvedTransactions: 0,
+      rejectedTransactions: 0,
+      todaySales: '0.00',
+      todayTransactions: 0
+    };
+  }
+}
+
+// Estatísticas para criadores (apenas transações aprovadas)
+async function getCreatorStats() {
+  try {
+    // Apenas transações aprovadas (validated + delivered)
+    const { count: approvedCount } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['validated', 'delivered']);
+    
+    // Total em vendas (apenas aprovadas)
+    const { data: approvedSales } = await supabase
+      .from('transactions')
+      .select('amount')
+      .in('status', ['validated', 'delivered']);
+    
+    const totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+    
+    // Vendas de hoje (apenas aprovadas)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data: todaySalesData } = await supabase
+      .from('transactions')
+      .select('amount, created_at')
+      .in('status', ['validated', 'delivered'])
+      .gte('created_at', today.toISOString());
+    
+    const todaySales = todaySalesData?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+    const todayTransactions = todaySalesData?.length || 0;
+    
+    // Transações pendentes (para mostrar)
+    const { count: pendingCount } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'proof_sent');
+    
+    return {
+      totalTransactions: approvedCount || 0, // Apenas aprovadas
+      approvedTransactions: approvedCount || 0,
+      rejectedTransactions: 0, // Criadores não veem rejeitadas
+      pendingTransactions: pendingCount || 0,
+      totalSales: totalSales.toFixed(2),
+      todaySales: todaySales.toFixed(2),
+      todayTransactions: todayTransactions || 0
+    };
+  } catch (err) {
+    console.error('Erro ao buscar estatísticas do criador:', err);
+    return {
+      totalTransactions: 0,
+      approvedTransactions: 0,
+      rejectedTransactions: 0,
+      pendingTransactions: 0,
+      totalSales: '0.00',
+      todaySales: '0.00',
+      todayTransactions: 0
     };
   }
 }
@@ -1437,6 +1527,7 @@ module.exports = {
   cancelTransaction,
   getPendingTransactions,
   getStats,
+  getCreatorStats,
   getSetting,
   setSetting,
   getPixKey,

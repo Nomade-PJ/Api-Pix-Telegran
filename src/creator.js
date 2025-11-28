@@ -27,19 +27,17 @@ function registerCreatorCommands(bot) {
       
       console.log(`✅ [CREATOR] Acesso permitido para ${ctx.from.id}`);
       
-      // Buscar estatísticas em tempo real
-      const stats = await db.getStats();
+      // Buscar estatísticas em tempo real (apenas transações aprovadas para criadores)
+      const stats = await db.getCreatorStats();
       const pendingCount = await db.getPendingTransactions().then(txs => txs.length);
       
       const message = `👑 *PAINEL DO CRIADOR*
 
 📊 *ESTATÍSTICAS EM TEMPO REAL*
 
-💳 *Transações:* ${stats.totalTransactions}
+💳 *Transações Aprovadas:* ${stats.totalTransactions}
 ⏳ *Pendentes:* ${pendingCount}
 💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
-✅ *Aprovadas:* ${stats.approvedTransactions || 0}
-❌ *Rejeitadas:* ${stats.rejectedTransactions || 0}
 
 📅 *Hoje:*
 💰 Vendas: R$ ${parseFloat(stats.todaySales || 0).toFixed(2)}
@@ -75,16 +73,13 @@ Selecione uma opção abaixo:`;
     if (!isCreator) return;
     
     try {
-      const stats = await db.getStats();
+      const stats = await db.getCreatorStats();
       const pending = await db.getPendingTransactions();
       
       const message = `📊 *ESTATÍSTICAS DETALHADAS*
 
-💳 *Total de Transações:* ${stats.totalTransactions}
+💳 *Transações Aprovadas:* ${stats.totalTransactions}
 ⏳ *Pendentes:* ${pending.length}
-✅ *Aprovadas:* ${stats.approvedTransactions || 0}
-❌ *Rejeitadas:* ${stats.rejectedTransactions || 0}
-📦 *Entregues:* ${stats.deliveredTransactions || 0}
 
 💰 *FINANCEIRO*
 • Total Vendido: R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
@@ -92,7 +87,6 @@ Selecione uma opção abaixo:`;
 
 📅 *PERÍODO*
 • Transações Hoje: ${stats.todayTransactions || 0}
-• Transações Últimos 7 dias: ${stats.last7DaysTransactions || 0}
 
 ⏰ *Atualizado:* ${new Date().toLocaleString('pt-BR')}`;
 
@@ -365,7 +359,7 @@ Tudo em dia! 🎉`, {
       }
       
       // Buscar estatísticas em tempo real
-      const stats = await db.getStats();
+      const stats = await db.getCreatorStats();
       const pendingTxs = await db.getPendingTransactions();
       const pendingCount = pendingTxs.length;
       
@@ -373,11 +367,9 @@ Tudo em dia! 🎉`, {
 
 📊 *ESTATÍSTICAS EM TEMPO REAL*
 
-💳 *Transações:* ${stats.totalTransactions}
+💳 *Transações Aprovadas:* ${stats.totalTransactions}
 ⏳ *Pendentes:* ${pendingCount}
 💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
-✅ *Aprovadas:* ${stats.approvedTransactions || 0}
-❌ *Rejeitadas:* ${stats.rejectedTransactions || 0}
 
 📅 *Hoje:*
 💰 Vendas: R$ ${parseFloat(stats.todaySales || 0).toFixed(2)}
