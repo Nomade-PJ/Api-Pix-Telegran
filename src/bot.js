@@ -15,6 +15,10 @@ function createBot(token) {
   startExpirationJob();
   console.log('✅ [BOT-INIT] Job de expiração de transações iniciado');
   
+  // 🆕 REGISTRAR COMANDO /criador PRIMEIRO (antes de tudo, para garantir prioridade)
+  creator.registerCreatorCommands(bot);
+  console.log('✅ [BOT-INIT] Comando /criador registrado PRIMEIRO');
+  
   // Configurar usuário criador automaticamente (se ainda não estiver configurado)
   const CREATOR_TELEGRAM_ID = 7147424680; // ID do primeiro criador (vê painel no /start)
   const SECOND_CREATOR_ID = 6668959779; // ID do segundo criador (menu normal, acesso via /criador)
@@ -1153,13 +1157,10 @@ Um administrador irá validar manualmente.
   });
 
   console.log('✅ [BOT-INIT] Handler de comprovantes registrado');
-
+  
   // Registrar comandos admin DEPOIS do handler de comprovantes
   admin.registerAdminCommands(bot);
-  
-  // Registrar comandos do criador
-  creator.registerCreatorCommands(bot);
-  console.log('✅ [BOT-INIT] Comandos do criador registrados');
+  console.log('✅ [BOT-INIT] Comandos do admin registrados');
 
   bot.action(/buy:(.+)/, async (ctx) => {
     try {

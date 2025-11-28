@@ -105,9 +105,16 @@ async function isUserCreator(telegramId) {
       .eq('telegram_id', telegramId)
       .single();
     
-    if (error) return false;
-    return data?.is_creator || false;
+    if (error) {
+      console.log(`🔍 [DB] Erro ao verificar criador ${telegramId}:`, error.message);
+      return false;
+    }
+    
+    const result = data?.is_creator || false;
+    console.log(`🔍 [DB] Usuário ${telegramId} - is_creator: ${result}`);
+    return result;
   } catch (err) {
+    console.error(`❌ [DB] Erro ao verificar criador ${telegramId}:`, err.message);
     return false;
   }
 }

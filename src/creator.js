@@ -5,15 +5,27 @@ const { Markup } = require('telegraf');
 const db = require('./database');
 
 function registerCreatorCommands(bot) {
+  console.log('🔧 [CREATOR-REGISTER] Registrando comando /criador...');
   
   // ===== COMANDO /criador =====
   bot.command('criador', async (ctx) => {
+    console.log('🎯 [CREATOR] Handler /criador executado para:', ctx.from.id);
     try {
+      console.log(`🔍 [CREATOR] Comando /criador recebido de: ${ctx.from.id} (@${ctx.from.username || 'sem username'})`);
+      
+      // Garantir que o usuário existe no banco
+      await db.getOrCreateUser(ctx.from);
+      
+      // Verificar se é criador
       const isCreator = await db.isUserCreator(ctx.from.id);
+      console.log(`🔍 [CREATOR] Usuário ${ctx.from.id} - isCreator: ${isCreator}`);
       
       if (!isCreator) {
+        console.log(`❌ [CREATOR] Acesso negado para ${ctx.from.id}`);
         return ctx.reply('❌ Acesso negado. Você não tem permissão para acessar o painel do criador.');
       }
+      
+      console.log(`✅ [CREATOR] Acesso permitido para ${ctx.from.id}`);
       
       // Buscar estatísticas em tempo real
       const stats = await db.getStats();
