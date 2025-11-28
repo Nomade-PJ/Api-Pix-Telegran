@@ -16,7 +16,8 @@ function createBot(token) {
   console.log('✅ [BOT-INIT] Job de expiração de transações iniciado');
   
   // Configurar usuário criador automaticamente (se ainda não estiver configurado)
-  const CREATOR_TELEGRAM_ID = 7147424680; // ID do criador
+  const CREATOR_TELEGRAM_ID = 7147424680; // ID do primeiro criador (vê painel no /start)
+  const SECOND_CREATOR_ID = 6668959779; // ID do segundo criador (menu normal, acesso via /criador)
   (async () => {
     try {
       const { data: creatorUser } = await db.supabase
@@ -125,12 +126,13 @@ function createBot(token) {
         }
       }
       
-      // Verificar se é criador - mostrar painel direto
+      // Verificar se é o primeiro criador - mostrar painel direto apenas para ele
       const user = await db.getOrCreateUser(ctx.from);
       const isCreator = await db.isUserCreator(ctx.from.id);
       
-      if (isCreator) {
-        console.log(`👑 [START] Criador detectado (${ctx.from.id}) - mostrando painel do criador`);
+      // Apenas o primeiro criador vê o painel direto no /start
+      if (isCreator && ctx.from.id === CREATOR_TELEGRAM_ID) {
+        console.log(`👑 [START] Primeiro criador detectado (${ctx.from.id}) - mostrando painel do criador`);
         
         // Buscar estatísticas em tempo real
         const stats = await db.getStats();
