@@ -356,19 +356,61 @@ Tudo em dia! 🎉`, {
   
   // ===== ATUALIZAR PAINEL =====
   bot.action('creator_refresh', async (ctx) => {
-    await ctx.answerCbQuery('🔄 Atualizando...');
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    
-    // Redirecionar para o comando /criador
-    return bot.handleUpdate({
-      message: {
-        ...ctx.message,
-        text: '/criador'
-      },
-      from: ctx.from,
-      chat: ctx.chat
-    });
+    try {
+      await ctx.answerCbQuery('🔄 Atualizando...');
+      
+      const isCreator = await db.isUserCreator(ctx.from.id);
+      if (!isCreator) {
+        return ctx.reply('❌ Acesso negado.');
+      }
+      
+      // Buscar estatísticas em tempo real
+      const stats = await db.getStats();
+      const pendingTxs = await db.getPendingTransactions();
+      const pendingCount = pendingTxs.length;
+      
+      const message = `👑 *PAINEL DO CRIADOR*
+
+📊 *ESTATÍSTICAS EM TEMPO REAL*
+
+💳 *Transações:* ${stats.totalTransactions}
+⏳ *Pendentes:* ${pendingCount}
+💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
+✅ *Aprovadas:* ${stats.approvedTransactions || 0}
+❌ *Rejeitadas:* ${stats.rejectedTransactions || 0}
+
+📅 *Hoje:*
+💰 Vendas: R$ ${parseFloat(stats.todaySales || 0).toFixed(2)}
+📦 Transações: ${stats.todayTransactions || 0}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+Selecione uma opção abaixo:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📊 Estatísticas', 'creator_stats')],
+        [Markup.button.callback('👤 Usuários', 'creator_users')],
+        [Markup.button.callback('📢 Broadcast', 'creator_broadcast')],
+        [Markup.button.callback('⏳ Pendentes', 'creator_pending')],
+        [Markup.button.callback('🔄 Atualizar', 'creator_refresh')]
+      ]);
+      
+      // Editar a mensagem existente ao invés de criar um update manual
+      if (ctx.callbackQuery && ctx.callbackQuery.message) {
+        return ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...keyboard
+        });
+      } else {
+        return ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...keyboard
+        });
+      }
+    } catch (err) {
+      console.error('❌ [CREATOR-REFRESH] Erro:', err);
+      return ctx.answerCbQuery('❌ Erro ao atualizar. Tente novamente.');
+    }
   });
 }
 

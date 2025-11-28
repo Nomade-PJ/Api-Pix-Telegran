@@ -236,18 +236,25 @@ Selecione uma opção abaixo:`;
   
   // 🆕 DEBUG: Log TODOS os tipos de mensagem
   bot.use(async (ctx, next) => {
-    if (ctx.message) {
-      console.log('📨 [BOT-USE] Mensagem recebida:', {
-        message_id: ctx.message.message_id,
-        from: ctx.from.id,
-        text: ctx.message.text?.substring(0, 50) || 'N/A',
-        photo: !!ctx.message.photo,
-        document: !!ctx.message.document,
-        video: !!ctx.message.video,
-        audio: !!ctx.message.audio
-      });
+    try {
+      // Apenas logar mensagens, não callback_query
+      if (ctx.message && ctx.from && ctx.from.id) {
+        console.log('📨 [BOT-USE] Mensagem recebida:', {
+          message_id: ctx.message.message_id,
+          from: ctx.from.id,
+          text: ctx.message.text?.substring(0, 50) || 'N/A',
+          photo: !!ctx.message.photo,
+          document: !!ctx.message.document,
+          video: !!ctx.message.video,
+          audio: !!ctx.message.audio
+        });
+      }
+      return next();
+    } catch (err) {
+      // Ignorar erros no middleware para não quebrar o fluxo
+      console.error('⚠️ [BOT-USE] Erro no middleware:', err.message);
+      return next();
     }
-    return next();
   });
 
   // Handler para contato compartilhado (verificação de DDD)
@@ -325,18 +332,25 @@ Selecione uma opção abaixo:`;
   
   // 🆕 DEBUG: Log TODOS os tipos de mensagem
   bot.use(async (ctx, next) => {
-    if (ctx.message) {
-      console.log('📨 [BOT-USE] Mensagem recebida:', {
-        message_id: ctx.message.message_id,
-        from: ctx.from.id,
-        text: ctx.message.text?.substring(0, 50) || 'N/A',
-        photo: !!ctx.message.photo,
-        document: !!ctx.message.document,
-        video: !!ctx.message.video,
-        audio: !!ctx.message.audio
-      });
+    try {
+      // Apenas logar mensagens, não callback_query
+      if (ctx.message && ctx.from && ctx.from.id) {
+        console.log('📨 [BOT-USE] Mensagem recebida:', {
+          message_id: ctx.message.message_id,
+          from: ctx.from.id,
+          text: ctx.message.text?.substring(0, 50) || 'N/A',
+          photo: !!ctx.message.photo,
+          document: !!ctx.message.document,
+          video: !!ctx.message.video,
+          audio: !!ctx.message.audio
+        });
+      }
+      return next();
+    } catch (err) {
+      // Ignorar erros no middleware para não quebrar o fluxo
+      console.error('⚠️ [BOT-USE] Erro no middleware:', err.message);
+      return next();
     }
-    return next();
   });
 
   // Receber comprovante (foto ou documento)
