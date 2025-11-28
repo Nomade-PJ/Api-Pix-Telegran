@@ -95,28 +95,84 @@ function createBot(token) {
           console.log(`🔍 [DDD-CHECK] Novo usuário - DDD: ${areaCode}, Telefone: ${phoneNumber}`);
           
           if (areaCode) {
-            const isBlocked = await db.isAreaCodeBlocked(areaCode);
+            // Verificar se é admin ou criador no banco (ignora bloqueio de DDD)
+            const [isAdmin, isCreator] = await Promise.all([
+              db.isUserAdmin(ctx.from.id),
+              db.isUserCreator(ctx.from.id)
+            ]);
             
-            if (isBlocked) {
-              console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
-              return ctx.reply(
-                '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
-                'No momento, não conseguimos processar seu acesso.\n\n' +
-                'Estamos trabalhando para expandir nosso atendimento em breve!',
-                { 
-                  parse_mode: 'Markdown',
-                  reply_markup: { remove_keyboard: true }
-                }
-              );
+            // Se for admin ou criador, pular verificação de DDD
+            if (isAdmin || isCreator) {
+              console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${isAdmin ? 'admin' : 'criador'} - ignorando bloqueio de DDD`);
+            } else {
+              // Apenas verificar bloqueio se não for admin/criador
+              const isBlocked = await db.isAreaCodeBlocked(areaCode);
+              
+              if (isBlocked) {
+                console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
+                return ctx.reply(
+                  '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+                  'No momento, não conseguimos processar seu acesso.\n\n' +
+                  'Estamos trabalhando para expandir nosso atendimento em breve!',
+                  { 
+                    parse_mode: 'Markdown',
+                    reply_markup: { remove_keyboard: true }
+                  }
+                );
+              }
             }
           }
         }
       }
       
+      // Verificar se é criador - mostrar painel direto
+      const user = await db.getOrCreateUser(ctx.from);
+      const isCreator = await db.isUserCreator(ctx.from.id);
+      
+      if (isCreator) {
+        console.log(`👑 [START] Criador detectado (${ctx.from.id}) - mostrando painel do criador`);
+        
+        // Buscar estatísticas em tempo real
+        const stats = await db.getStats();
+        const pendingTxs = await db.getPendingTransactions();
+        const pendingCount = pendingTxs.length;
+        
+        const message = `👑 *PAINEL DO CRIADOR*
+
+📊 *ESTATÍSTICAS EM TEMPO REAL*
+
+💳 *Transações:* ${stats.totalTransactions}
+⏳ *Pendentes:* ${pendingCount}
+💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
+✅ *Aprovadas:* ${stats.approvedTransactions || 0}
+❌ *Rejeitadas:* ${stats.rejectedTransactions || 0}
+
+📅 *Hoje:*
+💰 Vendas: R$ ${parseFloat(stats.todaySales || 0).toFixed(2)}
+📦 Transações: ${stats.todayTransactions || 0}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+Selecione uma opção abaixo:`;
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('📊 Estatísticas', 'creator_stats')],
+          [Markup.button.callback('👤 Usuários', 'creator_users')],
+          [Markup.button.callback('📢 Broadcast', 'creator_broadcast')],
+          [Markup.button.callback('⏳ Pendentes', 'creator_pending')],
+          [Markup.button.callback('🔄 Atualizar', 'creator_refresh')]
+        ]);
+        
+        return ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...keyboard
+        });
+      }
+      
+      // Se não for criador, mostrar menu normal
       // Paralelizar queries (OTIMIZAÇÃO #4)
       console.log('📦 [START] Buscando produtos, grupos e media packs...');
-      const [user, products, groups, mediaPacks, supportLink] = await Promise.all([
-        db.getOrCreateUser(ctx.from),
+      const [products, groups, mediaPacks, supportLink] = await Promise.all([
         db.getAllProducts(),
         db.getAllGroups(),
         db.getAllMediaPacks(),
@@ -209,20 +265,31 @@ function createBot(token) {
         });
       }
       
-      // Verificar se o DDD está bloqueado
-      const isBlocked = await db.isAreaCodeBlocked(areaCode);
+      // Verificar se é admin ou criador no banco (ignora bloqueio de DDD)
+      const [isAdmin, isCreator] = await Promise.all([
+        db.isUserAdmin(ctx.from.id),
+        db.isUserCreator(ctx.from.id)
+      ]);
       
-      if (isBlocked) {
-        console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
-        return ctx.reply(
-          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
-          'No momento, não conseguimos processar seu acesso.\n\n' +
-          'Estamos trabalhando para expandir nosso atendimento em breve!',
-          { 
-            parse_mode: 'Markdown',
-            reply_markup: { remove_keyboard: true }
-          }
-        );
+      // Se for admin ou criador, pular verificação de DDD
+      if (isAdmin || isCreator) {
+        console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${isAdmin ? 'admin' : 'criador'} - ignorando bloqueio de DDD ${areaCode}`);
+      } else {
+        // Verificar se o DDD está bloqueado apenas se não for admin/criador
+        const isBlocked = await db.isAreaCodeBlocked(areaCode);
+        
+        if (isBlocked) {
+          console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
+          return ctx.reply(
+            '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+            'No momento, não conseguimos processar seu acesso.\n\n' +
+            'Estamos trabalhando para expandir nosso atendimento em breve!',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: { remove_keyboard: true }
+            }
+          );
+        }
       }
       
       // DDD permitido - criar usuário e salvar telefone
