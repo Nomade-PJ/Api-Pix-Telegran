@@ -4,6 +4,7 @@ const manualPix = require('./pix/manual');
 const deliver = require('./deliver');
 const db = require('./database');
 const admin = require('./admin');
+const creator = require('./creator');
 const proofAnalyzer = require('./proofAnalyzer');
 const { startExpirationJob } = require('./jobs/expireTransactions');
 
@@ -13,6 +14,30 @@ function createBot(token) {
   // Iniciar job de expiração automática de transações
   startExpirationJob();
   console.log('✅ [BOT-INIT] Job de expiração de transações iniciado');
+  
+  // Configurar usuário criador automaticamente (se ainda não estiver configurado)
+  const CREATOR_TELEGRAM_ID = 7147424680; // ID do criador
+  (async () => {
+    try {
+      const { data: creatorUser } = await db.supabase
+        .from('users')
+        .select('is_creator')
+        .eq('telegram_id', CREATOR_TELEGRAM_ID)
+        .single();
+      
+      if (creatorUser && !creatorUser.is_creator) {
+        await db.setUserAsCreator(CREATOR_TELEGRAM_ID);
+        console.log(`✅ [BOT-INIT] Usuário ${CREATOR_TELEGRAM_ID} configurado como criador`);
+      } else if (!creatorUser) {
+        console.log(`ℹ️ [BOT-INIT] Usuário ${CREATOR_TELEGRAM_ID} ainda não existe - será configurado quando usar o bot`);
+      } else {
+        console.log(`✅ [BOT-INIT] Usuário ${CREATOR_TELEGRAM_ID} já é criador`);
+      }
+    } catch (err) {
+      console.log(`ℹ️ [BOT-INIT] Criador será configurado quando usar o bot pela primeira vez`);
+    }
+  })();
+  
 
   // Registrar handler do /start PRIMEIRO (antes de tudo)
   bot.start(async (ctx) => {
@@ -1062,6 +1087,10 @@ Um administrador irá validar manualmente.
 
   // Registrar comandos admin DEPOIS do handler de comprovantes
   admin.registerAdminCommands(bot);
+  
+  // Registrar comandos do criador
+  creator.registerCreatorCommands(bot);
+  console.log('✅ [BOT-INIT] Comandos do criador registrados');
 
   bot.action(/buy:(.+)/, async (ctx) => {
     try {

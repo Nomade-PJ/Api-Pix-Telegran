@@ -97,6 +97,37 @@ async function isUserAdmin(telegramId) {
   }
 }
 
+async function isUserCreator(telegramId) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('is_creator')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (error) return false;
+    return data?.is_creator || false;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function setUserAsCreator(telegramId) {
+  try {
+    const { error } = await supabase
+      .from('users')
+      .update({ is_creator: true })
+      .eq('telegram_id', telegramId);
+    
+    if (error) throw error;
+    console.log(`✅ Usuário ${telegramId} definido como criador`);
+    return true;
+  } catch (err) {
+    console.error('Erro ao definir como criador:', err);
+    return false;
+  }
+}
+
 // ===== PRODUTOS =====
 
 async function getProduct(productId, includeInactive = false) {
@@ -1380,6 +1411,8 @@ module.exports = {
   getOrCreateUser,
   getUserByUUID,
   isUserAdmin,
+  isUserCreator,
+  setUserAsCreator,
   getRecentUsers,
   getAllAdmins,
   getProduct,

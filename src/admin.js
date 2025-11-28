@@ -627,6 +627,41 @@ Digite o ID do produto:
       
       if (!session) return; // Não há sessão ativa
       
+      // Verificar se é broadcast do criador
+      if (session.type === 'creator_broadcast' && session.step === 'message') {
+        const isCreator = await db.isUserCreator(ctx.from.id);
+        if (!isCreator) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        const message = ctx.message.text;
+        
+        // Confirmar antes de enviar
+        global._SESSIONS[ctx.from.id] = {
+          type: 'creator_broadcast',
+          step: 'confirm',
+          data: { message }
+        };
+        
+        return ctx.reply(`📢 *CONFIRMAR BROADCAST*
+
+*Mensagem:*
+${message}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ *Esta mensagem será enviada para TODOS os usuários.*
+
+Deseja continuar?`, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Confirmar e Enviar', 'confirm_creator_broadcast')],
+            [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
+          ])
+        });
+      }
+      
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return;
       
