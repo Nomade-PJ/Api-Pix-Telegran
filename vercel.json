@@ -1,4 +1,31 @@
 {
-  "version": 2
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/telegram-webhook.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/sign-contract.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/contrato.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/webhook-secreto-aleatorio",
+      "dest": "/api/telegram-webhook.js"
+    },
+    {
+      "src": "/contrato",
+      "dest": "/api/contrato.js"
+    },
+    {
+      "src": "/api/sign-contract",
+      "dest": "/api/sign-contract.js"
+    }
+  ]
 }
-

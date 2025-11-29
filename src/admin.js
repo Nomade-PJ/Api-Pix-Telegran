@@ -48,6 +48,9 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('📢 Broadcast', 'admin_broadcast')
         ],
         [
+          Markup.button.callback('🎟️ Cupons', 'admin_coupons')
+        ],
+        [
           Markup.button.callback('🔄 Atualizar', 'admin_refresh')
         ]
       ]);
@@ -641,25 +644,200 @@ Digite o ID do produto:
         global._SESSIONS[ctx.from.id] = {
           type: 'creator_broadcast',
           step: 'confirm',
-          data: { message }
+          data: { message },
+          broadcastType: session.broadcastType || 'simple',
+          productId: session.productId,
+          mediaPackId: session.mediaPackId,
+          productName: session.productName || '',
+          productPrice: session.productPrice || 0
         };
         
-        return ctx.reply(`📢 *CONFIRMAR BROADCAST*
+        let previewMessage = `📢 *CONFIRMAR BROADCAST*
 
 *Mensagem:*
-${message}
+${message}`;
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+        if (session.broadcastType === 'product' && session.productName) {
+          previewMessage += `\n\n📦 *Produto:* ${session.productName}`;
+          previewMessage += `\n💰 *Preço:* R$ ${parseFloat(session.productPrice || 0).toFixed(2)}`;
+        } else if (session.broadcastType === 'media_pack' && session.packName) {
+          previewMessage += `\n\n📸 *Pack:* ${session.packName}`;
+          previewMessage += `\n💰 *Preço:* R$ ${parseFloat(session.packPrice || 0).toFixed(2)}`;
+        }
 
-⚠️ *Esta mensagem será enviada para TODOS os usuários.*
-
-Deseja continuar?`, {
+        previewMessage += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️ *Esta mensagem será enviada para TODOS os usuários.*\n\nDeseja continuar?`;
+        
+        return ctx.reply(previewMessage, {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([
             [Markup.button.callback('✅ Confirmar e Enviar', 'confirm_creator_broadcast')],
             [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
           ])
         });
+      }
+      
+      // Verificar se é criação de cupom
+      if (session.type === 'create_coupon') {
+        const isCreator = await db.isUserCreator(ctx.from.id);
+        if (!isCreator) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        if (session.step === 'code') {
+          const code = ctx.message.text.trim().toUpperCase();
+          
+          // Validar código
+          if (code.length < 3 || code.length > 20) {
+            return ctx.reply('❌ Código inválido. Use entre 3 e 20 caracteres.\n\nTente novamente:');
+          }
+          
+          // Verificar se código já existe
+          const { data: existingCoupon } = await db.supabase
+            .from('coupons')
+            .select('code')
+            .eq('code', code)
+            .single();
+          
+          if (existingCoupon) {
+            return ctx.reply('❌ Este código já está em uso. Escolha outro:');
+          }
+          
+          session.data = { code };
+          session.step = 'discount';
+          
+          return ctx.reply(`✅ Código: \`${code}\`
+
+*Passo 2/4:* Digite a *porcentagem de desconto* (1-99):
+
+Exemplo: 10, 20, 50, 90
+
+_Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'discount') {
+          const discount = parseInt(ctx.message.text.trim());
+          
+          if (isNaN(discount) || discount < 1 || discount > 99) {
+            return ctx.reply('❌ Porcentagem inválida. Use um número entre 1 e 99.\n\nTente novamente:');
+          }
+          
+          session.data.discount = discount;
+          session.step = 'max_uses';
+          
+          const productName = session.productName || session.packName || 'Produto';
+          const originalPrice = parseFloat(session.productPrice || session.packPrice || 0);
+          const discountedPrice = originalPrice * (1 - discount / 100);
+          
+          return ctx.reply(`✅ Desconto: ${discount}%
+
+💰 Preço original: R$ ${originalPrice.toFixed(2)}
+💚 Preço com desconto: R$ ${discountedPrice.toFixed(2)}
+
+*Passo 3/4:* Digite o *número máximo de usos* (ou envie 0 para ilimitado):
+
+Exemplo: 100, 500, 0
+
+_Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'max_uses') {
+          const maxUses = parseInt(ctx.message.text.trim());
+          
+          if (isNaN(maxUses) || maxUses < 0) {
+            return ctx.reply('❌ Número inválido. Use 0 para ilimitado ou um número positivo.\n\nTente novamente:');
+          }
+          
+          session.data.maxUses = maxUses === 0 ? null : maxUses;
+          session.step = 'expiration';
+          
+          return ctx.reply(`✅ Usos máximos: ${maxUses === 0 ? 'Ilimitado' : maxUses}
+
+*Passo 4/4:* Digite a *data de expiração* (ou envie 0 para sem expiração):
+
+Formato: DD/MM/AAAA
+Exemplo: 31/12/2025, 15/01/2026, 0
+
+_Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
+        }
+        
+        if (session.step === 'expiration') {
+          const text = ctx.message.text.trim();
+          let expiresAt = null;
+          
+          if (text !== '0') {
+            // Validar formato de data
+            const dateRegex = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+            const match = text.match(dateRegex);
+            
+            if (!match) {
+              return ctx.reply('❌ Formato de data inválido. Use DD/MM/AAAA ou 0 para sem expiração.\n\nTente novamente:');
+            }
+            
+            const [_, day, month, year] = match;
+            const date = new Date(year, month - 1, day, 23, 59, 59);
+            
+            if (date < new Date()) {
+              return ctx.reply('❌ Data de expiração não pode ser no passado.\n\nTente novamente:');
+            }
+            
+            expiresAt = date.toISOString();
+          }
+          
+          // Criar cupom no banco
+          try {
+            const user = await db.getOrCreateUser(ctx.from);
+            
+            const { data: coupon, error } = await db.supabase
+              .from('coupons')
+              .insert([{
+                code: session.data.code,
+                discount_percentage: session.data.discount,
+                product_id: session.productId || null,
+                media_pack_id: session.mediaPackId || null,
+                max_uses: session.data.maxUses,
+                expires_at: expiresAt,
+                created_by: user.id
+              }])
+              .select()
+              .single();
+            
+            if (error) throw error;
+            
+            delete global._SESSIONS[ctx.from.id];
+            
+            const productName = session.productName || session.packName || 'Produto';
+            const originalPrice = parseFloat(session.productPrice || session.packPrice || 0);
+            const discountedPrice = originalPrice * (1 - session.data.discount / 100);
+            
+            return ctx.reply(`🎉 *CUPOM CRIADO COM SUCESSO!*
+
+🎟️ *Código:* \`${session.data.code}\`
+💰 *Desconto:* ${session.data.discount}%
+📦 *Produto:* ${productName}
+💵 *Preço original:* R$ ${originalPrice.toFixed(2)}
+💚 *Preço com desconto:* R$ ${discountedPrice.toFixed(2)}
+📊 *Usos máximos:* ${session.data.maxUses || 'Ilimitado'}
+${expiresAt ? `⏰ *Expira em:* ${new Date(expiresAt).toLocaleDateString('pt-BR')}` : '⏰ *Expira em:* Nunca'}
+
+✅ O cupom já está ativo e pronto para uso!
+
+Para divulgar, você pode:
+1. Usar /start para ver o produto
+2. Criar um broadcast associado ao cupom
+3. Compartilhar o código: \`${session.data.code}\``, { 
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('📢 Criar Broadcast', 'creator_broadcast_coupon')],
+                [Markup.button.callback('🔙 Voltar', 'creator_coupons')]
+              ])
+            });
+          } catch (err) {
+            console.error('Erro ao criar cupom:', err);
+            delete global._SESSIONS[ctx.from.id];
+            return ctx.reply('❌ Erro ao criar cupom. Tente novamente.');
+          }
+        }
       }
       
       const isAdmin = await db.isUserAdmin(ctx.from.id);
@@ -1250,7 +1428,8 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('👥 Usuários', 'admin_users')
       ],
       [
-        Markup.button.callback('📢 Broadcast', 'admin_broadcast')
+        Markup.button.callback('📢 Broadcast', 'admin_broadcast'),
+        Markup.button.callback('🎟️ Cupons', 'admin_coupons')
       ],
       [
         Markup.button.callback('🔄 Atualizar', 'admin_refresh')
@@ -1721,16 +1900,151 @@ Digite /setpix seguido da nova chave
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) return;
     
-    return ctx.reply(`📢 *ENVIAR MENSAGEM EM MASSA*
+    try {
+      const message = `📢 *NOVO BROADCAST*
 
-Para enviar uma mensagem para todos os usuários, use:
+Escolha o tipo de broadcast:
 
-/broadcast [sua mensagem]
+1️⃣ *Broadcast Simples* - Mensagem para todos os usuários
+2️⃣ *Broadcast com Produto* - Associar a um produto específico
+3️⃣ *Broadcast com Cupom* - Criar cupom e divulgar
 
-*Exemplo:*
-/broadcast 🎉 Novidade! Novo produto disponível com 50% de desconto!
+Selecione uma opção:`;
 
-⚠️ *Atenção:* A mensagem será enviada para TODOS os usuários cadastrados no bot.`, { parse_mode: 'Markdown' });
+      const buttons = [
+        [Markup.button.callback('📣 Broadcast Simples', 'admin_broadcast_simple')],
+        [Markup.button.callback('🛍️ Broadcast + Produto', 'admin_broadcast_product')],
+        [Markup.button.callback('🎟️ Broadcast + Cupom', 'admin_broadcast_coupon')],
+        [Markup.button.callback('🔙 Voltar', 'admin_refresh')]
+      ];
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+    } catch (err) {
+      console.error('Erro no broadcast:', err);
+      return ctx.reply('❌ Erro ao carregar opções de broadcast.');
+    }
+  });
+
+  // ===== CUPONS (ADMIN) =====
+  bot.action('admin_coupons', async (ctx) => {
+    await ctx.answerCbQuery('🎟️ Carregando cupons...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      // Buscar todos os cupons
+      const { data: coupons, error } = await db.supabase
+        .from('coupons')
+        .select('*, products:product_id(name), media_packs:media_pack_id(name), users:created_by(first_name, username)')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      
+      if (error) throw error;
+      
+      let message = `🎟️ *GERENCIAR CUPONS*\n\n`;
+      
+      if (!coupons || coupons.length === 0) {
+        message += `Nenhum cupom criado ainda.\n\n`;
+      } else {
+        message += `📋 *Cupons cadastrados (últimos 20):*\n\n`;
+        
+        for (const coupon of coupons) {
+          const status = coupon.is_active ? '✅' : '❌';
+          const productName = coupon.products?.name || coupon.media_packs?.name || 'Produto removido';
+          const uses = coupon.max_uses ? `${coupon.current_uses}/${coupon.max_uses}` : `${coupon.current_uses}/∞`;
+          const creator = coupon.users ? `${coupon.users.first_name || coupon.users.username || 'N/A'}` : 'Admin';
+          
+          message += `${status} \`${coupon.code}\`\n`;
+          message += `   💰 ${coupon.discount_percentage}% de desconto\n`;
+          message += `   📦 ${productName}\n`;
+          message += `   📊 Usos: ${uses}\n`;
+          message += `   👤 Criador: ${creator}\n`;
+          if (coupon.expires_at) {
+            const expiresAt = new Date(coupon.expires_at);
+            const isExpired = expiresAt < new Date();
+            message += `   ⏰ ${isExpired ? '🔴 Expirado' : 'Expira'}: ${expiresAt.toLocaleDateString('pt-BR')}\n`;
+          }
+          message += `\n`;
+        }
+      }
+      
+      // Estatísticas gerais
+      const { data: allCoupons } = await db.supabase
+        .from('coupons')
+        .select('id, current_uses, max_uses, is_active');
+      
+      const { data: usage } = await db.supabase
+        .from('coupon_usage')
+        .select('discount_amount');
+      
+      const totalCoupons = allCoupons?.length || 0;
+      const activeCoupons = allCoupons?.filter(c => c.is_active && c.current_uses < (c.max_uses || Infinity)).length || 0;
+      const totalUses = usage?.length || 0;
+      const totalDiscount = usage?.reduce((sum, u) => sum + parseFloat(u.discount_amount), 0) || 0;
+      
+      message += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      message += `📊 *Estatísticas gerais:*\n`;
+      message += `🎟️ Total de cupons: ${totalCoupons}\n`;
+      message += `✅ Cupons ativos: ${activeCoupons}\n`;
+      message += `📈 Total de usos: ${totalUses}\n`;
+      message += `💰 Desconto total: R$ ${totalDiscount.toFixed(2)}\n\n`;
+      message += `Selecione uma opção:`;
+      
+      const buttons = [
+        [Markup.button.callback('➕ Novo Cupom', 'admin_new_coupon')],
+        [Markup.button.callback('🗑️ Desativar Cupons Expirados', 'admin_cleanup_coupons')],
+        [Markup.button.callback('🔙 Voltar', 'admin_refresh')]
+      ];
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+    } catch (err) {
+      console.error('Erro ao listar cupons:', err);
+      return ctx.reply('❌ Erro ao carregar cupons.');
+    }
+  });
+  
+  // Criar novo cupom (admin)
+  bot.action('admin_new_coupon', async (ctx) => {
+    await ctx.answerCbQuery('➕ Use o painel criador para criar cupons');
+    return ctx.reply('➕ Para criar cupons, use o comando /criador e acesse a seção de cupons.\n\nIsso garante que os cupons sejam associados corretamente ao criador.');
+  });
+  
+  // Limpar cupons expirados
+  bot.action('admin_cleanup_coupons', async (ctx) => {
+    await ctx.answerCbQuery('🗑️ Limpando cupons expirados...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const now = new Date().toISOString();
+      
+      // Desativar cupons expirados
+      const { data, error } = await db.supabase
+        .from('coupons')
+        .update({ is_active: false })
+        .lt('expires_at', now)
+        .eq('is_active', true)
+        .select();
+      
+      if (error) throw error;
+      
+      const count = data?.length || 0;
+      
+      return ctx.reply(`✅ Limpeza concluída!\n\n🗑️ ${count} cupom(ns) expirado(s) foi(ram) desativado(s).`, {
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar', 'admin_coupons')]
+        ])
+      });
+    } catch (err) {
+      console.error('Erro ao limpar cupons:', err);
+      return ctx.reply('❌ Erro ao limpar cupons expirados.');
+    }
   });
 
   // ===== CONFIGURAR SUPORTE =====
