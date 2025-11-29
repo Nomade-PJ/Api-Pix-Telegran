@@ -54,6 +54,29 @@ module.exports = async (req, res) => {
       });
     }
 
+    // Verificar se já existe um contrato ativo para este cliente
+    const { data: existingContract, error: checkError } = await supabase
+      .from('contracts')
+      .select('*')
+      .eq('client_name', clientName)
+      .eq('status', 'active')
+      .single();
+
+    if (existingContract) {
+      console.log('⚠️ [CONTRACT] Tentativa de assinar contrato duplicado:', {
+        client: clientName,
+        existingContractId: existingContract.id
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: 'Contrato já foi assinado anteriormente',
+        alreadySigned: true,
+        contractId: existingContract.id,
+        signedAt: existingContract.signed_at
+      });
+    }
+
     // Obter IP do cliente
     const ipAddress = req.headers['x-forwarded-for'] || 
                      req.headers['x-real-ip'] || 

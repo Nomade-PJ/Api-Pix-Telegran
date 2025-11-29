@@ -10,6 +10,10 @@
       "use": "@vercel/node"
     },
     {
+      "src": "api/check-contract.js",
+      "use": "@vercel/node"
+    },
+    {
       "src": "api/contrato.js",
       "use": "@vercel/node"
     }
@@ -26,6 +30,10 @@
     {
       "src": "/api/sign-contract",
       "dest": "/api/sign-contract.js"
+    },
+    {
+      "src": "/api/check-contract",
+      "dest": "/api/check-contract.js"
     }
   ]
 }
