@@ -5,7 +5,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green)](https://nodejs.org/)
 [![Telegraf](https://img.shields.io/badge/Telegraf-4.15+-blue)](https://telegraf.js.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-orange)](https://supabase.com/)
-[![Vercel](https://img.shields.io/badge/Vercel-Serverless-black)](https://vercel.com/)
+[![Hostgator](https://img.shields.io/badge/Hostgator-Node.js-blue)](https://www.hostgator.com.br/)
 
 ---
 
@@ -122,7 +122,7 @@ Cliente usa:
 - Node.js 18+
 - Conta Supabase (gratuita)
 - Bot do Telegram (via @BotFather)
-- Conta Vercel (gratuita)
+- Hospedagem Node.js (Hostgator, Vercel, Railway, etc)
 
 ### 2. Clone o Repositório
 ```bash
@@ -162,14 +162,23 @@ TELEGRAM_WEBHOOK_SECRET=/webhook-secreto-unico
 SUPABASE_URL=https://seu-projeto.supabase.co
 SUPABASE_ANON_KEY=sua_chave_anonima
 
-# Vercel
-APP_URL=https://seu-projeto.vercel.app
+# URL do seu app hospedado
+APP_URL=https://seu-dominio.com.br
 
 # OCR (opcional - usa chave gratuita padrão)
 OCR_SPACE_API_KEY=K87899643688957
 ```
 
-### 5. Deploy na Vercel
+### 5. Deploy na Hospedagem
+
+**Opção A: Hostgator (Node.js)**
+```bash
+# 1. Faça upload dos arquivos via FTP ou Git
+# 2. Configure as variáveis de ambiente no painel
+# 3. Execute: npm install && npm start
+```
+
+**Opção B: Vercel (Serverless)**
 
 ```bash
 # Via CLI
@@ -179,10 +188,16 @@ vercel --prod
 # Ou conecte via GitHub no painel da Vercel
 ```
 
+**Opção C: Railway, Render, etc**
+```bash
+# Siga a documentação específica da plataforma
+# Todas suportam Node.js 18+
+```
+
 ### 6. Configure o Webhook
 
 ```bash
-curl -X POST "https://api.telegram.org/bot{SEU_TOKEN}/setWebhook?url=https://seu-projeto.vercel.app/webhook-secreto-unico"
+curl -X POST "https://api.telegram.org/bot{SEU_TOKEN}/setWebhook?url=https://seu-dominio.com.br/webhook-secreto-unico"
 ```
 
 ### 7. Torne-se Admin
@@ -266,9 +281,9 @@ ou
 ┌─────────────────────────────────────────┐
 │           Frontend (Telegram)           │
 ├─────────────────────────────────────────┤
-│   Bot Engine (Telegraf + Vercel)       │
+│   Bot Engine (Telegraf + Node.js)      │
 ├─────────────────────────────────────────┤
-│   Backend (Node.js Serverless)         │
+│   Backend (Node.js + Supabase)         │
 ├─────────────────────────────────────────┤
 │   Database (Supabase PostgreSQL)       │
 ├─────────────────────────────────────────┤
@@ -308,7 +323,7 @@ ou
 - ✅ **Validação de admin** - Baseada em banco de dados
 - ✅ **Bloqueio por DDD** - Restrição geográfica
 - ✅ **Expiração de transações** - Limite de 30 minutos
-- ✅ **Rate limiting** - Via Vercel Edge Functions
+- ✅ **Rate limiting** - Proteção contra spam e abuse
 - ✅ **Sanitização de dados** - Todas as entradas validadas
 - ✅ **Painel do criador seguro** - Sem acesso a dados sensíveis
 
@@ -317,7 +332,7 @@ ou
 # NUNCA commite .env
 echo ".env" >> .gitignore
 
-# Use variáveis de ambiente na Vercel
+# Use variáveis de ambiente na sua hospedagem
 # Não exponha chaves em código
 
 # Webhook secret único por deploy
@@ -332,7 +347,7 @@ TELEGRAM_WEBHOOK_SECRET=/webhook-$(openssl rand -hex 16)
 # Instalar dependências
 npm install
 
-# Executar localmente (Vercel Dev)
+# Executar localmente
 npm run dev
 
 # Expor local via ngrok
@@ -359,7 +374,7 @@ curl -X POST "https://api.telegram.org/bot{TOKEN}/setWebhook?url=..."
 ### OCR não funciona
 - ✅ Verifique se a API Key está configurada
 - ✅ Teste com imagens de alta qualidade (mínimo 300 DPI)
-- ✅ Verifique os logs na Vercel
+- ✅ Verifique os logs do servidor
 
 ### Produtos não aparecem
 ```sql
@@ -443,7 +458,7 @@ Contribuições são bem-vindas! Por favor:
 
 - 📚 [Documentação Telegraf](https://telegraf.js.org/)
 - 🗄️ [Documentação Supabase](https://supabase.com/docs)
-- ⚡ [Documentação Vercel](https://vercel.com/docs)
+- 🌐 [Hostgator Node.js](https://www.hostgator.com.br/)
 - 💳 [Especificação PIX](https://www.bcb.gov.br/estabilidadefinanceira/pix)
 
 ---

@@ -465,7 +465,7 @@ module.exports = (req, res) => {
                         <li>✅ Webhook seguro com secret path único</li>
                         <li>✅ Validação de administradores via banco de dados</li>
                         <li>✅ Bloqueio geográfico por DDD (área de cobertura)</li>
-                        <li>✅ Rate limiting via Vercel Edge Functions</li>
+                        <li>✅ Rate limiting e proteção contra spam</li>
                         <li>✅ Sanitização completa de todas as entradas</li>
                         <li>✅ Logs de auditoria de todas as operações</li>
                         <li>✅ Backup automático via Supabase</li>
@@ -475,7 +475,7 @@ module.exports = (req, res) => {
                     <ul>
                         <li>🔧 Backend: Node.js + Telegraf (framework profissional)</li>
                         <li>🔧 Banco de Dados: Supabase PostgreSQL (escalável)</li>
-                        <li>🔧 Hospedagem: Vercel Serverless (99.9% uptime)</li>
+                        <li>🔧 Hospedagem: Hostgator com Node.js (99.9% uptime)</li>
                         <li>🔧 OCR: OCR.space API (análise de comprovantes)</li>
                         <li>🔧 Pagamentos: PIX via BR Code (padrão Banco Central)</li>
                     </ul>
