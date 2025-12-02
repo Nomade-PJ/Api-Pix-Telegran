@@ -2602,45 +2602,39 @@ Entre em contato com o suporte.
           try {
             const { Markup } = require('telegraf');
             
-            // Se foi adicionado automaticamente, mensagem diferente
-            if (addedToGroup) {
-              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
+            // Calcular data de expiração
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
+            
+            // Mensagem única com todas as informações + link (gera card automático)
+            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *Você já é membro!*
 
-👥 *Grupo:* ${group.group_name}
-📅 *Acesso válido por:* ${group.subscription_days} dias
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 
-✅ *Você foi adicionado automaticamente ao grupo!*
-Acesse o grupo no seu Telegram.
-
-🆔 TXID: ${txid}`, {
-                parse_mode: 'Markdown'
-              });
-            } else {
-              // Se não foi adicionado automaticamente, enviar apenas com botão
-              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
-
-👥 *Grupo:* ${group.group_name}
-📅 *Acesso válido por:* ${group.subscription_days} dias
-
-✅ *Seu acesso foi liberado!*
-Clique no botão abaixo para entrar no grupo:
-
-🆔 TXID: ${txid}`, {
-                parse_mode: 'Markdown',
-                reply_markup: Markup.inlineKeyboard([
-                  [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
-                ])
-              });
-            }
+${group.group_link}`, {
+              parse_mode: 'Markdown',
+              disable_web_page_preview: false
+            });
             
             console.log(`✅ [ADMIN] Mensagem com link enviada ao usuário ${transaction.telegram_id}`);
           } catch (err) {
             console.error('❌ [ADMIN] Erro ao notificar usuário:', err);
             
-            // Tentar enviar apenas o link como fallback
+            // Tentar enviar mensagem simples como fallback
             try {
-              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*\n\n👥 *Grupo:* ${group.group_name}\n\n🔗 Acesse: ${group.group_link}\n\n🆔 TXID: ${txid}`, {
-                parse_mode: 'Markdown'
+              const expiresAt = new Date();
+              expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
+              
+              // Mensagem única com todas as informações + link (gera card automático)
+              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *Você já é membro!*
+
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+
+${group.group_link}`, {
+                parse_mode: 'Markdown',
+                disable_web_page_preview: false
               });
             } catch (fallbackErr) {
               console.error('❌ [ADMIN] Erro no fallback:', fallbackErr.message);

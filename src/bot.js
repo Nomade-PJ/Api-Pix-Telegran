@@ -1037,51 +1037,39 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                   try {
                     const { Markup } = require('telegraf');
                     
-                    // Se foi adicionado automaticamente, mensagem diferente
-                    if (addedToGroup) {
-                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                    // Calcular data de expiração
+                    const expiresAt = new Date();
+                    expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
+                    
+                    // Mensagem única com todas as informações + link (gera card automático)
+                    await telegram.sendMessage(chatId, `✅ *Você já é membro!*
 
-🤖 Análise de IA: ${analysis.confidence}% de confiança
-💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 
-👥 *Grupo:* ${group.group_name}
-📅 *Acesso válido por:* ${group.subscription_days} dias
-
-✅ *Você foi adicionado automaticamente ao grupo!*
-Acesse o grupo no seu Telegram.
-
-🆔 TXID: ${transactionData.txid}`, { 
-                        parse_mode: 'Markdown'
-                      });
-                    } else {
-                      // Se não foi adicionado automaticamente, enviar apenas com botão
-                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
-
-🤖 Análise de IA: ${analysis.confidence}% de confiança
-💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
-
-👥 *Grupo:* ${group.group_name}
-📅 *Acesso válido por:* ${group.subscription_days} dias
-
-✅ *Seu acesso foi liberado!*
-Clique no botão abaixo para entrar no grupo:
-
-🆔 TXID: ${transactionData.txid}`, { 
-                        parse_mode: 'Markdown',
-                        reply_markup: Markup.inlineKeyboard([
-                          [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
-                        ])
-                      });
-                    }
+${group.group_link}`, {
+                      parse_mode: 'Markdown',
+                      disable_web_page_preview: false
+                    });
                     
                     console.log(`✅ [AUTO-ANALYSIS] Mensagem com link enviada ao usuário ${chatId}`);
                   } catch (msgErr) {
                     console.error('⚠️ [AUTO-ANALYSIS] Erro ao enviar mensagem ao usuário:', msgErr.message);
                     
-                    // Tentar enviar apenas o link como fallback
+                    // Tentar enviar mensagem simples como fallback
                     try {
-                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO!*\n\n👥 *Grupo:* ${group.group_name}\n\n🔗 Acesse: ${group.group_link}\n\n🆔 TXID: ${transactionData.txid}`, {
-                        parse_mode: 'Markdown'
+                      const expiresAt = new Date();
+                      expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
+                      
+                      // Mensagem única com todas as informações + link (gera card automático)
+                      await telegram.sendMessage(chatId, `✅ *Você já é membro!*
+
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+
+${group.group_link}`, {
+                        parse_mode: 'Markdown',
+                        disable_web_page_preview: false
                       });
                     } catch (fallbackErr) {
                       console.error('❌ [AUTO-ANALYSIS] Erro no fallback:', fallbackErr.message);
@@ -1619,14 +1607,17 @@ Esta transação foi cancelada automaticamente.
         const expiresAt = new Date(existingMember.expires_at);
         const now = new Date();
         if (expiresAt > now) {
-          return ctx.reply(`✅ *Você já é membro!*
+          // Mensagem única com todas as informações + link (gera card automático)
+          await ctx.reply(`✅ *Você já é membro!*
 
 👥 Grupo: ${group.group_name}
 📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 
-🔗 Acesse: ${group.group_link}`, {
-            parse_mode: 'Markdown'
+${group.group_link}`, {
+            parse_mode: 'Markdown',
+            disable_web_page_preview: false
           });
+          return;
         }
       }
       
@@ -1710,15 +1701,18 @@ Esta transação foi cancelada automaticamente.
             hasActiveSubscription = true;
             const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
             
-            return ctx.reply(`✅ *Você já tem assinatura ativa!*
+            // Mensagem única com todas as informações + link (gera card automático)
+            await ctx.reply(`✅ *Você já tem assinatura ativa!*
 
 👥 Grupo: ${group.group_name}
 📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 ⏰ Faltam: ${daysLeft} dias
 
-🔗 Acesse: ${group.group_link}`, {
-              parse_mode: 'Markdown'
+${group.group_link}`, {
+              parse_mode: 'Markdown',
+              disable_web_page_preview: false
             });
+            return;
           }
         }
       }
