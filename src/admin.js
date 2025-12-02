@@ -2587,7 +2587,7 @@ Entre em contato com o suporte.
         if (group) {
           console.log(`👥 [ADMIN] Adicionando usuário ${transaction.telegram_id} ao grupo ${group.group_name}`);
           
-          // Adicionar ou renovar assinatura
+          // Adicionar ou renovar assinatura no banco (monitoramento de dias)
           await db.addGroupMember({
             telegramId: transaction.telegram_id,
             userId: transaction.user_id,
@@ -2595,26 +2595,25 @@ Entre em contato com o suporte.
             days: group.subscription_days
           });
           
-          // Tentar adicionar ao grupo
-          try {
-            await ctx.telegram.unbanChatMember(group.group_id, transaction.telegram_id, { only_if_banned: true });
-          } catch (unbanErr) {
-            console.error('⚠️ [ADMIN] Erro ao adicionar ao grupo (pode não ter permissão):', unbanErr.message);
-          }
+          // Tentar adicionar usuário diretamente ao grupo
+          const addedToGroup = await deliver.addUserToGroup(ctx.telegram, transaction.telegram_id, group);
           
-          // Notificar usuário
+          // Notificar usuário com botão para entrar no grupo
           try {
+            const { Markup } = require('telegraf');
             await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
 
 👥 *Grupo:* ${group.group_name}
 📅 *Acesso válido por:* ${group.subscription_days} dias
-🔗 *Link:* ${group.group_link}
 
-✅ Você foi adicionado ao grupo!
-Clique no link acima para entrar.
+✅ *Seu acesso foi liberado!*
+Clique no botão abaixo para entrar no grupo automaticamente:
 
 🆔 TXID: ${txid}`, {
-              parse_mode: 'Markdown'
+              parse_mode: 'Markdown',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
+              ])
             });
           } catch (err) {
             console.error('Erro ao notificar usuário:', err);

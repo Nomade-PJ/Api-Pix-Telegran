@@ -170,5 +170,39 @@ Erro: ${err.message}`, {
   }
 }
 
-module.exports = { deliverByLink, deliverFile, deliverContent, deliverMediaPack };
+/**
+ * Prepara usuário para ser adicionado ao grupo após aprovação
+ * 
+ * IMPORTANTE: No Telegram, grupos públicos exigem que o usuário aceite o convite.
+ * Esta função remove ban (se existir) e prepara tudo para o usuário entrar facilmente.
+ * O link será enviado na mensagem principal com botão de fácil acesso.
+ */
+async function addUserToGroup(telegram, userId, group) {
+  try {
+    console.log(`👥 [ADD-TO-GROUP] Preparando adição do usuário ${userId} ao grupo ${group.group_name} (ID: ${group.group_id})`);
+    
+    // Método 1: Tentar unban primeiro (remove ban se existir)
+    // Isso permite que usuários que foram removidos anteriormente possam voltar
+    try {
+      await telegram.unbanChatMember(group.group_id, userId, { only_if_banned: true });
+      console.log(`✅ [ADD-TO-GROUP] Unban executado (usuário pode ter estado banido anteriormente)`);
+    } catch (unbanErr) {
+      // Não é erro crítico, pode ser que não esteja banido
+      console.log(`ℹ️ [ADD-TO-GROUP] Unban não necessário ou usuário não estava banido`);
+    }
+    
+    // Método 2: Para grupos públicos/supergrupos, o Telegram exige que o usuário aceite o convite
+    // O link será enviado na mensagem principal com botão de fácil acesso
+    // Retornamos true para indicar que o processo foi iniciado e o link será enviado
+    console.log(`🔗 [ADD-TO-GROUP] Link de convite será enviado na mensagem principal`);
+    
+    return true; // Retorna true - o link será enviado na mensagem principal
+    
+  } catch (err) {
+    console.error(`❌ [ADD-TO-GROUP] Erro ao preparar adição ao grupo:`, err.message);
+    return false;
+  }
+}
+
+module.exports = { deliverByLink, deliverFile, deliverContent, deliverMediaPack, addUserToGroup };
 

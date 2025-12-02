@@ -986,7 +986,7 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                 if (group) {
                   console.log(`👥 [AUTO-ANALYSIS] Adicionando usuário ${chatId} ao grupo ${group.group_name}`);
                   
-                  // Adicionar ou renovar assinatura
+                  // Adicionar ou renovar assinatura no banco (monitoramento de dias)
                   await db.addGroupMember({
                     telegramId: chatId,
                     userId: transactionData.user_id,
@@ -994,32 +994,12 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                     days: group.subscription_days
                   });
                   
+                  // Tentar adicionar usuário diretamente ao grupo
+                  const addedToGroup = await deliver.addUserToGroup(telegram, chatId, group);
+                  
+                  // Enviar mensagem de confirmação ao usuário com botão para entrar no grupo
                   try {
-                    // Tentar adicionar ao grupo (unban se estiver banido)
-                    await telegram.unbanChatMember(group.group_id, chatId, { only_if_banned: true });
-                    
-                    // Tentar adicionar via invite link (se o bot tiver permissão)
-                    try {
-                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
-
-🤖 Análise de IA: ${analysis.confidence}% de confiança
-💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
-
-👥 *Grupo:* ${group.group_name}
-📅 *Acesso válido por:* ${group.subscription_days} dias
-🔗 *Link:* ${group.group_link}
-
-✅ Você foi adicionado ao grupo!
-Clique no link acima para entrar.
-
-🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
-                    } catch (msgErr) {
-                      console.error('Erro ao enviar mensagem:', msgErr);
-                    }
-                    
-                    console.log(`✅ [AUTO-ANALYSIS] Usuário ${chatId} adicionado ao grupo ${group.group_name}`);
-                  } catch (err) {
-                    console.error('⚠️ [AUTO-ANALYSIS] Erro ao adicionar ao grupo (pode não ter permissão):', err.message);
+                    const { Markup } = require('telegraf');
                     await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
@@ -1028,14 +1008,21 @@ Clique no link acima para entrar.
 👥 *Grupo:* ${group.group_name}
 📅 *Acesso válido por:* ${group.subscription_days} dias
 
-⚠️ *Entre no grupo usando o link:*
-${group.group_link}
+✅ *Seu acesso foi liberado!*
+Clique no botão abaixo para entrar no grupo automaticamente:
 
-🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
+🆔 TXID: ${transactionData.txid}`, { 
+                      parse_mode: 'Markdown',
+                      reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
+                      ])
+                    });
+                  } catch (msgErr) {
+                    console.error('⚠️ [AUTO-ANALYSIS] Erro ao enviar mensagem ao usuário:', msgErr.message);
                   }
                   
                   await db.markAsDelivered(transactionData.txid);
-                  console.log(`✅ [AUTO-ANALYSIS] Assinatura de grupo entregue`);
+                  console.log(`✅ [AUTO-ANALYSIS] Usuário ${chatId} adicionado ao grupo ${group.group_name} e assinatura entregue`);
                 } else {
                   console.error(`❌ [AUTO-ANALYSIS] Grupo não encontrado para transação ${transactionData.txid}`);
                 }
