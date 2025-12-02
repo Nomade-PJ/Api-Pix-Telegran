@@ -171,34 +171,90 @@ Erro: ${err.message}`, {
 }
 
 /**
- * Adiciona usuário ao grupo após aprovação
+ * Adiciona usuário ao grupo/canal privado após aprovação
  * 
- * IMPORTANTE: Para grupos públicos/supergrupos no Telegram, o usuário precisa aceitar o convite.
- * Esta função remove ban (se existir) e prepara tudo para o usuário receber o link.
- * O link será enviado na mensagem principal com botão e também como texto direto.
+ * Para grupos/canais PRIVADOS: Tenta adicionar automaticamente via API
+ * Para grupos/canais PÚBLICOS: Envia link de convite (usuário precisa aceitar)
  */
 async function addUserToGroup(telegram, userId, group) {
   try {
-    console.log(`👥 [ADD-TO-GROUP] Preparando adição do usuário ${userId} ao grupo ${group.group_name} (ID: ${group.group_id})`);
+    console.log(`👥 [ADD-TO-GROUP] Tentando adicionar usuário ${userId} ao grupo/canal ${group.group_name} (ID: ${group.group_id})`);
+    
+    let added = false;
+    const axios = require('axios');
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
     
     // Método 1: Tentar unban (remove ban se existir)
     // Isso permite que usuários que foram removidos anteriormente possam voltar
     try {
       await telegram.unbanChatMember(group.group_id, userId, { only_if_banned: true });
-      console.log(`✅ [ADD-TO-GROUP] Unban executado - usuário pode ter estado banido anteriormente`);
+      console.log(`✅ [ADD-TO-GROUP] Unban executado - usuário pode ter estado banido`);
     } catch (unbanErr) {
-      // Não é erro crítico - usuário pode não estar banido
       console.log(`ℹ️ [ADD-TO-GROUP] Unban não necessário: ${unbanErr.message}`);
     }
     
-    console.log(`🔗 [ADD-TO-GROUP] Link do grupo disponível: ${group.group_link}`);
-    console.log(`✅ [ADD-TO-GROUP] Processo concluído - link será enviado na mensagem principal`);
+    // Método 2: Tentar adicionar usando inviteUsers (novo método da API - grupos privados)
+    try {
+      if (telegram.inviteUsers) {
+        await telegram.inviteUsers(group.group_id, [userId]);
+        console.log(`✅ [ADD-TO-GROUP] Usuário adicionado via inviteUsers`);
+        added = true;
+        return true; // Sucesso - retorna imediatamente
+      }
+    } catch (inviteErr) {
+      console.log(`ℹ️ [ADD-TO-GROUP] inviteUsers não disponível ou falhou: ${inviteErr.message}`);
+    }
     
-    // Retorna true - o link será enviado na mensagem principal com botão
-    return true;
+    // Método 3: Tentar adicionar via API direta (addChatMember)
+    // Funciona para grupos/canais PRIVADOS se o bot for admin
+    try {
+      const response = await axios.post(`https://api.telegram.org/bot${botToken}/addChatMember`, {
+        chat_id: group.group_id,
+        user_id: userId
+      });
+      
+      if (response.data && response.data.ok === true) {
+        console.log(`✅ [ADD-TO-GROUP] ✅✅✅ USUÁRIO ADICIONADO AUTOMATICAMENTE VIA API! ✅✅✅`);
+        added = true;
+        return true; // Sucesso - retorna imediatamente
+      }
+    } catch (apiErr) {
+      const errorMsg = apiErr.response?.data?.description || apiErr.message;
+      const errorCode = apiErr.response?.data?.error_code;
+      
+      // Log detalhado do erro para debug
+      console.log(`ℹ️ [ADD-TO-GROUP] addChatMember retornou: ${errorMsg} (código: ${errorCode})`);
+      
+      // Se for erro específico de grupo público, informar
+      if (errorMsg.includes('USER_ALREADY_PARTICIPANT')) {
+        console.log(`✅ [ADD-TO-GROUP] Usuário já está no grupo!`);
+        added = true;
+        return true;
+      } else if (errorMsg.includes('chat not found') || errorMsg.includes('CHAT_NOT_FOUND')) {
+        console.log(`⚠️ [ADD-TO-GROUP] Grupo/canal não encontrado - pode não existir ou bot não está no grupo`);
+      } else if (errorMsg.includes('not enough rights') || errorMsg.includes('NOT_ENOUGH_RIGHTS')) {
+        console.log(`⚠️ [ADD-TO-GROUP] Bot não tem permissões para adicionar membros`);
+      } else if (errorMsg.includes('group chat was upgraded to a supergroup')) {
+        console.log(`⚠️ [ADD-TO-GROUP] Grupo foi atualizado - precisa usar novo ID`);
+      } else {
+        console.log(`ℹ️ [ADD-TO-GROUP] Não foi possível adicionar automaticamente (pode ser grupo público): ${errorMsg}`);
+      }
+    }
+    
+    // Se chegou aqui, não conseguiu adicionar automaticamente
+    console.log(`🔗 [ADD-TO-GROUP] Link do grupo: ${group.group_link}`);
+    
+    if (added) {
+      console.log(`✅ [ADD-TO-GROUP] ✅ Usuário adicionado automaticamente! ✅`);
+    } else {
+      console.log(`ℹ️ [ADD-TO-GROUP] Não foi possível adicionar automaticamente - link será enviado`);
+    }
+    
+    return added;
     
   } catch (err) {
-    console.error(`❌ [ADD-TO-GROUP] Erro ao preparar adição:`, err.message);
+    console.error(`❌ [ADD-TO-GROUP] Erro crítico ao tentar adicionar:`, err.message);
+    console.error(`❌ [ADD-TO-GROUP] Stack:`, err.stack);
     return false;
   }
 }

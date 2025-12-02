@@ -2598,12 +2598,26 @@ Entre em contato com o suporte.
           // Tentar adicionar usuário diretamente ao grupo
           const addedToGroup = await deliver.addUserToGroup(ctx.telegram, transaction.telegram_id, group);
           
-          // Notificar usuário com botão e link direto para entrar no grupo
+          // Notificar usuário - mensagem diferente se foi adicionado automaticamente
           try {
             const { Markup } = require('telegraf');
             
-            // Mensagem principal com botão e link direto
-            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
+            // Se foi adicionado automaticamente, mensagem diferente
+            if (addedToGroup) {
+              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
+
+👥 *Grupo:* ${group.group_name}
+📅 *Acesso válido por:* ${group.subscription_days} dias
+
+✅ *Você foi adicionado automaticamente ao grupo!*
+Acesse o grupo no seu Telegram.
+
+🆔 TXID: ${txid}`, {
+                parse_mode: 'Markdown'
+              });
+            } else {
+              // Se não foi adicionado automaticamente, enviar com link
+              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
 
 👥 *Grupo:* ${group.group_name}
 📅 *Acesso válido por:* ${group.subscription_days} dias
@@ -2616,11 +2630,12 @@ ${group.group_link}
 Clique no botão abaixo ou no link acima para entrar no grupo:
 
 🆔 TXID: ${txid}`, {
-              parse_mode: 'Markdown',
-              reply_markup: Markup.inlineKeyboard([
-                [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
-              ])
-            });
+                parse_mode: 'Markdown',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
+                ])
+              });
+            }
             
             console.log(`✅ [ADMIN] Mensagem com link enviada ao usuário ${transaction.telegram_id}`);
           } catch (err) {

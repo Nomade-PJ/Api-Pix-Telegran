@@ -997,12 +997,29 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                   // Tentar adicionar usuário diretamente ao grupo
                   const addedToGroup = await deliver.addUserToGroup(telegram, chatId, group);
                   
-                  // Enviar mensagem de confirmação ao usuário com botão e link direto
+                  // Enviar mensagem de confirmação ao usuário
                   try {
                     const { Markup } = require('telegraf');
                     
-                    // Mensagem principal com botão e link direto
-                    await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+                    // Se foi adicionado automaticamente, mensagem diferente
+                    if (addedToGroup) {
+                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
+
+🤖 Análise de IA: ${analysis.confidence}% de confiança
+💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
+
+👥 *Grupo:* ${group.group_name}
+📅 *Acesso válido por:* ${group.subscription_days} dias
+
+✅ *Você foi adicionado automaticamente ao grupo!*
+Acesse o grupo no seu Telegram.
+
+🆔 TXID: ${transactionData.txid}`, { 
+                        parse_mode: 'Markdown'
+                      });
+                    } else {
+                      // Se não foi adicionado automaticamente, enviar com link
+                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
 💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
@@ -1018,11 +1035,12 @@ ${group.group_link}
 Clique no botão abaixo ou no link acima para entrar no grupo:
 
 🆔 TXID: ${transactionData.txid}`, { 
-                      parse_mode: 'Markdown',
-                      reply_markup: Markup.inlineKeyboard([
-                        [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
-                      ])
-                    });
+                        parse_mode: 'Markdown',
+                        reply_markup: Markup.inlineKeyboard([
+                          [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
+                        ])
+                      });
+                    }
                     
                     console.log(`✅ [AUTO-ANALYSIS] Mensagem com link enviada ao usuário ${chatId}`);
                   } catch (msgErr) {
