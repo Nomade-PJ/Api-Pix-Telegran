@@ -100,17 +100,35 @@ function createBot(token) {
           console.log(`🔍 [DDD-CHECK] Novo usuário - DDD: ${areaCode}, Telefone: ${phoneNumber}`);
           
           if (areaCode) {
-            // Verificar se é admin ou criador no banco (ignora bloqueio de DDD)
+            // Verificar se é admin, criador ou foi liberado manualmente
+            // Primeiro verificar admin/criador
             const [isAdmin, isCreator] = await Promise.all([
               db.isUserAdmin(ctx.from.id),
               db.isUserCreator(ctx.from.id)
             ]);
             
-            // Se for admin ou criador, pular verificação de DDD
-            if (isAdmin || isCreator) {
-              console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${isAdmin ? 'admin' : 'criador'} - ignorando bloqueio de DDD`);
+            // Se não for admin/criador, verificar se foi liberado manualmente
+            let isManuallyUnblocked = false;
+            if (!isAdmin && !isCreator) {
+              try {
+                // Tentar buscar usuário existente através da função do database
+                const existingUser = await db.getUserByTelegramId(ctx.from.id);
+                // Se encontrou e não está bloqueado, está liberado manualmente
+                if (existingUser && existingUser.is_blocked === false) {
+                  isManuallyUnblocked = true;
+                }
+              } catch (err) {
+                // Se não encontrou usuário, não está liberado
+                isManuallyUnblocked = false;
+              }
+            }
+            
+            // Se for admin, criador ou liberado manualmente, pular verificação de DDD
+            if (isAdmin || isCreator || isManuallyUnblocked) {
+              const reason = isAdmin ? 'admin' : isCreator ? 'criador' : 'liberado manualmente';
+              console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${reason} - ignorando bloqueio de DDD`);
             } else {
-              // Apenas verificar bloqueio se não for admin/criador
+              // Apenas verificar bloqueio se não for admin/criador/liberado
               const isBlocked = await db.isAreaCodeBlocked(areaCode);
               
               if (isBlocked) {
@@ -276,17 +294,35 @@ Selecione uma opção abaixo:`;
         });
       }
       
-      // Verificar se é admin ou criador no banco (ignora bloqueio de DDD)
+      // Verificar se é admin, criador ou foi liberado manualmente
+      // Primeiro verificar admin/criador
       const [isAdmin, isCreator] = await Promise.all([
         db.isUserAdmin(ctx.from.id),
         db.isUserCreator(ctx.from.id)
       ]);
       
-      // Se for admin ou criador, pular verificação de DDD
-      if (isAdmin || isCreator) {
-        console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${isAdmin ? 'admin' : 'criador'} - ignorando bloqueio de DDD ${areaCode}`);
+      // Se não for admin/criador, verificar se foi liberado manualmente
+      let isManuallyUnblocked = false;
+      if (!isAdmin && !isCreator) {
+        try {
+          // Tentar buscar usuário existente através da função do database
+          const existingUser = await db.getUserByTelegramId(ctx.from.id);
+          // Se encontrou e não está bloqueado, está liberado manualmente
+          if (existingUser && existingUser.is_blocked === false) {
+            isManuallyUnblocked = true;
+          }
+        } catch (err) {
+          // Se não encontrou usuário, não está liberado
+          isManuallyUnblocked = false;
+        }
+      }
+      
+      // Se for admin, criador ou liberado manualmente, pular verificação de DDD
+      if (isAdmin || isCreator || isManuallyUnblocked) {
+        const reason = isAdmin ? 'admin' : isCreator ? 'criador' : 'liberado manualmente';
+        console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${reason} - ignorando bloqueio de DDD ${areaCode}`);
       } else {
-        // Verificar se o DDD está bloqueado apenas se não for admin/criador
+        // Verificar se o DDD está bloqueado apenas se não for admin/criador/liberado
         const isBlocked = await db.isAreaCodeBlocked(areaCode);
         
         if (isBlocked) {
@@ -1018,7 +1054,7 @@ Acesse o grupo no seu Telegram.
                         parse_mode: 'Markdown'
                       });
                     } else {
-                      // Se não foi adicionado automaticamente, enviar com link
+                      // Se não foi adicionado automaticamente, enviar apenas com botão
                       await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
@@ -1028,11 +1064,7 @@ Acesse o grupo no seu Telegram.
 📅 *Acesso válido por:* ${group.subscription_days} dias
 
 ✅ *Seu acesso foi liberado!*
-
-🔗 *Link direto para entrar:*
-${group.group_link}
-
-Clique no botão abaixo ou no link acima para entrar no grupo:
+Clique no botão abaixo para entrar no grupo:
 
 🆔 TXID: ${transactionData.txid}`, { 
                         parse_mode: 'Markdown',

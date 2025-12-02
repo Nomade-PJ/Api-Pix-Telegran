@@ -205,9 +205,32 @@ async function addUserToGroup(telegram, userId, group) {
       console.log(`ℹ️ [ADD-TO-GROUP] inviteUsers não disponível ou falhou: ${inviteErr.message}`);
     }
     
-    // Método 3: Tentar adicionar via API direta (addChatMember)
+    // Método 3: Verificar se o bot está no grupo e tem permissões
+    try {
+      const botInfo = await telegram.getMe();
+      const botId = botInfo.id;
+      
+      // Verificar se o bot está no grupo
+      try {
+        const chatMember = await telegram.getChatMember(group.group_id, botId);
+        console.log(`ℹ️ [ADD-TO-GROUP] Bot está no grupo. Status: ${chatMember.status}`);
+        
+        // Se o bot não for admin, não pode adicionar
+        if (chatMember.status !== 'administrator' && chatMember.status !== 'creator') {
+          console.log(`⚠️ [ADD-TO-GROUP] Bot não é administrador do grupo - não pode adicionar membros automaticamente`);
+          console.log(`⚠️ [ADD-TO-GROUP] Status do bot: ${chatMember.status}`);
+        }
+      } catch (memberErr) {
+        console.log(`⚠️ [ADD-TO-GROUP] Erro ao verificar status do bot: ${memberErr.message}`);
+      }
+    } catch (botErr) {
+      console.log(`ℹ️ [ADD-TO-GROUP] Erro ao obter info do bot: ${botErr.message}`);
+    }
+    
+    // Método 4: Tentar adicionar via API direta (addChatMember)
     // Funciona para grupos/canais PRIVADOS se o bot for admin
     try {
+      console.log(`🔄 [ADD-TO-GROUP] Tentando adicionar via addChatMember...`);
       const response = await axios.post(`https://api.telegram.org/bot${botToken}/addChatMember`, {
         chat_id: group.group_id,
         user_id: userId
@@ -223,21 +246,30 @@ async function addUserToGroup(telegram, userId, group) {
       const errorCode = apiErr.response?.data?.error_code;
       
       // Log detalhado do erro para debug
-      console.log(`ℹ️ [ADD-TO-GROUP] addChatMember retornou: ${errorMsg} (código: ${errorCode})`);
+      console.log(`❌ [ADD-TO-GROUP] addChatMember FALHOU: ${errorMsg} (código: ${errorCode})`);
       
       // Se for erro específico de grupo público, informar
-      if (errorMsg.includes('USER_ALREADY_PARTICIPANT')) {
+      if (errorMsg && errorMsg.includes('USER_ALREADY_PARTICIPANT')) {
         console.log(`✅ [ADD-TO-GROUP] Usuário já está no grupo!`);
         added = true;
         return true;
-      } else if (errorMsg.includes('chat not found') || errorMsg.includes('CHAT_NOT_FOUND')) {
-        console.log(`⚠️ [ADD-TO-GROUP] Grupo/canal não encontrado - pode não existir ou bot não está no grupo`);
-      } else if (errorMsg.includes('not enough rights') || errorMsg.includes('NOT_ENOUGH_RIGHTS')) {
-        console.log(`⚠️ [ADD-TO-GROUP] Bot não tem permissões para adicionar membros`);
-      } else if (errorMsg.includes('group chat was upgraded to a supergroup')) {
-        console.log(`⚠️ [ADD-TO-GROUP] Grupo foi atualizado - precisa usar novo ID`);
+      } else if (errorMsg && (errorMsg.includes('chat not found') || errorMsg.includes('CHAT_NOT_FOUND'))) {
+        console.log(`❌ [ADD-TO-GROUP] ERRO: Grupo/canal não encontrado - bot pode não estar no grupo`);
+        console.log(`❌ [ADD-TO-GROUP] AÇÃO NECESSÁRIA: Adicione o bot ao grupo como administrador`);
+      } else if (errorMsg && (errorMsg.includes('not enough rights') || errorMsg.includes('NOT_ENOUGH_RIGHTS'))) {
+        console.log(`❌ [ADD-TO-GROUP] ERRO: Bot não tem permissões para adicionar membros`);
+        console.log(`❌ [ADD-TO-GROUP] AÇÃO NECESSÁRIA: Dê permissão de "Adicionar Membros" ao bot no grupo`);
+      } else if (errorMsg && errorMsg.includes('group chat was upgraded to a supergroup')) {
+        console.log(`❌ [ADD-TO-GROUP] ERRO: Grupo foi atualizado - precisa usar novo ID`);
+        console.log(`❌ [ADD-TO-GROUP] AÇÃO NECESSÁRIA: Atualize o group_id no banco de dados`);
+      } else if (errorMsg && errorMsg.includes('USER_PRIVACY_RESTRICTED')) {
+        console.log(`❌ [ADD-TO-GROUP] ERRO: Usuário tem privacidade restrita - não pode ser adicionado automaticamente`);
+      } else if (errorMsg && errorMsg.includes('CHAT_ADMIN_REQUIRED')) {
+        console.log(`❌ [ADD-TO-GROUP] ERRO: Bot precisa ser administrador do grupo`);
+        console.log(`❌ [ADD-TO-GROUP] AÇÃO NECESSÁRIA: Torne o bot administrador do grupo`);
       } else {
-        console.log(`ℹ️ [ADD-TO-GROUP] Não foi possível adicionar automaticamente (pode ser grupo público): ${errorMsg}`);
+        console.log(`❌ [ADD-TO-GROUP] ERRO DESCONHECIDO: ${errorMsg}`);
+        console.log(`ℹ️ [ADD-TO-GROUP] Isso pode ser normal para grupos públicos - usuário precisa aceitar convite`);
       }
     }
     

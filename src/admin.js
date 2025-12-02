@@ -2616,18 +2616,14 @@ Acesse o grupo no seu Telegram.
                 parse_mode: 'Markdown'
               });
             } else {
-              // Se não foi adicionado automaticamente, enviar com link
+              // Se não foi adicionado automaticamente, enviar apenas com botão
               await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
 
 👥 *Grupo:* ${group.group_name}
 📅 *Acesso válido por:* ${group.subscription_days} dias
 
 ✅ *Seu acesso foi liberado!*
-
-🔗 *Link direto para entrar:*
-${group.group_link}
-
-Clique no botão abaixo ou no link acima para entrar no grupo:
+Clique no botão abaixo para entrar no grupo:
 
 🆔 TXID: ${txid}`, {
                 parse_mode: 'Markdown',

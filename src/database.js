@@ -25,6 +25,26 @@ async function getUserByUUID(userId) {
   }
 }
 
+async function getUserByTelegramId(telegramId) {
+  try {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (error && error.code === 'PGRST116') {
+      return null; // Não encontrado
+    }
+    
+    if (error) throw error;
+    return user;
+  } catch (err) {
+    console.error('Erro ao buscar usuário:', err.message);
+    return null;
+  }
+}
+
 async function getOrCreateUser(telegramUser) {
   try {
     const { id, username, first_name, language_code } = telegramUser;
@@ -1507,6 +1527,7 @@ module.exports = {
   supabase,
   getOrCreateUser,
   getUserByUUID,
+  getUserByTelegramId,
   isUserAdmin,
   isUserCreator,
   setUserAsCreator,
