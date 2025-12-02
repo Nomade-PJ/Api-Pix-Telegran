@@ -391,6 +391,13 @@ Selecione uma opção abaixo:`;
       }
       
       console.log(`✅ [HANDLER] Transação encontrada: ${transaction.txid}`);
+      console.log(`📋 [HANDLER] Detalhes da transação:`, {
+        txid: transaction.txid,
+        product_id: transaction.product_id,
+        media_pack_id: transaction.media_pack_id,
+        group_id: transaction.group_id, // 🆕 Log do group_id
+        amount: transaction.amount
+      });
 
       // Verificar se a transação está expirada (30 minutos)
       const createdAt = new Date(transaction.created_at);
@@ -563,27 +570,66 @@ Selecione uma opção abaixo:`;
             return;
           }
           
-          // Verificar se é media pack ou produto normal
+          // 🆕 Verificar se é grupo, media pack ou produto normal
           let productName = 'Produto não encontrado';
           try {
-            if (transaction.media_pack_id) {
+            // 🆕 PRIMEIRO: Verificar se é grupo (prioridade)
+            if (transaction.group_id) {
+              console.log(`👥 [NOTIFY] Transação é de grupo (group_id: ${transaction.group_id})`);
+              try {
+                const { data: groupData, error: groupError } = await db.supabase
+                  .from('groups')
+                  .select('group_name, group_id')
+                  .eq('id', transaction.group_id)
+                  .single();
+                
+                if (!groupError && groupData) {
+                  productName = groupData.group_name || `Grupo ${groupData.group_id}` || 'Grupo';
+                  console.log(`✅ [NOTIFY] Grupo encontrado: ${productName}`);
+                } else {
+                  // Fallback: tentar buscar pelo product_id se começar com "group_"
+                  if (transaction.product_id && transaction.product_id.startsWith('group_')) {
+                    const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+                    const group = await db.getGroupById(groupTelegramId);
+                    productName = group ? (group.group_name || `Grupo ${group.group_id}`) : transaction.product_id || 'Grupo';
+                  } else {
+                    productName = 'Grupo (não encontrado)';
+                  }
+                }
+              } catch (groupErr) {
+                console.error('Erro ao buscar grupo:', groupErr);
+                productName = 'Grupo (erro ao buscar)';
+              }
+            } else if (transaction.media_pack_id) {
               // É um media pack
               const pack = await db.getMediaPackById(transaction.media_pack_id);
               productName = pack ? pack.name : transaction.media_pack_id || 'Media Pack';
             } else if (transaction.product_id) {
-              // É um produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
-          const product = await db.getProduct(transaction.product_id, true);
-              productName = product ? product.name : transaction.product_id || 'Produto';
+              // É um produto normal - verificar se não é grupo antigo
+              if (transaction.product_id.startsWith('group_')) {
+                // Formato antigo de grupo - tentar buscar
+                const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+                const group = await db.getGroupById(groupTelegramId);
+                productName = group ? (group.group_name || `Grupo ${group.group_id}`) : transaction.product_id || 'Grupo';
+              } else {
+                // Produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+                const product = await db.getProduct(transaction.product_id, true);
+                productName = product ? product.name : transaction.product_id || 'Produto';
+              }
             }
           } catch (err) {
-            console.error('Erro ao buscar produto/pack:', err);
+            console.error('Erro ao buscar produto/pack/grupo:', err);
             // Usar fallback baseado no que temos
-            productName = transaction.media_pack_id || transaction.product_id || 'Produto não encontrado';
+            productName = transaction.group_id 
+              ? 'Grupo' 
+              : (transaction.media_pack_id || transaction.product_id || 'Produto não encontrado');
           }
           
           // Garantir que productName nunca seja null ou undefined
           if (!productName || productName === 'null' || productName === 'undefined') {
-            productName = transaction.media_pack_id || transaction.product_id || 'Produto não encontrado';
+            productName = transaction.group_id 
+              ? 'Grupo' 
+              : (transaction.media_pack_id || transaction.product_id || 'Produto não encontrado');
           }
           
           const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
@@ -593,12 +639,16 @@ Selecione uma opção abaixo:`;
           const fileTypeEmoji = fileType === 'pdf' ? '📄' : '🖼️';
           const fileTypeText = fileType === 'pdf' ? 'PDF' : 'Imagem';
           
+          // 🆕 Detectar se é grupo para mensagem especial
+          const isGroupTransaction = transaction.group_id || (transaction.product_id && transaction.product_id.startsWith('group_'));
+          const productLabel = isGroupTransaction ? '👥 Grupo' : '📦 Produto';
+          
           const caption = `${statusEmoji} *COMPROVANTE RECEBIDO - ${statusText}*
 
 ${analysisData ? `🤖 Análise automática: ${analysisData.confidence}% de confiança\n` : ''}💰 Valor: R$ ${transaction.amount}
 👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
 🆔 ID Usuário: ${ctx.from.id}
-📦 Produto: ${productName}
+${productLabel}: ${productName}
 ${fileTypeEmoji} Tipo: *${fileTypeText}*
 📅 Enviado: ${new Date().toLocaleString('pt-BR')}
 
@@ -729,6 +779,7 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
         pix_payload: transaction.pix_payload || transaction.pixPayload, // Código PIX (copia e cola)
         product_id: transaction.product_id,
         media_pack_id: transaction.media_pack_id,
+        group_id: transaction.group_id, // 🆕 Incluir group_id no transactionData
         user_id: transaction.user_id
       };
       
@@ -816,9 +867,27 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             console.log(`⚠️ [AUTO-ANALYSIS] DECISÃO: VALIDAÇÃO MANUAL (confiança ${analysis?.confidence}% entre 40% e 70%)`);
           }
           
-          // Verificar se é media pack ou produto normal
+          // 🆕 Verificar se é grupo, media pack ou produto normal
           let productName = 'Produto não encontrado';
-          if (transactionData.media_pack_id) {
+          if (transactionData.group_id) {
+            // 🆕 É uma transação de grupo
+            try {
+              const { data: groupData, error: groupError } = await db.supabase
+                .from('groups')
+                .select('group_name, group_id')
+                .eq('id', transactionData.group_id)
+                .single();
+              
+              if (!groupError && groupData) {
+                productName = groupData.group_name || `Grupo ${groupData.group_id}` || 'Grupo';
+              } else {
+                productName = 'Grupo (não encontrado)';
+              }
+            } catch (err) {
+              console.error('Erro ao buscar grupo:', err);
+              productName = 'Grupo (erro ao buscar)';
+            }
+          } else if (transactionData.media_pack_id) {
             // É um media pack
             try {
               const pack = await db.getMediaPackById(transactionData.media_pack_id);
@@ -828,10 +897,18 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
               productName = transactionData.media_pack_id || 'Media Pack';
             }
           } else if (transactionData.product_id) {
-            // É um produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+            // É um produto normal - verificar se não é grupo antigo
             try {
-          const product = await db.getProduct(transactionData.product_id, true);
-              productName = product ? product.name : transactionData.product_id;
+              if (transactionData.product_id.startsWith('group_')) {
+                // Formato antigo de grupo
+                const groupTelegramId = parseInt(transactionData.product_id.replace('group_', ''));
+                const group = await db.getGroupById(groupTelegramId);
+                productName = group ? (group.group_name || `Grupo ${group.group_id}`) : transactionData.product_id || 'Grupo';
+              } else {
+                // Produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+                const product = await db.getProduct(transactionData.product_id, true);
+                productName = product ? product.name : transactionData.product_id;
+              }
             } catch (err) {
               console.error('Erro ao buscar produto:', err);
               productName = transactionData.product_id || 'Produto';
@@ -1504,19 +1581,19 @@ Esta transação foi cancelada automaticamente.
       ]);
       
       const amount = group.subscription_price.toString();
-      const productId = `group_${group.group_id}`;
+      const productId = `group_${group.group_id}`; // Para o manualPix
       
       // Gerar cobrança PIX
       const resp = await manualPix.createManualCharge({ amount, productId });
       const charge = resp.charge;
       const txid = charge.txid;
       
-      // Salvar transação com referência ao grupo
+      // 🆕 Salvar transação com referência ao grupo (usando UUID interno do grupo)
       await db.createTransaction({
         txid,
         userId: user.id,
         telegramId: ctx.chat.id,
-        productId,
+        groupId: group.id, // 🆕 Usar UUID interno do grupo (não productId)
         amount,
         pixKey: charge.key,
         pixPayload: charge.copiaCola
