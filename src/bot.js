@@ -997,9 +997,11 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                   // Tentar adicionar usuário diretamente ao grupo
                   const addedToGroup = await deliver.addUserToGroup(telegram, chatId, group);
                   
-                  // Enviar mensagem de confirmação ao usuário com botão para entrar no grupo
+                  // Enviar mensagem de confirmação ao usuário com botão e link direto
                   try {
                     const { Markup } = require('telegraf');
+                    
+                    // Mensagem principal com botão e link direto
                     await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
 
 🤖 Análise de IA: ${analysis.confidence}% de confiança
@@ -1009,7 +1011,11 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
 📅 *Acesso válido por:* ${group.subscription_days} dias
 
 ✅ *Seu acesso foi liberado!*
-Clique no botão abaixo para entrar no grupo automaticamente:
+
+🔗 *Link direto para entrar:*
+${group.group_link}
+
+Clique no botão abaixo ou no link acima para entrar no grupo:
 
 🆔 TXID: ${transactionData.txid}`, { 
                       parse_mode: 'Markdown',
@@ -1017,8 +1023,19 @@ Clique no botão abaixo para entrar no grupo automaticamente:
                         [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
                       ])
                     });
+                    
+                    console.log(`✅ [AUTO-ANALYSIS] Mensagem com link enviada ao usuário ${chatId}`);
                   } catch (msgErr) {
                     console.error('⚠️ [AUTO-ANALYSIS] Erro ao enviar mensagem ao usuário:', msgErr.message);
+                    
+                    // Tentar enviar apenas o link como fallback
+                    try {
+                      await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO!*\n\n👥 *Grupo:* ${group.group_name}\n\n🔗 Acesse: ${group.group_link}\n\n🆔 TXID: ${transactionData.txid}`, {
+                        parse_mode: 'Markdown'
+                      });
+                    } catch (fallbackErr) {
+                      console.error('❌ [AUTO-ANALYSIS] Erro no fallback:', fallbackErr.message);
+                    }
                   }
                   
                   await db.markAsDelivered(transactionData.txid);

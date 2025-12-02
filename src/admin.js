@@ -2598,16 +2598,22 @@ Entre em contato com o suporte.
           // Tentar adicionar usuário diretamente ao grupo
           const addedToGroup = await deliver.addUserToGroup(ctx.telegram, transaction.telegram_id, group);
           
-          // Notificar usuário com botão para entrar no grupo
+          // Notificar usuário com botão e link direto para entrar no grupo
           try {
             const { Markup } = require('telegraf');
+            
+            // Mensagem principal com botão e link direto
             await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
 
 👥 *Grupo:* ${group.group_name}
 📅 *Acesso válido por:* ${group.subscription_days} dias
 
 ✅ *Seu acesso foi liberado!*
-Clique no botão abaixo para entrar no grupo automaticamente:
+
+🔗 *Link direto para entrar:*
+${group.group_link}
+
+Clique no botão abaixo ou no link acima para entrar no grupo:
 
 🆔 TXID: ${txid}`, {
               parse_mode: 'Markdown',
@@ -2615,8 +2621,19 @@ Clique no botão abaixo para entrar no grupo automaticamente:
                 [Markup.button.url('✅ Entrar no Grupo Agora', group.group_link)]
               ])
             });
+            
+            console.log(`✅ [ADMIN] Mensagem com link enviada ao usuário ${transaction.telegram_id}`);
           } catch (err) {
-            console.error('Erro ao notificar usuário:', err);
+            console.error('❌ [ADMIN] Erro ao notificar usuário:', err);
+            
+            // Tentar enviar apenas o link como fallback
+            try {
+              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*\n\n👥 *Grupo:* ${group.group_name}\n\n🔗 Acesse: ${group.group_link}\n\n🆔 TXID: ${txid}`, {
+                parse_mode: 'Markdown'
+              });
+            } catch (fallbackErr) {
+              console.error('❌ [ADMIN] Erro no fallback:', fallbackErr.message);
+            }
           }
         } else {
           console.error(`❌ [ADMIN] Grupo não encontrado para transação ${txid}`);
