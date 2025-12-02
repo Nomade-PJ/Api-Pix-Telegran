@@ -1041,17 +1041,23 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                     const expiresAt = new Date();
                     expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
                     
-                    // Mensagem única com todas as informações + link oculto (gera card automático)
-                    // Usando caracteres invisíveis para minimizar visibilidade do link
+                    // Mensagem única seguindo estrutura da imagem
                     const zwsp = '\u200B'; // Zero-width space
                     const zwnj = '\u200C'; // Zero-width non-joiner
-                    await telegram.sendMessage(chatId, `✅ *Você já é membro!*
+                    await telegram.sendMessage(chatId, `✅ *ASSINATURA APROVADA!*
 
 👥 Grupo: ${group.group_name}
-📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+📅 Acesso válido por: ${group.subscription_days} dias
 
-${zwsp}${zwnj}${zwsp}
+✅ *Seu acesso foi liberado!*
+
+🔗 *Link direto para entrar:*
 ${group.group_link}
+
+Clique no botão abaixo ou no link acima para entrar no grupo:
+
+🆔 TXID: ${transactionData.txid}
+
 ${zwsp}${zwnj}${zwsp}`, {
                       parse_mode: 'Markdown',
                       disable_web_page_preview: false
@@ -1066,16 +1072,23 @@ ${zwsp}${zwnj}${zwsp}`, {
                       const expiresAt = new Date();
                       expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
                       
-                      // Mensagem única com todas as informações + link oculto (gera card automático)
+                      // Mensagem única seguindo estrutura da imagem
                       const zwsp = '\u200B'; // Zero-width space
                       const zwnj = '\u200C'; // Zero-width non-joiner
-                      await telegram.sendMessage(chatId, `✅ *Você já é membro!*
+                      await telegram.sendMessage(chatId, `✅ *ASSINATURA APROVADA!*
 
 👥 Grupo: ${group.group_name}
-📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+📅 Acesso válido por: ${group.subscription_days} dias
 
-${zwsp}${zwnj}${zwsp}
+✅ *Seu acesso foi liberado!*
+
+🔗 *Link direto para entrar:*
 ${group.group_link}
+
+Clique no botão abaixo ou no link acima para entrar no grupo:
+
+🆔 TXID: ${transactionData.txid}
+
 ${zwsp}${zwnj}${zwsp}`, {
                         parse_mode: 'Markdown',
                         disable_web_page_preview: false

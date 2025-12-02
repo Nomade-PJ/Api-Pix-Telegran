@@ -2606,16 +2606,23 @@ Entre em contato com o suporte.
             const expiresAt = new Date();
             expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
             
-            // Mensagem única com todas as informações + link oculto (gera card automático)
+            // Mensagem única seguindo estrutura da imagem
             const zwsp = '\u200B'; // Zero-width space
             const zwnj = '\u200C'; // Zero-width non-joiner
-            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *Você já é membro!*
+            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
 
 👥 Grupo: ${group.group_name}
-📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+📅 Acesso válido por: ${group.subscription_days} dias
 
-${zwsp}${zwnj}${zwsp}
+✅ *Seu acesso foi liberado!*
+
+🔗 *Link direto para entrar:*
 ${group.group_link}
+
+Clique no botão abaixo ou no link acima para entrar no grupo:
+
+🆔 TXID: ${txid}
+
 ${zwsp}${zwnj}${zwsp}`, {
               parse_mode: 'Markdown',
               disable_web_page_preview: false
@@ -2630,16 +2637,23 @@ ${zwsp}${zwnj}${zwsp}`, {
               const expiresAt = new Date();
               expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
               
-              // Mensagem única com todas as informações + link oculto (gera card automático)
+              // Mensagem única seguindo estrutura da imagem
               const zwsp = '\u200B'; // Zero-width space
               const zwnj = '\u200C'; // Zero-width non-joiner
-              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *Você já é membro!*
+              await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
 
 👥 Grupo: ${group.group_name}
-📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+📅 Acesso válido por: ${group.subscription_days} dias
 
-${zwsp}${zwnj}${zwsp}
+✅ *Seu acesso foi liberado!*
+
+🔗 *Link direto para entrar:*
 ${group.group_link}
+
+Clique no botão abaixo ou no link acima para entrar no grupo:
+
+🆔 TXID: ${txid}
+
 ${zwsp}${zwnj}${zwsp}`, {
                 parse_mode: 'Markdown',
                 disable_web_page_preview: false
