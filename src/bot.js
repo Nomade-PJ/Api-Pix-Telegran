@@ -1041,13 +1041,18 @@ ${fileType === 'pdf' ? '📄' : '🖼️'} Tipo: ${fileType === 'pdf' ? 'PDF' : 
                     const expiresAt = new Date();
                     expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
                     
-                    // Mensagem única com todas as informações + link (gera card automático)
+                    // Mensagem única com todas as informações + link oculto (gera card automático)
+                    // Usando caracteres invisíveis para minimizar visibilidade do link
+                    const zwsp = '\u200B'; // Zero-width space
+                    const zwnj = '\u200C'; // Zero-width non-joiner
                     await telegram.sendMessage(chatId, `✅ *Você já é membro!*
 
 👥 Grupo: ${group.group_name}
 📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 
-${group.group_link}`, {
+${zwsp}${zwnj}${zwsp}
+${group.group_link}
+${zwsp}${zwnj}${zwsp}`, {
                       parse_mode: 'Markdown',
                       disable_web_page_preview: false
                     });
@@ -1061,13 +1066,17 @@ ${group.group_link}`, {
                       const expiresAt = new Date();
                       expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
                       
-                      // Mensagem única com todas as informações + link (gera card automático)
+                      // Mensagem única com todas as informações + link oculto (gera card automático)
+                      const zwsp = '\u200B'; // Zero-width space
+                      const zwnj = '\u200C'; // Zero-width non-joiner
                       await telegram.sendMessage(chatId, `✅ *Você já é membro!*
 
 👥 Grupo: ${group.group_name}
 📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 
-${group.group_link}`, {
+${zwsp}${zwnj}${zwsp}
+${group.group_link}
+${zwsp}${zwnj}${zwsp}`, {
                         parse_mode: 'Markdown',
                         disable_web_page_preview: false
                       });
@@ -1607,13 +1616,17 @@ Esta transação foi cancelada automaticamente.
         const expiresAt = new Date(existingMember.expires_at);
         const now = new Date();
         if (expiresAt > now) {
-          // Mensagem única com todas as informações + link (gera card automático)
+          // Mensagem única com todas as informações + link oculto (gera card automático)
+          const zwsp = '\u200B'; // Zero-width space
+          const zwnj = '\u200C'; // Zero-width non-joiner
           await ctx.reply(`✅ *Você já é membro!*
 
 👥 Grupo: ${group.group_name}
 📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 
-${group.group_link}`, {
+${zwsp}${zwnj}${zwsp}
+${group.group_link}
+${zwsp}${zwnj}${zwsp}`, {
             parse_mode: 'Markdown',
             disable_web_page_preview: false
           });
@@ -1701,14 +1714,18 @@ ${group.group_link}`, {
             hasActiveSubscription = true;
             const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
             
-            // Mensagem única com todas as informações + link (gera card automático)
+            // Mensagem única com todas as informações + link oculto (gera card automático)
+            const zwsp = '\u200B'; // Zero-width space
+            const zwnj = '\u200C'; // Zero-width non-joiner
             await ctx.reply(`✅ *Você já tem assinatura ativa!*
 
 👥 Grupo: ${group.group_name}
 📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
 ⏰ Faltam: ${daysLeft} dias
 
-${group.group_link}`, {
+${zwsp}${zwnj}${zwsp}
+${group.group_link}
+${zwsp}${zwnj}${zwsp}`, {
               parse_mode: 'Markdown',
               disable_web_page_preview: false
             });
