@@ -1575,6 +1575,29 @@ function extractAreaCode(phoneNumber) {
   return null;
 }
 
+// Função para obter usuários mensais (últimos 30 dias)
+async function getMonthlyUsers() {
+  try {
+    // Calcular data de 30 dias atrás
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    // Buscar usuários criados ou atualizados nos últimos 30 dias
+    // Usuários mensais = usuários que interagiram com o bot nos últimos 30 dias
+    const { count, error } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', thirtyDaysAgo.toISOString());
+    
+    if (error) throw error;
+    
+    return count || 0;
+  } catch (err) {
+    console.error('Erro ao buscar usuários mensais:', err.message);
+    return 0;
+  }
+}
+
 module.exports = {
   supabase,
   getOrCreateUser,
@@ -1618,6 +1641,7 @@ module.exports = {
   getGroupMember,
   getOCRResult,
   saveOCRResult,
+  getMonthlyUsers,
   updateProofFileUrl,
   // Media Packs
   getAllMediaPacks,

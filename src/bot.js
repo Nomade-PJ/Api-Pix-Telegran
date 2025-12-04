@@ -7,6 +7,7 @@ const admin = require('./admin');
 const creator = require('./creator');
 const proofAnalyzer = require('./proofAnalyzer');
 const { startExpirationJob } = require('./jobs/expireTransactions');
+const { startBotDescriptionJob } = require('./jobs/updateBotDescription');
 
 function createBot(token) {
   const bot = new Telegraf(token);
@@ -14,6 +15,10 @@ function createBot(token) {
   // Iniciar job de expiração automática de transações
   startExpirationJob();
   console.log('✅ [BOT-INIT] Job de expiração de transações iniciado');
+  
+  // Iniciar job de atualização automática da descrição do bot
+  startBotDescriptionJob();
+  console.log('✅ [BOT-INIT] Job de atualização de descrição do bot iniciado');
   
   // 🆕 REGISTRAR COMANDO /criador PRIMEIRO (antes de tudo, para garantir prioridade)
   creator.registerCreatorCommands(bot);

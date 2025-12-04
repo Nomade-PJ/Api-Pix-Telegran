@@ -3243,6 +3243,7 @@ Exemplo: 30.00 ou 50`, {
       return ctx.reply('❌ Erro ao desbloquear DDD.');
     }
   });
+
 }
 
 module.exports = { registerAdminCommands };
