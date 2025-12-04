@@ -1495,7 +1495,7 @@ Selecione uma opção abaixo:`;
 💰 *Total em vendas:* R$ ${stats.totalSales}
 💵 *Ticket médio:* R$ ${stats.avgTicket || '0.00'}
 
-📅 *Atualizado:* ${new Date().toLocaleString('pt-BR')}`;
+📅 *Atualizado:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
       
       return ctx.reply(message, { parse_mode: 'Markdown' });
     } catch (err) {

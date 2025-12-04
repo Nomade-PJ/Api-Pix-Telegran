@@ -671,6 +671,18 @@ async function getStats() {
     
     const totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
     
+    // Transações validadas (apenas status validated)
+    const { count: validatedTransactions } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'validated');
+    
+    // Transações entregues (apenas status delivered)
+    const { count: deliveredTransactions } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'delivered');
+    
     // Transações aprovadas (validated + delivered)
     const { count: approvedTransactions } = await supabase
       .from('transactions')
@@ -682,6 +694,11 @@ async function getStats() {
       .from('transactions')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'rejected');
+    
+    // Calcular ticket médio (valor médio por transação entregue)
+    const avgTicket = deliveredTransactions > 0 
+      ? (totalSales / deliveredTransactions).toFixed(2)
+      : '0.00';
     
     // Vendas de HOJE (usando delivered_at no horário de Brasília)
     // Atualiza automaticamente em tempo real a cada chamada
@@ -700,7 +717,10 @@ async function getStats() {
       totalUsers: totalUsers || 0,
       totalTransactions: totalTransactions || 0,
       pendingTransactions: pendingTransactions || 0,
+      validatedTransactions: validatedTransactions || 0,
+      deliveredTransactions: deliveredTransactions || 0,
       totalSales: totalSales.toFixed(2),
+      avgTicket: avgTicket,
       approvedTransactions: approvedTransactions || 0,
       rejectedTransactions: rejectedTransactions || 0,
       todaySales: todaySales.toFixed(2),
@@ -712,7 +732,10 @@ async function getStats() {
       totalUsers: 0,
       totalTransactions: 0,
       pendingTransactions: 0,
+      validatedTransactions: 0,
+      deliveredTransactions: 0,
       totalSales: '0.00',
+      avgTicket: '0.00',
       approvedTransactions: 0,
       rejectedTransactions: 0,
       todaySales: '0.00',
