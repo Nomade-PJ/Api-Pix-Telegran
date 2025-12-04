@@ -618,6 +618,33 @@ async function getPendingTransactions(limit = 10) {
   }
 }
 
+// Função auxiliar para calcular início do dia atual no horário de Brasília (UTC-3)
+function getTodayStartBrasil() {
+  const now = new Date();
+  
+  // Obter componentes da data atual no timezone de Brasília
+  const brasilDateStr = now.toLocaleString('pt-BR', { 
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  
+  // Formato: "DD/MM/YYYY"
+  const [day, month, year] = brasilDateStr.split('/');
+  
+  // Criar data no início do dia de hoje em Brasília (00:00:00)
+  // Formato ISO: YYYY-MM-DDTHH:mm:ss (sem timezone, será tratado como UTC-3)
+  const brasilMidnight = `${year}-${month}-${day}T00:00:00`;
+  
+  // Criar objeto Date que representa 00:00:00 no horário de Brasília
+  // O JavaScript cria em UTC, então precisamos ajustar
+  // Brasília é UTC-3, então 00:00 em Brasília = 03:00 UTC do mesmo dia
+  const utcMidnight = new Date(`${year}-${month}-${day}T03:00:00Z`);
+  
+  return utcMidnight.toISOString();
+}
+
 async function getStats() {
   try {
     // Total de usuários
@@ -636,7 +663,7 @@ async function getStats() {
       .select('*', { count: 'exact', head: true })
       .eq('status', 'proof_sent');
     
-    // Total em vendas (entregues)
+    // Total em vendas (entregues) - TODAS desde o início do bot
     const { data: sales } = await supabase
       .from('transactions')
       .select('amount')
@@ -656,14 +683,15 @@ async function getStats() {
       .select('*', { count: 'exact', head: true })
       .eq('status', 'rejected');
     
-    // Vendas de hoje
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Vendas de HOJE (usando delivered_at no horário de Brasília)
+    // Atualiza automaticamente em tempo real a cada chamada
+    const todayStartISO = getTodayStartBrasil();
+    
     const { data: todaySalesData } = await supabase
       .from('transactions')
-      .select('amount, created_at')
+      .select('amount, delivered_at')
       .eq('status', 'delivered')
-      .gte('created_at', today.toISOString());
+      .gte('delivered_at', todayStartISO);
     
     const todaySales = todaySalesData?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
     const todayTransactions = todaySalesData?.length || 0;
@@ -710,14 +738,15 @@ async function getCreatorStats() {
     
     const totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
     
-    // Vendas de hoje (apenas entregues)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Vendas de HOJE (usando delivered_at no horário de Brasília)
+    // Atualiza automaticamente em tempo real a cada chamada
+    const todayStartISO = getTodayStartBrasil();
+    
     const { data: todaySalesData } = await supabase
       .from('transactions')
-      .select('amount, created_at')
+      .select('amount, delivered_at')
       .eq('status', 'delivered')
-      .gte('created_at', today.toISOString());
+      .gte('delivered_at', todayStartISO);
     
     const todaySales = todaySalesData?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
     const todayTransactions = todaySalesData?.length || 0;
