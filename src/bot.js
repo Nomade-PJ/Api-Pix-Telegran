@@ -649,8 +649,8 @@ Selecione uma opção abaixo:`;
                 productName = group ? (group.group_name || `Grupo ${group.group_id}`) : transaction.product_id || 'Grupo';
               } else {
                 // Produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
-                const product = await db.getProduct(transaction.product_id, true);
-                productName = product ? product.name : transaction.product_id || 'Produto';
+          const product = await db.getProduct(transaction.product_id, true);
+              productName = product ? product.name : transaction.product_id || 'Produto';
               }
             }
           } catch (err) {
@@ -942,8 +942,8 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
                 productName = group ? (group.group_name || `Grupo ${group.group_id}`) : transactionData.product_id || 'Grupo';
               } else {
                 // Produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
-                const product = await db.getProduct(transactionData.product_id, true);
-                productName = product ? product.name : transactionData.product_id;
+          const product = await db.getProduct(transactionData.product_id, true);
+              productName = product ? product.name : transactionData.product_id;
               }
             } catch (err) {
               console.error('Erro ao buscar produto:', err);
@@ -1064,7 +1064,7 @@ ${zwsp}${zwnj}${zwsp}`, {
                     });
                     
                     console.log(`✅ [AUTO-ANALYSIS] Mensagem com link enviada ao usuário ${chatId}`);
-                  } catch (msgErr) {
+                    } catch (msgErr) {
                     console.error('⚠️ [AUTO-ANALYSIS] Erro ao enviar mensagem ao usuário:', msgErr.message);
                     
                     // Tentar enviar mensagem simples como fallback

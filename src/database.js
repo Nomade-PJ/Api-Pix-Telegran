@@ -693,30 +693,30 @@ async function getStats() {
   }
 }
 
-// Estatísticas para criadores (apenas transações aprovadas)
+// Estatísticas para criadores (apenas transações entregues - mesmo padrão do painel admin)
 async function getCreatorStats() {
   try {
-    // Apenas transações aprovadas (validated + delivered)
+    // Apenas transações entregues (delivered) - mesmo padrão do painel administrativo
     const { count: approvedCount } = await supabase
       .from('transactions')
       .select('*', { count: 'exact', head: true })
-      .in('status', ['validated', 'delivered']);
+      .eq('status', 'delivered');
     
-    // Total em vendas (apenas aprovadas)
+    // Total em vendas (apenas entregues)
     const { data: approvedSales } = await supabase
       .from('transactions')
       .select('amount')
-      .in('status', ['validated', 'delivered']);
+      .eq('status', 'delivered');
     
     const totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
     
-    // Vendas de hoje (apenas aprovadas)
+    // Vendas de hoje (apenas entregues)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const { data: todaySalesData } = await supabase
       .from('transactions')
       .select('amount, created_at')
-      .in('status', ['validated', 'delivered'])
+      .eq('status', 'delivered')
       .gte('created_at', today.toISOString());
     
     const todaySales = todaySalesData?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
