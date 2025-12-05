@@ -1321,7 +1321,191 @@ Um administrador irá validar manualmente.
 
   console.log('✅ [BOT-INIT] Handler de comprovantes registrado');
   
-  // Registrar comandos admin DEPOIS do handler de comprovantes
+  // ===== REGISTRAR COMANDOS DE USUÁRIO ANTES DO ADMIN =====
+  // Isso garante que comandos como /meuspedidos e /renovar sejam processados antes do bot.on('text') do admin
+  console.log('✅ [BOT-INIT] Registrando comandos de usuário...');
+  
+  // ===== MEUS PEDIDOS =====
+  console.log('✅ [BOT-INIT] Registrando comando /meuspedidos...');
+  bot.command('meuspedidos', async (ctx) => {
+    try {
+      console.log('📋 [MEUS-PEDIDOS] Comando /meuspedidos recebido de:', ctx.from.id);
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      console.log('📋 [MEUS-PEDIDOS] Transações encontradas:', transactions?.length || 0);
+      
+      if (!transactions || transactions.length === 0) {
+        console.log('📦 [MEUS-PEDIDOS] Nenhum pedido encontrado - enviando mensagem de incentivo');
+        const response = await ctx.reply(`📦 *Nenhum pedido encontrado*
+
+Você ainda não realizou nenhuma compra.
+
+🛍️ *Que tal começar agora?*
+
+*Use o comando:* /start
+
+Para ver nossos produtos disponíveis e fazer sua primeira compra!
+
+✨ *Ofertas especiais esperando por você!*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }]
+            ]
+          }
+        });
+        console.log('✅ [MEUS-PEDIDOS] Mensagem enviada com sucesso');
+        return response;
+      }
+      
+      // Agrupar transações por status
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada'
+      };
+      
+      let message = `📋 *MEUS PEDIDOS*\n\n`;
+      
+      // Mostrar últimas 10 transações
+      const recentTransactions = transactions.slice(0, 10);
+      
+      for (const tx of recentTransactions) {
+        const emoji = statusEmoji[tx.status] || '📦';
+        const status = statusText[tx.status] || tx.status;
+        const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+        const date = new Date(tx.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        message += `${emoji} *${productName}*\n`;
+        message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
+        message += `📊 ${status}\n`;
+        message += `📅 ${date}\n`;
+        message += `🆔 \`${tx.txid}\`\n\n`;
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
+      }
+      
+      console.log('📋 [MEUS-PEDIDOS] Enviando lista de pedidos');
+      const response = await ctx.reply(message, { parse_mode: 'Markdown' });
+      console.log('✅ [MEUS-PEDIDOS] Lista de pedidos enviada com sucesso');
+      return response;
+    } catch (err) {
+      console.error('❌ [MEUS-PEDIDOS] Erro no comando meuspedidos:', err);
+      console.error('❌ [MEUS-PEDIDOS] Stack:', err.stack);
+      return ctx.reply('❌ Erro ao buscar seus pedidos. Tente novamente.');
+    }
+  });
+
+  // ===== RENOVAR ASSINATURA =====
+  console.log('✅ [BOT-INIT] Registrando comando /renovar...');
+  bot.command('renovar', async (ctx) => {
+    try {
+      console.log('🔄 [RENOVAR] Comando /renovar recebido de:', ctx.from.id);
+      const user = await db.getOrCreateUser(ctx.from);
+      const groups = await db.getAllGroups();
+      console.log('🔄 [RENOVAR] Grupos encontrados:', groups?.length || 0);
+      const activeGroups = groups.filter(g => g.is_active);
+      
+      if (activeGroups.length === 0) {
+        console.log('🔥 [RENOVAR] Nenhum grupo ativo - enviando mensagem de promoção');
+        const response = await ctx.reply(`🔥 *PROMOÇÃO ESPECIAL!*
+
+📦 Nenhum grupo disponível para renovação no momento.
+
+✨ *Mas temos ofertas incríveis esperando por você!*
+
+🛍️ *Use o comando:* /start
+
+Para ver nossos produtos em promoção e fazer sua compra agora!
+
+💎 *Ofertas limitadas - Não perca!*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🛍️ Ver Produtos em Promoção', callback_data: 'back_to_start' }]
+            ]
+          }
+        });
+        console.log('✅ [RENOVAR] Mensagem de promoção enviada com sucesso');
+        return response;
+      }
+      
+      // Verificar se tem assinatura ativa
+      let hasActiveSubscription = false;
+      for (const group of activeGroups) {
+        const member = await db.getGroupMember(ctx.chat.id, group.id);
+        if (member) {
+          const expiresAt = new Date(member.expires_at);
+          const now = new Date();
+          if (expiresAt > now) {
+            hasActiveSubscription = true;
+            const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+            
+            // Mensagem única com todas as informações + link oculto (gera card automático)
+            const zwsp = '\u200B'; // Zero-width space
+            const zwnj = '\u200C'; // Zero-width non-joiner
+            await ctx.reply(`✅ *Você já tem assinatura ativa!*
+
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+⏰ Faltam: ${daysLeft} dias
+
+${zwsp}${zwnj}${zwsp}
+${group.group_link}
+${zwsp}${zwnj}${zwsp}`, {
+              parse_mode: 'Markdown',
+              disable_web_page_preview: false
+            });
+            return;
+          }
+        }
+      }
+      
+      // Se não tem assinatura ativa, mostrar opção para renovar
+      const group = activeGroups[0];
+      return ctx.reply(`🔄 *RENOVAR ASSINATURA*
+
+👥 Grupo: ${group.group_name}
+💰 Preço: R$ ${group.subscription_price.toFixed(2)}/mês
+📅 Duração: ${group.subscription_days} dias
+
+Clique no botão abaixo para renovar:`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `👥 Renovar Assinatura (R$${group.subscription_price.toFixed(2)})`, callback_data: `subscribe:${group.group_id}` }]
+          ]
+        }
+      });
+    } catch (err) {
+      console.error('Erro no comando renovar:', err);
+      return ctx.reply('❌ Erro ao processar renovação.');
+    }
+  });
+  
+  console.log('✅ [BOT-INIT] Comandos de usuário registrados');
+  
+  // Registrar comandos admin DEPOIS do handler de comprovantes E dos comandos de usuário
   admin.registerAdminCommands(bot);
   console.log('✅ [BOT-INIT] Comandos do admin registrados');
 
@@ -1859,184 +2043,6 @@ Esta transação foi cancelada automaticamente.
     } catch (err) {
       console.error('Erro na assinatura:', err.message);
       await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
-    }
-  });
-
-  // ===== MEUS PEDIDOS =====
-  console.log('✅ [BOT-INIT] Registrando comando /meuspedidos...');
-  bot.command('meuspedidos', async (ctx) => {
-    try {
-      console.log('📋 [MEUS-PEDIDOS] Comando /meuspedidos recebido de:', ctx.from.id);
-      const user = await db.getOrCreateUser(ctx.from);
-      const transactions = await db.getUserTransactions(ctx.from.id, 20);
-      console.log('📋 [MEUS-PEDIDOS] Transações encontradas:', transactions?.length || 0);
-      
-      if (!transactions || transactions.length === 0) {
-        console.log('📦 [MEUS-PEDIDOS] Nenhum pedido encontrado - enviando mensagem de incentivo');
-        const response = await ctx.reply(`📦 *Nenhum pedido encontrado*
-
-Você ainda não realizou nenhuma compra.
-
-🛍️ *Que tal começar agora?*
-
-*Use o comando:* /start
-
-Para ver nossos produtos disponíveis e fazer sua primeira compra!
-
-✨ *Ofertas especiais esperando por você!*`, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }]
-            ]
-          }
-        });
-        console.log('✅ [MEUS-PEDIDOS] Mensagem enviada com sucesso');
-        return response;
-      }
-      
-      // Agrupar transações por status
-      const statusEmoji = {
-        'pending': '⏳',
-        'proof_sent': '📸',
-        'validated': '✅',
-        'delivered': '✅',
-        'expired': '❌',
-        'cancelled': '❌'
-      };
-      
-      const statusText = {
-        'pending': 'Aguardando pagamento',
-        'proof_sent': 'Comprovante em análise',
-        'validated': 'Pagamento aprovado',
-        'delivered': 'Produto entregue',
-        'expired': 'Transação expirada',
-        'cancelled': 'Transação cancelada'
-      };
-      
-      let message = `📋 *MEUS PEDIDOS*\n\n`;
-      
-      // Mostrar últimas 10 transações
-      const recentTransactions = transactions.slice(0, 10);
-      
-      for (const tx of recentTransactions) {
-        const emoji = statusEmoji[tx.status] || '📦';
-        const status = statusText[tx.status] || tx.status;
-        const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
-        const date = new Date(tx.created_at).toLocaleDateString('pt-BR', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-        
-        message += `${emoji} *${productName}*\n`;
-        message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
-        message += `📊 ${status}\n`;
-        message += `📅 ${date}\n`;
-        message += `🆔 \`${tx.txid}\`\n\n`;
-      }
-      
-      if (transactions.length > 10) {
-        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
-      }
-      
-      console.log('📋 [MEUS-PEDIDOS] Enviando lista de pedidos');
-      const response = await ctx.reply(message, { parse_mode: 'Markdown' });
-      console.log('✅ [MEUS-PEDIDOS] Lista de pedidos enviada com sucesso');
-      return response;
-    } catch (err) {
-      console.error('❌ [MEUS-PEDIDOS] Erro no comando meuspedidos:', err);
-      console.error('❌ [MEUS-PEDIDOS] Stack:', err.stack);
-      return ctx.reply('❌ Erro ao buscar seus pedidos. Tente novamente.');
-    }
-  });
-
-  // ===== RENOVAR ASSINATURA =====
-  console.log('✅ [BOT-INIT] Registrando comando /renovar...');
-  bot.command('renovar', async (ctx) => {
-    try {
-      console.log('🔄 [RENOVAR] Comando /renovar recebido de:', ctx.from.id);
-      const user = await db.getOrCreateUser(ctx.from);
-      const groups = await db.getAllGroups();
-      console.log('🔄 [RENOVAR] Grupos encontrados:', groups?.length || 0);
-      const activeGroups = groups.filter(g => g.is_active);
-      
-      if (activeGroups.length === 0) {
-        console.log('🔥 [RENOVAR] Nenhum grupo ativo - enviando mensagem de promoção');
-        const response = await ctx.reply(`🔥 *PROMOÇÃO ESPECIAL!*
-
-📦 Nenhum grupo disponível para renovação no momento.
-
-✨ *Mas temos ofertas incríveis esperando por você!*
-
-🛍️ *Use o comando:* /start
-
-Para ver nossos produtos em promoção e fazer sua compra agora!
-
-💎 *Ofertas limitadas - Não perca!*`, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🛍️ Ver Produtos em Promoção', callback_data: 'back_to_start' }]
-            ]
-          }
-        });
-        console.log('✅ [RENOVAR] Mensagem de promoção enviada com sucesso');
-        return response;
-      }
-      
-      // Verificar se tem assinatura ativa
-      let hasActiveSubscription = false;
-      for (const group of activeGroups) {
-        const member = await db.getGroupMember(ctx.chat.id, group.id);
-        if (member) {
-          const expiresAt = new Date(member.expires_at);
-          const now = new Date();
-          if (expiresAt > now) {
-            hasActiveSubscription = true;
-            const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
-            
-            // Mensagem única com todas as informações + link oculto (gera card automático)
-            const zwsp = '\u200B'; // Zero-width space
-            const zwnj = '\u200C'; // Zero-width non-joiner
-            await ctx.reply(`✅ *Você já tem assinatura ativa!*
-
-👥 Grupo: ${group.group_name}
-📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
-⏰ Faltam: ${daysLeft} dias
-
-${zwsp}${zwnj}${zwsp}
-${group.group_link}
-${zwsp}${zwnj}${zwsp}`, {
-              parse_mode: 'Markdown',
-              disable_web_page_preview: false
-            });
-            return;
-          }
-        }
-      }
-      
-      // Se não tem assinatura ativa, mostrar opção para renovar
-      const group = activeGroups[0];
-      return ctx.reply(`🔄 *RENOVAR ASSINATURA*
-
-👥 Grupo: ${group.group_name}
-💰 Preço: R$ ${group.subscription_price.toFixed(2)}/mês
-📅 Duração: ${group.subscription_days} dias
-
-Clique no botão abaixo para renovar:`, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: `👥 Renovar Assinatura (R$${group.subscription_price.toFixed(2)})`, callback_data: `subscribe:${group.group_id}` }]
-          ]
-        }
-      });
-    } catch (err) {
-      console.error('Erro no comando renovar:', err);
-      return ctx.reply('❌ Erro ao processar renovação.');
     }
   });
 
