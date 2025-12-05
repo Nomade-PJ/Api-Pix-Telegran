@@ -25,7 +25,7 @@ function registerAdminCommands(bot) {
       await ctx.reply('⏳ Testando atualização da descrição...');
 
       console.log('📦 [TESTE-DESC] Carregando função updateBotDescription...');
-      const { updateBotDescription } = require('../jobs/updateBotDescription');
+      const { updateBotDescription } = require('./jobs/updateBotDescription');
       console.log('🔄 [TESTE-DESC] Executando updateBotDescription...');
       const result = await updateBotDescription();
       console.log('📊 [TESTE-DESC] Resultado:', JSON.stringify(result));
