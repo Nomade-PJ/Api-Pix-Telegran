@@ -470,6 +470,80 @@ async function getLastPendingTransaction(telegramId) {
   }
 }
 
+async function getUserTransactions(telegramId, limit = 20) {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    
+    if (error) throw error;
+    
+    const transactions = data || [];
+    
+    // Buscar informações adicionais para cada transação
+    for (const transaction of transactions) {
+      // Buscar produto
+      if (transaction.product_id) {
+        try {
+          const { data: productData } = await supabase
+            .from('products')
+            .select('name')
+            .eq('product_id', transaction.product_id)
+            .single();
+          
+          if (productData) {
+            transaction.product_name = productData.name;
+          }
+        } catch (err) {
+          // Ignorar erro se produto não encontrado
+        }
+      }
+      
+      // Buscar media pack
+      if (transaction.media_pack_id) {
+        try {
+          const { data: packData } = await supabase
+            .from('media_packs')
+            .select('name')
+            .eq('pack_id', transaction.media_pack_id)
+            .single();
+          
+          if (packData) {
+            transaction.product_name = packData.name;
+          }
+        } catch (err) {
+          // Ignorar erro se pack não encontrado
+        }
+      }
+      
+      // Buscar grupo
+      if (transaction.group_id) {
+        try {
+          const { data: groupData } = await supabase
+            .from('groups')
+            .select('group_name')
+            .eq('id', transaction.group_id)
+            .single();
+          
+          if (groupData) {
+            transaction.product_name = groupData.group_name || 'Grupo';
+          }
+        } catch (err) {
+          // Ignorar erro se grupo não encontrado
+        }
+      }
+    }
+    
+    return transactions;
+  } catch (err) {
+    console.error('Erro ao buscar transações do usuário:', err);
+    return [];
+  }
+}
+
 async function updateTransactionProof(txid, fileId) {
   try {
     const { error } = await supabase
@@ -1786,6 +1860,7 @@ module.exports = {
   createTransaction,
   getTransactionByTxid,
   getLastPendingTransaction,
+  getUserTransactions,
   updateTransactionProof,
   validateTransaction,
   markAsDelivered,

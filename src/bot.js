@@ -1862,6 +1862,87 @@ Esta transação foi cancelada automaticamente.
     }
   });
 
+  // ===== MEUS PEDIDOS =====
+  bot.command('meuspedidos', async (ctx) => {
+    try {
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.reply(`📦 *Nenhum pedido encontrado*
+
+Você ainda não realizou nenhuma compra.
+
+🛍️ *Que tal começar agora?*
+
+*Use o comando:* /start
+
+Para ver nossos produtos disponíveis e fazer sua primeira compra!
+
+✨ *Ofertas especiais esperando por você!*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }]
+            ]
+          }
+        });
+      }
+      
+      // Agrupar transações por status
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada'
+      };
+      
+      let message = `📋 *MEUS PEDIDOS*\n\n`;
+      
+      // Mostrar últimas 10 transações
+      const recentTransactions = transactions.slice(0, 10);
+      
+      for (const tx of recentTransactions) {
+        const emoji = statusEmoji[tx.status] || '📦';
+        const status = statusText[tx.status] || tx.status;
+        const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+        const date = new Date(tx.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        message += `${emoji} *${productName}*\n`;
+        message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
+        message += `📊 ${status}\n`;
+        message += `📅 ${date}\n`;
+        message += `🆔 \`${tx.txid}\`\n\n`;
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
+      }
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro no comando meuspedidos:', err);
+      return ctx.reply('❌ Erro ao buscar seus pedidos. Tente novamente.');
+    }
+  });
+
   // ===== RENOVAR ASSINATURA =====
   bot.command('renovar', async (ctx) => {
     try {
@@ -1870,7 +1951,24 @@ Esta transação foi cancelada automaticamente.
       const activeGroups = groups.filter(g => g.is_active);
       
       if (activeGroups.length === 0) {
-        return ctx.reply('📦 Nenhum grupo disponível para renovação.');
+        return ctx.reply(`🔥 *PROMOÇÃO ESPECIAL!*
+
+📦 Nenhum grupo disponível para renovação no momento.
+
+✨ *Mas temos ofertas incríveis esperando por você!*
+
+🛍️ *Use o comando:* /start
+
+Para ver nossos produtos em promoção e fazer sua compra agora!
+
+💎 *Ofertas limitadas - Não perca!*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🛍️ Ver Produtos em Promoção', callback_data: 'back_to_start' }]
+            ]
+          }
+        });
       }
       
       // Verificar se tem assinatura ativa
