@@ -738,12 +738,41 @@ async function getStats() {
       .eq('status', 'proof_sent');
     
     // Total em vendas (entregues) - TODAS desde o início do bot
-    const { data: sales } = await supabase
-      .from('transactions')
-      .select('amount')
-      .eq('status', 'delivered');
-    
-    const totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+    // Primeiro tenta buscar o valor confirmado do extrato bancário
+    let totalSales = 0;
+    try {
+      const confirmedTotalValue = await getSetting('total_vendas_confirmado');
+      if (confirmedTotalValue) {
+        totalSales = parseFloat(confirmedTotalValue) || 0;
+        if (totalSales > 0) {
+          console.log('💰 [STATS] Usando valor confirmado do extrato bancário:', totalSales);
+        } else {
+          // Se o valor for 0 ou inválido, calcula pelas transações
+          const { data: sales } = await supabase
+            .from('transactions')
+            .select('amount')
+            .eq('status', 'delivered');
+          totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+          console.log('💰 [STATS] Valor confirmado inválido, calculando pelas transações:', totalSales);
+        }
+      } else {
+        // Se não houver valor confirmado, calcula pelas transações
+        const { data: sales } = await supabase
+          .from('transactions')
+          .select('amount')
+          .eq('status', 'delivered');
+        totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+        console.log('💰 [STATS] Calculando valor pelas transações:', totalSales);
+      }
+    } catch (err) {
+      // Em caso de erro, calcula pelas transações
+      console.warn('⚠️ [STATS] Erro ao buscar valor confirmado, calculando pelas transações:', err.message);
+      const { data: sales } = await supabase
+        .from('transactions')
+        .select('amount')
+        .eq('status', 'delivered');
+      totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+    }
     
     // Transações validadas (apenas status validated)
     const { count: validatedTransactions } = await supabase
@@ -828,12 +857,41 @@ async function getCreatorStats() {
       .eq('status', 'delivered');
     
     // Total em vendas (apenas entregues)
-    const { data: approvedSales } = await supabase
-      .from('transactions')
-      .select('amount')
-      .eq('status', 'delivered');
-    
-    const totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+    // Primeiro tenta buscar o valor confirmado do extrato bancário
+    let totalSales = 0;
+    try {
+      const confirmedTotalValue = await getSetting('total_vendas_confirmado');
+      if (confirmedTotalValue) {
+        totalSales = parseFloat(confirmedTotalValue) || 0;
+        if (totalSales > 0) {
+          console.log('💰 [CREATOR-STATS] Usando valor confirmado do extrato bancário:', totalSales);
+        } else {
+          // Se o valor for 0 ou inválido, calcula pelas transações
+          const { data: approvedSales } = await supabase
+            .from('transactions')
+            .select('amount')
+            .eq('status', 'delivered');
+          totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+          console.log('💰 [CREATOR-STATS] Valor confirmado inválido, calculando pelas transações:', totalSales);
+        }
+      } else {
+        // Se não houver valor confirmado, calcula pelas transações
+        const { data: approvedSales } = await supabase
+          .from('transactions')
+          .select('amount')
+          .eq('status', 'delivered');
+        totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+        console.log('💰 [CREATOR-STATS] Calculando valor pelas transações:', totalSales);
+      }
+    } catch (err) {
+      // Em caso de erro, calcula pelas transações
+      console.warn('⚠️ [CREATOR-STATS] Erro ao buscar valor confirmado, calculando pelas transações:', err.message);
+      const { data: approvedSales } = await supabase
+        .from('transactions')
+        .select('amount')
+        .eq('status', 'delivered');
+      totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
+    }
     
     // Vendas de HOJE (usando delivered_at no horário de Brasília)
     // Atualiza automaticamente em tempo real a cada chamada
