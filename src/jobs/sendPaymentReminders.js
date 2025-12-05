@@ -92,21 +92,76 @@ async function sendPaymentReminders(bot) {
 
 🆔 TXID: ${transaction.txid}`;
           
-          // Enviar lembrete
-          try {
-            await bot.telegram.sendMessage(transaction.telegram_id, reminderMessage, { 
-              parse_mode: 'Markdown' 
-            });
+          // Enviar lembrete com retry para erros de conexão
+          let sentSuccessfully = false;
+          let retries = 3;
+          let lastError = null;
+          
+          while (retries > 0 && !sentSuccessfully) {
+            try {
+              await bot.telegram.sendMessage(transaction.telegram_id, reminderMessage, { 
+                parse_mode: 'Markdown' 
+              });
+              
+              reminderSent.add(transaction.txid);
+              sentCount++;
+              sentSuccessfully = true;
+              console.log(`✅ [REMINDER-JOB] Lembrete enviado para ${transaction.txid}`);
+            } catch (sendErr) {
+              lastError = sendErr;
+              
+              // Tratar especificamente quando o bot foi bloqueado pelo usuário (não tentar retry)
+              if (sendErr.response && sendErr.response.error_code === 403) {
+                console.log(`ℹ️ [REMINDER-JOB] Bot bloqueado pelo usuário ${transaction.telegram_id} - lembrete não enviado`);
+                break; // Não tentar retry para usuário bloqueado
+              }
+              
+              // Verificar se é erro de conexão (socket hang up, timeout, etc)
+              const isConnectionError = sendErr.message && (
+                sendErr.message.includes('socket hang up') ||
+                sendErr.message.includes('fetch failed') ||
+                sendErr.message.includes('SocketError') ||
+                sendErr.message.includes('other side closed') ||
+                sendErr.message.includes('ECONNRESET') ||
+                sendErr.message.includes('ETIMEDOUT') ||
+                sendErr.message.includes('ECONNREFUSED') ||
+                sendErr.code === 'ECONNRESET' ||
+                sendErr.code === 'ETIMEDOUT' ||
+                sendErr.code === 'ECONNREFUSED'
+              );
+              
+              if (!isConnectionError) {
+                // Não é erro de conexão, não tentar retry
+                console.error(`❌ [REMINDER-JOB] Erro ao enviar lembrete para ${transaction.txid} (não é erro de conexão):`, sendErr.message);
+                break; // Sair do loop de retry
+              }
+              
+              // É erro de conexão, tentar retry
+              retries--;
+              if (retries > 0) {
+                console.warn(`⚠️ [REMINDER-JOB] Erro de conexão ao enviar lembrete para ${transaction.txid}: ${sendErr.message}`);
+                console.warn(`⚠️ [REMINDER-JOB] Tentando novamente... (${retries} tentativas restantes)`);
+                // Aguardar 2 segundos antes de tentar novamente
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              } else {
+                console.error(`❌ [REMINDER-JOB] Erro ao enviar lembrete para ${transaction.txid} após 3 tentativas:`, sendErr.message);
+              }
+            }
+          }
+          
+          // Se não conseguiu enviar após todas as tentativas e foi erro de conexão, não marcar como enviado
+          // Isso permite que o job tente novamente no próximo ciclo
+          if (!sentSuccessfully && lastError) {
+            const isConnectionError = lastError.message && (
+              lastError.message.includes('socket hang up') ||
+              lastError.message.includes('fetch failed') ||
+              lastError.message.includes('SocketError') ||
+              lastError.message.includes('ECONNRESET') ||
+              lastError.message.includes('ETIMEDOUT')
+            );
             
-            reminderSent.add(transaction.txid);
-            sentCount++;
-            console.log(`✅ [REMINDER-JOB] Lembrete enviado para ${transaction.txid}`);
-          } catch (sendErr) {
-            // Tratar especificamente quando o bot foi bloqueado pelo usuário
-            if (sendErr.response && sendErr.response.error_code === 403) {
-              console.log(`ℹ️ [REMINDER-JOB] Bot bloqueado pelo usuário ${transaction.telegram_id} - lembrete não enviado`);
-            } else {
-              console.error(`❌ [REMINDER-JOB] Erro ao enviar lembrete para ${transaction.txid}:`, sendErr.message);
+            if (isConnectionError) {
+              console.warn(`⚠️ [REMINDER-JOB] Lembrete para ${transaction.txid} não foi enviado por erro de conexão - será tentado novamente no próximo ciclo`);
             }
           }
         } else {
