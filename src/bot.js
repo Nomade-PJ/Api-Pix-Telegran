@@ -1387,7 +1387,12 @@ Um administrador irá validar manualmente.
 🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
           }
         } catch (err) {
-          console.error('Erro no lembrete 15 min:', err);
+          // Tratar especificamente quando o bot foi bloqueado pelo usuário
+          if (err.response && err.response.error_code === 403) {
+            console.log(`ℹ️ [LEMBRETE] Bot bloqueado pelo usuário ${ctx.chat.id} - lembrete não enviado`);
+          } else {
+            console.error('Erro no lembrete 15 min:', err);
+          }
         }
       }, 15 * 60 * 1000); // 15 minutos
       
@@ -1399,7 +1404,8 @@ Um administrador irá validar manualmente.
           if (trans && trans.status === 'pending') {
             await db.cancelTransaction(txid);
             
-            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
+            try {
+              await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
 
 ❌ O prazo de 30 minutos foi atingido.
 Esta transação foi cancelada automaticamente.
@@ -1412,6 +1418,14 @@ Esta transação foi cancelada automaticamente.
 
 💰 Valor: R$ ${amount}
 🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+            } catch (sendErr) {
+              // Tratar especificamente quando o bot foi bloqueado pelo usuário
+              if (sendErr.response && sendErr.response.error_code === 403) {
+                console.log(`ℹ️ [EXPIRAÇÃO] Bot bloqueado pelo usuário ${ctx.chat.id} - mensagem de expiração não enviada`);
+              } else {
+                console.error('Erro ao enviar mensagem de expiração:', sendErr);
+              }
+            }
           }
         } catch (err) {
           console.error('Erro no cancelamento automático:', err);
@@ -1536,7 +1550,12 @@ Esta transação foi cancelada automaticamente.
 🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
           }
         } catch (err) {
-          console.error('Erro no lembrete 15 min:', err);
+          // Tratar especificamente quando o bot foi bloqueado pelo usuário
+          if (err.response && err.response.error_code === 403) {
+            console.log(`ℹ️ [LEMBRETE] Bot bloqueado pelo usuário ${ctx.chat.id} - lembrete não enviado`);
+          } else {
+            console.error('Erro no lembrete 15 min:', err);
+          }
         }
       }, 15 * 60 * 1000);
       
@@ -1547,7 +1566,8 @@ Esta transação foi cancelada automaticamente.
           if (trans && trans.status === 'pending') {
             await db.cancelTransaction(txid);
             
-            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
+            try {
+              await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
 
 ❌ O prazo de 30 minutos foi atingido.
 Esta transação foi cancelada automaticamente.
@@ -1560,6 +1580,14 @@ Esta transação foi cancelada automaticamente.
 
 💰 Valor: R$ ${amount}
 🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+            } catch (sendErr) {
+              // Tratar especificamente quando o bot foi bloqueado pelo usuário
+              if (sendErr.response && sendErr.response.error_code === 403) {
+                console.log(`ℹ️ [EXPIRAÇÃO] Bot bloqueado pelo usuário ${ctx.chat.id} - mensagem de expiração não enviada`);
+              } else {
+                console.error('Erro ao enviar mensagem de expiração:', sendErr);
+              }
+            }
           }
         } catch (err) {
           console.error('Erro no cancelamento automático:', err);
