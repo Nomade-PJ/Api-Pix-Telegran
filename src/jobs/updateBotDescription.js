@@ -9,16 +9,18 @@ const axios = require('axios');
  */
 async function updateBotDescription() {
   try {
-    console.log('🔄 [BOT-DESC] Atualizando descrição do bot...');
+    console.log('🔄 [BOT-DESC] Iniciando atualização da descrição do bot...');
     
     // Buscar usuários mensais
     const monthlyUsers = await db.getMonthlyUsers();
+    console.log(`📊 [BOT-DESC] Usuários mensais encontrados: ${monthlyUsers}`);
     
     // Formatar número com pontos (ex: 82.531)
     const formattedUsers = monthlyUsers.toLocaleString('pt-BR');
     
     // Criar descrição no formato similar ao exemplo
     const description = `${formattedUsers} usuários mensais`;
+    console.log(`📝 [BOT-DESC] Descrição que será enviada: "${description}"`);
     
     // Atualizar descrição curta do bot usando a API do Telegram
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -28,19 +30,40 @@ async function updateBotDescription() {
       return { success: false, error: 'Token não configurado' };
     }
     
+    console.log('🌐 [BOT-DESC] Enviando requisição para API do Telegram...');
+    console.log('   Endpoint: setMyShortDescription (Atualiza o campo "About")');
+    
+    // API do Telegram aceita POST com JSON ou GET com query params
+    // Usando POST com JSON (método mais comum)
     const response = await axios.post(`https://api.telegram.org/bot${token}/setMyShortDescription`, {
       short_description: description
+    }, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
     });
     
+    console.log('📥 [BOT-DESC] Resposta da API:', JSON.stringify(response.data));
+    
     if (response.data && response.data.ok) {
-      console.log(`✅ [BOT-DESC] Descrição atualizada: "${description}"`);
+      console.log(`✅ [BOT-DESC] Descrição atualizada com sucesso: "${description}"`);
       return { success: true, description, monthlyUsers };
     } else {
-      throw new Error(response.data?.description || 'Erro desconhecido da API');
+      const errorMsg = response.data?.description || 'Erro desconhecido da API';
+      console.error(`❌ [BOT-DESC] API retornou erro: ${errorMsg}`);
+      throw new Error(errorMsg);
     }
     
   } catch (err) {
-    console.error('❌ [BOT-DESC] Erro ao atualizar descrição:', err.message);
+    console.error('❌ [BOT-DESC] Erro ao atualizar descrição:');
+    console.error('   Mensagem:', err.message);
+    if (err.response) {
+      console.error('   Status:', err.response.status);
+      console.error('   Dados:', JSON.stringify(err.response.data));
+    }
+    if (err.stack) {
+      console.error('   Stack:', err.stack);
+    }
     return { success: false, error: err.message };
   }
 }

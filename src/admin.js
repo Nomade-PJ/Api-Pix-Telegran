@@ -3244,6 +3244,40 @@ Exemplo: 30.00 ou 50`, {
     }
   });
 
+  // ===== COMANDO DE TESTE PARA ATUALIZAR DESCRIÇÃO (apenas para debug) =====
+  bot.command('teste_descricao', async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) {
+        return ctx.reply('❌ Acesso negado.');
+      }
+
+      await ctx.reply('⏳ Testando atualização da descrição...');
+
+      const { updateBotDescription } = require('../jobs/updateBotDescription');
+      const result = await updateBotDescription();
+
+      if (result.success) {
+        return ctx.reply(`✅ *Teste realizado com sucesso!*
+
+📊 *Usuários mensais:* ${result.monthlyUsers}
+📝 *Descrição atualizada:* "${result.description}"
+
+A descrição deve aparecer no perfil do bot em alguns instantes.`, { parse_mode: 'Markdown' });
+      } else {
+        return ctx.reply(`❌ *Erro ao atualizar descrição*
+
+Erro: ${result.error}
+
+Verifique os logs do servidor para mais detalhes.`, { parse_mode: 'Markdown' });
+      }
+      
+    } catch (err) {
+      console.error('Erro no teste de descrição:', err.message);
+      return ctx.reply(`❌ Erro: ${err.message}`);
+    }
+  });
+
 }
 
 module.exports = { registerAdminCommands };
