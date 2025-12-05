@@ -47,29 +47,41 @@ async function expireOldTransactions() {
         lastError = fetchError;
         retries--;
         
-        // Verificar se é erro de conexão (não deve tentar retry para outros erros)
-        const isConnectionError = fetchError.message && (
-          fetchError.message.includes('fetch failed') ||
-          fetchError.message.includes('SocketError') ||
-          fetchError.message.includes('other side closed') ||
-          fetchError.message.includes('ECONNRESET') ||
-          fetchError.message.includes('ETIMEDOUT')
+        // Verificar se é erro de conexão (verificar message, details e code)
+        const errorMessage = fetchError.message || '';
+        const errorDetails = fetchError.details || '';
+        const errorCode = fetchError.code || '';
+        const errorString = JSON.stringify(fetchError);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorCode === 'ECONNRESET' ||
+          errorCode === 'ETIMEDOUT'
         );
         
         if (!isConnectionError) {
           // Não é erro de conexão, não tentar retry
-          console.error('❌ [EXPIRE-JOB] Erro ao buscar transações (não é erro de conexão):', fetchError.message);
-          return { expired: 0, error: fetchError.message };
+          console.error('❌ [EXPIRE-JOB] Erro ao buscar transações (não é erro de conexão):', errorMessage);
+          return { expired: 0, error: errorMessage };
         }
         
         if (retries > 0) {
-          console.warn(`⚠️ [EXPIRE-JOB] Erro de conexão detectado: ${fetchError.message}`);
+          console.warn(`⚠️ [EXPIRE-JOB] Erro de conexão detectado: ${errorMessage}`);
           console.warn(`⚠️ [EXPIRE-JOB] Tentando novamente... (${retries} tentativas restantes)`);
           // Aguardar 2 segundos antes de tentar novamente
           await new Promise(resolve => setTimeout(resolve, 2000));
         } else {
-          console.error('❌ [EXPIRE-JOB] Erro ao buscar transações após 3 tentativas:', fetchError.message);
-          return { expired: 0, error: fetchError.message };
+          console.error('❌ [EXPIRE-JOB] Erro ao buscar transações após 3 tentativas:', errorMessage);
+          return { expired: 0, error: errorMessage };
         }
       }
     }

@@ -51,14 +51,25 @@ async function sendPaymentReminders(bot) {
         lastError = fetchError;
         retries--;
         
-        // Verificar se é erro de conexão (não deve tentar retry para outros erros)
-        const isConnectionError = fetchError.message && (
-          fetchError.message.includes('fetch failed') ||
-          fetchError.message.includes('SocketError') ||
-          fetchError.message.includes('other side closed') ||
-          fetchError.message.includes('ECONNRESET') ||
-          fetchError.message.includes('ETIMEDOUT') ||
-          fetchError.message.includes('UND_ERR_SOCKET')
+        // Verificar se é erro de conexão (verificar message, details e code)
+        const errorMessage = fetchError.message || '';
+        const errorDetails = fetchError.details || '';
+        const errorCode = fetchError.code || '';
+        const errorString = JSON.stringify(fetchError);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorCode === 'ECONNRESET' ||
+          errorCode === 'ETIMEDOUT'
         );
         
         if (!isConnectionError) {
