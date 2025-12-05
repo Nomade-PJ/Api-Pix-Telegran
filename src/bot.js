@@ -8,6 +8,7 @@ const creator = require('./creator');
 const proofAnalyzer = require('./proofAnalyzer');
 const { startExpirationJob } = require('./jobs/expireTransactions');
 const { startBotDescriptionJob } = require('./jobs/updateBotDescription');
+const { startReminderJob } = require('./jobs/sendPaymentReminders');
 
 function createBot(token) {
   const bot = new Telegraf(token);
@@ -19,6 +20,10 @@ function createBot(token) {
   // Iniciar job de atualização automática da descrição do bot
   startBotDescriptionJob();
   console.log('✅ [BOT-INIT] Job de atualização de descrição do bot iniciado');
+  
+  // Iniciar job de lembretes de pagamento (15 minutos)
+  startReminderJob(bot);
+  console.log('✅ [BOT-INIT] Job de lembretes de pagamento iniciado');
   
   // 🆕 REGISTRAR COMANDO /criador PRIMEIRO (antes de tudo, para garantir prioridade)
   creator.registerCreatorCommands(bot);
@@ -1363,35 +1368,47 @@ Um administrador irá validar manualmente.
         timeZone: 'America/Sao_Paulo'
       });
       
+      // 🆕 Salvar valores antes do setTimeout (ctx pode não estar disponível após 15 min)
+      const chatId = ctx.chat.id;
+      const reminderAmount = amount;
+      const reminderKey = charge.key;
+      const reminderCopiaCola = charge.copiaCola;
+      
       // Agendar lembretes de pagamento
       // Lembrete aos 15 minutos (15 minutos restantes)
+      console.log(`⏰ [LEMBRETE] Agendando lembrete de 15min para TXID: ${txid}, Chat: ${chatId}`);
       setTimeout(async () => {
         try {
+          console.log(`⏰ [LEMBRETE] Executando lembrete de 15min para TXID: ${txid}`);
           const trans = await db.getTransactionByTxid(txid);
           // Verificar se ainda está pendente e não paga
           if (trans && trans.status === 'pending') {
-            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *LEMBRETE DE PAGAMENTO*
+            console.log(`✅ [LEMBRETE] Enviando lembrete de 15min para chat ${chatId}, TXID: ${txid}`);
+            await bot.telegram.sendMessage(chatId, `⏰ *LEMBRETE DE PAGAMENTO*
 
 ⚠️ *Faltam 15 minutos* para expirar!
 
-💰 Valor: R$ ${amount}
-🔑 Chave: ${charge.key}
+💰 Valor: R$ ${reminderAmount}
+🔑 Chave: ${reminderKey}
 
 📋 Cópia & Cola:
-\`${charge.copiaCola}\`
+\`${reminderCopiaCola}\`
 
 ⏰ *Expira às:* ${expirationStr}
 
 📸 Após pagar, envie o comprovante.
 
 🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+            console.log(`✅ [LEMBRETE] Lembrete enviado com sucesso para chat ${chatId}`);
+          } else {
+            console.log(`⏭️ [LEMBRETE] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - lembrete não enviado`);
           }
         } catch (err) {
           // Tratar especificamente quando o bot foi bloqueado pelo usuário
           if (err.response && err.response.error_code === 403) {
-            console.log(`ℹ️ [LEMBRETE] Bot bloqueado pelo usuário ${ctx.chat.id} - lembrete não enviado`);
+            console.log(`ℹ️ [LEMBRETE] Bot bloqueado pelo usuário ${chatId} - lembrete não enviado`);
           } else {
-            console.error('Erro no lembrete 15 min:', err);
+            console.error(`❌ [LEMBRETE] Erro no lembrete 15 min para TXID ${txid}:`, err.message);
           }
         }
       }, 15 * 60 * 1000); // 15 minutos
@@ -1399,13 +1416,15 @@ Um administrador irá validar manualmente.
       // Aviso de expiração e cancelamento automático aos 30 minutos
       setTimeout(async () => {
         try {
+          console.log(`⏰ [EXPIRAÇÃO] Verificando expiração para TXID: ${txid}`);
           const trans = await db.getTransactionByTxid(txid);
           // Se ainda está pendente, cancelar
           if (trans && trans.status === 'pending') {
+            console.log(`❌ [EXPIRAÇÃO] Cancelando transação ${txid} por expiração de 30min`);
             await db.cancelTransaction(txid);
             
             try {
-              await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
+              await bot.telegram.sendMessage(chatId, `⏰ *TRANSAÇÃO EXPIRADA*
 
 ❌ O prazo de 30 minutos foi atingido.
 Esta transação foi cancelada automaticamente.
@@ -1416,19 +1435,22 @@ Esta transação foi cancelada automaticamente.
 3. Realize o pagamento em até 30 minutos
 4. Envie o comprovante
 
-💰 Valor: R$ ${amount}
+💰 Valor: R$ ${reminderAmount}
 🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+              console.log(`✅ [EXPIRAÇÃO] Mensagem de expiração enviada para chat ${chatId}`);
             } catch (sendErr) {
               // Tratar especificamente quando o bot foi bloqueado pelo usuário
               if (sendErr.response && sendErr.response.error_code === 403) {
-                console.log(`ℹ️ [EXPIRAÇÃO] Bot bloqueado pelo usuário ${ctx.chat.id} - mensagem de expiração não enviada`);
+                console.log(`ℹ️ [EXPIRAÇÃO] Bot bloqueado pelo usuário ${chatId} - mensagem de expiração não enviada`);
               } else {
-                console.error('Erro ao enviar mensagem de expiração:', sendErr);
+                console.error(`❌ [EXPIRAÇÃO] Erro ao enviar mensagem de expiração para TXID ${txid}:`, sendErr.message);
               }
             }
+          } else {
+            console.log(`⏭️ [EXPIRAÇÃO] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - cancelamento não necessário`);
           }
         } catch (err) {
-          console.error('Erro no cancelamento automático:', err);
+          console.error(`❌ [EXPIRAÇÃO] Erro no cancelamento automático para TXID ${txid}:`, err.message);
         }
       }, 30 * 60 * 1000); // 30 minutos
       
@@ -1528,33 +1550,45 @@ Esta transação foi cancelada automaticamente.
         timeZone: 'America/Sao_Paulo'
       });
       
+      // 🆕 Salvar valores antes do setTimeout (ctx pode não estar disponível após 15 min)
+      const chatIdMediaPack = ctx.chat.id;
+      const reminderAmountMediaPack = amount;
+      const reminderKeyMediaPack = charge.key;
+      const reminderCopiaColaMediaPack = charge.copiaCola;
+      
       // Agendar lembretes de pagamento
+      console.log(`⏰ [LEMBRETE-MEDIAPACK] Agendando lembrete de 15min para TXID: ${txid}, Chat: ${chatIdMediaPack}`);
       setTimeout(async () => {
         try {
+          console.log(`⏰ [LEMBRETE-MEDIAPACK] Executando lembrete de 15min para TXID: ${txid}`);
           const trans = await db.getTransactionByTxid(txid);
           if (trans && trans.status === 'pending') {
-            await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *LEMBRETE DE PAGAMENTO*
+            console.log(`✅ [LEMBRETE-MEDIAPACK] Enviando lembrete de 15min para chat ${chatIdMediaPack}, TXID: ${txid}`);
+            await bot.telegram.sendMessage(chatIdMediaPack, `⏰ *LEMBRETE DE PAGAMENTO*
 
 ⚠️ *Faltam 15 minutos* para expirar!
 
-💰 Valor: R$ ${amount}
-🔑 Chave: ${charge.key}
+💰 Valor: R$ ${reminderAmountMediaPack}
+🔑 Chave: ${reminderKeyMediaPack}
 
 📋 Cópia & Cola:
-\`${charge.copiaCola}\`
+\`${reminderCopiaColaMediaPack}\`
 
 ⏰ *Expira às:* ${expirationStr}
 
 📸 Após pagar, envie o comprovante.
 
 🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+            console.log(`✅ [LEMBRETE-MEDIAPACK] Lembrete enviado com sucesso para chat ${chatIdMediaPack}`);
+          } else {
+            console.log(`⏭️ [LEMBRETE-MEDIAPACK] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - lembrete não enviado`);
           }
         } catch (err) {
           // Tratar especificamente quando o bot foi bloqueado pelo usuário
           if (err.response && err.response.error_code === 403) {
-            console.log(`ℹ️ [LEMBRETE] Bot bloqueado pelo usuário ${ctx.chat.id} - lembrete não enviado`);
+            console.log(`ℹ️ [LEMBRETE-MEDIAPACK] Bot bloqueado pelo usuário ${chatIdMediaPack} - lembrete não enviado`);
           } else {
-            console.error('Erro no lembrete 15 min:', err);
+            console.error(`❌ [LEMBRETE-MEDIAPACK] Erro no lembrete 15 min para TXID ${txid}:`, err.message);
           }
         }
       }, 15 * 60 * 1000);
@@ -1562,12 +1596,14 @@ Esta transação foi cancelada automaticamente.
       // Cancelamento automático aos 30 minutos
       setTimeout(async () => {
         try {
+          console.log(`⏰ [EXPIRAÇÃO-MEDIAPACK] Verificando expiração para TXID: ${txid}`);
           const trans = await db.getTransactionByTxid(txid);
           if (trans && trans.status === 'pending') {
+            console.log(`❌ [EXPIRAÇÃO-MEDIAPACK] Cancelando transação ${txid} por expiração de 30min`);
             await db.cancelTransaction(txid);
             
             try {
-              await ctx.telegram.sendMessage(ctx.chat.id, `⏰ *TRANSAÇÃO EXPIRADA*
+              await bot.telegram.sendMessage(chatIdMediaPack, `⏰ *TRANSAÇÃO EXPIRADA*
 
 ❌ O prazo de 30 minutos foi atingido.
 Esta transação foi cancelada automaticamente.
@@ -1578,19 +1614,22 @@ Esta transação foi cancelada automaticamente.
 3. Realize o pagamento em até 30 minutos
 4. Envie o comprovante
 
-💰 Valor: R$ ${amount}
+💰 Valor: R$ ${reminderAmountMediaPack}
 🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+              console.log(`✅ [EXPIRAÇÃO-MEDIAPACK] Mensagem de expiração enviada para chat ${chatIdMediaPack}`);
             } catch (sendErr) {
               // Tratar especificamente quando o bot foi bloqueado pelo usuário
               if (sendErr.response && sendErr.response.error_code === 403) {
-                console.log(`ℹ️ [EXPIRAÇÃO] Bot bloqueado pelo usuário ${ctx.chat.id} - mensagem de expiração não enviada`);
+                console.log(`ℹ️ [EXPIRAÇÃO-MEDIAPACK] Bot bloqueado pelo usuário ${chatIdMediaPack} - mensagem de expiração não enviada`);
               } else {
-                console.error('Erro ao enviar mensagem de expiração:', sendErr);
+                console.error(`❌ [EXPIRAÇÃO-MEDIAPACK] Erro ao enviar mensagem de expiração para TXID ${txid}:`, sendErr.message);
               }
             }
+          } else {
+            console.log(`⏭️ [EXPIRAÇÃO-MEDIAPACK] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - cancelamento não necessário`);
           }
         } catch (err) {
-          console.error('Erro no cancelamento automático:', err);
+          console.error(`❌ [EXPIRAÇÃO-MEDIAPACK] Erro no cancelamento automático para TXID ${txid}:`, err.message);
         }
       }, 30 * 60 * 1000);
       
@@ -1703,9 +1742,94 @@ ${zwsp}${zwnj}${zwsp}`, {
         pixPayload: charge.copiaCola
       }).catch(err => console.error('Erro ao salvar transação:', err));
       
-      // Calcular tempo de expiração (30 minutos)
+      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
       const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
-      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
+      
+      // 🆕 Salvar valores antes do setTimeout (ctx pode não estar disponível após 15 min)
+      const chatIdGroup = ctx.chat.id;
+      const reminderAmountGroup = amount;
+      const reminderKeyGroup = charge.key;
+      const reminderCopiaColaGroup = charge.copiaCola;
+      
+      // Agendar lembretes de pagamento (o job também enviará, mas manter setTimeout como backup)
+      console.log(`⏰ [LEMBRETE-GROUP] Agendando lembrete de 15min para TXID: ${txid}, Chat: ${chatIdGroup}`);
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [LEMBRETE-GROUP] Executando lembrete de 15min para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          if (trans && trans.status === 'pending') {
+            console.log(`✅ [LEMBRETE-GROUP] Enviando lembrete de 15min para chat ${chatIdGroup}, TXID: ${txid}`);
+            await bot.telegram.sendMessage(chatIdGroup, `⏰ *LEMBRETE DE PAGAMENTO*
+
+⚠️ *Faltam 15 minutos* para expirar!
+
+💰 Valor: R$ ${reminderAmountGroup}
+🔑 Chave: ${reminderKeyGroup}
+
+📋 Cópia & Cola:
+\`${reminderCopiaColaGroup}\`
+
+⏰ *Expira às:* ${expirationStr}
+
+📸 Após pagar, envie o comprovante.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+            console.log(`✅ [LEMBRETE-GROUP] Lembrete enviado com sucesso para chat ${chatIdGroup}`);
+          } else {
+            console.log(`⏭️ [LEMBRETE-GROUP] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - lembrete não enviado`);
+          }
+        } catch (err) {
+          if (err.response && err.response.error_code === 403) {
+            console.log(`ℹ️ [LEMBRETE-GROUP] Bot bloqueado pelo usuário ${chatIdGroup} - lembrete não enviado`);
+          } else {
+            console.error(`❌ [LEMBRETE-GROUP] Erro no lembrete 15 min para TXID ${txid}:`, err.message);
+          }
+        }
+      }, 15 * 60 * 1000); // 15 minutos
+      
+      // Cancelamento automático aos 30 minutos
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [EXPIRAÇÃO-GROUP] Verificando expiração para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          if (trans && trans.status === 'pending') {
+            console.log(`❌ [EXPIRAÇÃO-GROUP] Cancelando transação ${txid} por expiração de 30min`);
+            await db.cancelTransaction(txid);
+            
+            try {
+              await bot.telegram.sendMessage(chatIdGroup, `⏰ *TRANSAÇÃO EXPIRADA*
+
+❌ O prazo de 30 minutos foi atingido.
+Esta transação foi cancelada automaticamente.
+
+🔄 *Para assinar novamente:*
+1. Use o comando /start
+2. Selecione o grupo desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+💰 Valor: R$ ${reminderAmountGroup}
+🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+              console.log(`✅ [EXPIRAÇÃO-GROUP] Mensagem de expiração enviada para chat ${chatIdGroup}`);
+            } catch (sendErr) {
+              if (sendErr.response && sendErr.response.error_code === 403) {
+                console.log(`ℹ️ [EXPIRAÇÃO-GROUP] Bot bloqueado pelo usuário ${chatIdGroup} - mensagem de expiração não enviada`);
+              } else {
+                console.error(`❌ [EXPIRAÇÃO-GROUP] Erro ao enviar mensagem de expiração para TXID ${txid}:`, sendErr.message);
+              }
+            }
+          } else {
+            console.log(`⏭️ [EXPIRAÇÃO-GROUP] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - cancelamento não necessário`);
+          }
+        } catch (err) {
+          console.error(`❌ [EXPIRAÇÃO-GROUP] Erro no cancelamento automático para TXID ${txid}:`, err.message);
+        }
+      }, 30 * 60 * 1000); // 30 minutos
       
       // Enviar QR Code
       if (charge.qrcodeBuffer) {
