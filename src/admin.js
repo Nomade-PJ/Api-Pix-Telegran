@@ -6,6 +6,52 @@ const deliver = require('./deliver');
 // Registrar comandos admin
 function registerAdminCommands(bot) {
   
+  // ===== COMANDO DE TESTE PARA ATUALIZAR DESCRIÇÃO (REGISTRAR PRIMEIRO) =====
+  bot.command('teste_descricao', async (ctx) => {
+    console.log('🔍 [TESTE-DESC] ========== COMANDO CAPTURADO ==========');
+    console.log('🔍 [TESTE-DESC] Comando /teste_descricao recebido de:', ctx.from.id);
+    console.log('🔍 [TESTE-DESC] Usuário:', ctx.from.username || 'sem username');
+    try {
+      console.log('🔍 [TESTE-DESC] Verificando se é admin...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      console.log('🔍 [TESTE-DESC] É admin?', isAdmin);
+      
+      if (!isAdmin) {
+        console.log('❌ [TESTE-DESC] Acesso negado - não é admin');
+        return ctx.reply('❌ Acesso negado.');
+      }
+
+      console.log('⏳ [TESTE-DESC] Enviando mensagem de "Testando..."');
+      await ctx.reply('⏳ Testando atualização da descrição...');
+
+      console.log('📦 [TESTE-DESC] Carregando função updateBotDescription...');
+      const { updateBotDescription } = require('../jobs/updateBotDescription');
+      console.log('🔄 [TESTE-DESC] Executando updateBotDescription...');
+      const result = await updateBotDescription();
+      console.log('📊 [TESTE-DESC] Resultado:', JSON.stringify(result));
+
+      if (result.success) {
+        return ctx.reply(`✅ *Teste realizado com sucesso!*
+
+📊 *Usuários mensais:* ${result.monthlyUsers}
+📝 *Descrição atualizada:* "${result.description}"
+
+A descrição deve aparecer no perfil do bot em alguns instantes.`, { parse_mode: 'Markdown' });
+      } else {
+        return ctx.reply(`❌ *Erro ao atualizar descrição*
+
+Erro: ${result.error}
+
+Verifique os logs do servidor para mais detalhes.`, { parse_mode: 'Markdown' });
+      }
+      
+    } catch (err) {
+      console.error('❌ [TESTE-DESC] Erro no teste de descrição:', err.message);
+      console.error('❌ [TESTE-DESC] Stack:', err.stack);
+      return ctx.reply(`❌ Erro: ${err.message}`);
+    }
+  });
+  
   // ===== PAINEL ADMIN (oculto) =====
   bot.command('admin', async (ctx) => {
     try {
@@ -3241,40 +3287,6 @@ Exemplo: 30.00 ou 50`, {
     } catch (err) {
       console.error('Erro ao remover DDD:', err);
       return ctx.reply('❌ Erro ao desbloquear DDD.');
-    }
-  });
-
-  // ===== COMANDO DE TESTE PARA ATUALIZAR DESCRIÇÃO (apenas para debug) =====
-  bot.command('teste_descricao', async (ctx) => {
-    try {
-      const isAdmin = await db.isUserAdmin(ctx.from.id);
-      if (!isAdmin) {
-        return ctx.reply('❌ Acesso negado.');
-      }
-
-      await ctx.reply('⏳ Testando atualização da descrição...');
-
-      const { updateBotDescription } = require('../jobs/updateBotDescription');
-      const result = await updateBotDescription();
-
-      if (result.success) {
-        return ctx.reply(`✅ *Teste realizado com sucesso!*
-
-📊 *Usuários mensais:* ${result.monthlyUsers}
-📝 *Descrição atualizada:* "${result.description}"
-
-A descrição deve aparecer no perfil do bot em alguns instantes.`, { parse_mode: 'Markdown' });
-      } else {
-        return ctx.reply(`❌ *Erro ao atualizar descrição*
-
-Erro: ${result.error}
-
-Verifique os logs do servidor para mais detalhes.`, { parse_mode: 'Markdown' });
-      }
-      
-    } catch (err) {
-      console.error('Erro no teste de descrição:', err.message);
-      return ctx.reply(`❌ Erro: ${err.message}`);
     }
   });
 
