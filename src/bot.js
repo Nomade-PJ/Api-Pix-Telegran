@@ -1863,13 +1863,17 @@ Esta transação foi cancelada automaticamente.
   });
 
   // ===== MEUS PEDIDOS =====
+  console.log('✅ [BOT-INIT] Registrando comando /meuspedidos...');
   bot.command('meuspedidos', async (ctx) => {
     try {
+      console.log('📋 [MEUS-PEDIDOS] Comando /meuspedidos recebido de:', ctx.from.id);
       const user = await db.getOrCreateUser(ctx.from);
       const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      console.log('📋 [MEUS-PEDIDOS] Transações encontradas:', transactions?.length || 0);
       
       if (!transactions || transactions.length === 0) {
-        return ctx.reply(`📦 *Nenhum pedido encontrado*
+        console.log('📦 [MEUS-PEDIDOS] Nenhum pedido encontrado - enviando mensagem de incentivo');
+        const response = await ctx.reply(`📦 *Nenhum pedido encontrado*
 
 Você ainda não realizou nenhuma compra.
 
@@ -1887,6 +1891,8 @@ Para ver nossos produtos disponíveis e fazer sua primeira compra!
             ]
           }
         });
+        console.log('✅ [MEUS-PEDIDOS] Mensagem enviada com sucesso');
+        return response;
       }
       
       // Agrupar transações por status
@@ -1936,22 +1942,30 @@ Para ver nossos produtos disponíveis e fazer sua primeira compra!
         message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
       }
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      console.log('📋 [MEUS-PEDIDOS] Enviando lista de pedidos');
+      const response = await ctx.reply(message, { parse_mode: 'Markdown' });
+      console.log('✅ [MEUS-PEDIDOS] Lista de pedidos enviada com sucesso');
+      return response;
     } catch (err) {
-      console.error('Erro no comando meuspedidos:', err);
+      console.error('❌ [MEUS-PEDIDOS] Erro no comando meuspedidos:', err);
+      console.error('❌ [MEUS-PEDIDOS] Stack:', err.stack);
       return ctx.reply('❌ Erro ao buscar seus pedidos. Tente novamente.');
     }
   });
 
   // ===== RENOVAR ASSINATURA =====
+  console.log('✅ [BOT-INIT] Registrando comando /renovar...');
   bot.command('renovar', async (ctx) => {
     try {
+      console.log('🔄 [RENOVAR] Comando /renovar recebido de:', ctx.from.id);
       const user = await db.getOrCreateUser(ctx.from);
       const groups = await db.getAllGroups();
+      console.log('🔄 [RENOVAR] Grupos encontrados:', groups?.length || 0);
       const activeGroups = groups.filter(g => g.is_active);
       
       if (activeGroups.length === 0) {
-        return ctx.reply(`🔥 *PROMOÇÃO ESPECIAL!*
+        console.log('🔥 [RENOVAR] Nenhum grupo ativo - enviando mensagem de promoção');
+        const response = await ctx.reply(`🔥 *PROMOÇÃO ESPECIAL!*
 
 📦 Nenhum grupo disponível para renovação no momento.
 
@@ -1969,6 +1983,8 @@ Para ver nossos produtos em promoção e fazer sua compra agora!
             ]
           }
         });
+        console.log('✅ [RENOVAR] Mensagem de promoção enviada com sucesso');
+        return response;
       }
       
       // Verificar se tem assinatura ativa

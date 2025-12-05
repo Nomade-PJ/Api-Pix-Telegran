@@ -15,16 +15,74 @@ async function sendPaymentReminders(bot) {
     const twentyMinutesAgo = new Date();
     twentyMinutesAgo.setMinutes(twentyMinutesAgo.getMinutes() - 20);
     
-    const { data: transactions, error } = await db.supabase
-      .from('transactions')
-      .select('*')
-      .eq('status', 'pending')
-      .gte('created_at', twentyMinutesAgo.toISOString())
-      .order('created_at', { ascending: true });
+    // Adicionar retry em caso de erro de conexão
+    let transactions, error;
+    let retries = 3;
+    let lastError;
     
+    while (retries > 0) {
+      try {
+        const result = await db.supabase
+          .from('transactions')
+          .select('*')
+          .eq('status', 'pending')
+          .gte('created_at', twentyMinutesAgo.toISOString())
+          .order('created_at', { ascending: true });
+        
+        // Verificar se houve erro na resposta
+        if (result.error) {
+          // Erro do Supabase (erro na query, não conexão)
+          error = result.error;
+          break;
+        }
+        
+        // Verificar se result.data existe (sucesso)
+        if (result.data !== undefined) {
+          transactions = result.data;
+          error = null;
+          break; // Sucesso, sair do loop
+        }
+        
+        // Se chegou aqui, algo inesperado aconteceu
+        throw new Error('Resposta inválida do Supabase');
+        
+      } catch (fetchError) {
+        // Erro de conexão/network (SocketError, fetch failed, etc)
+        lastError = fetchError;
+        retries--;
+        
+        // Verificar se é erro de conexão (não deve tentar retry para outros erros)
+        const isConnectionError = fetchError.message && (
+          fetchError.message.includes('fetch failed') ||
+          fetchError.message.includes('SocketError') ||
+          fetchError.message.includes('other side closed') ||
+          fetchError.message.includes('ECONNRESET') ||
+          fetchError.message.includes('ETIMEDOUT') ||
+          fetchError.message.includes('UND_ERR_SOCKET')
+        );
+        
+        if (!isConnectionError) {
+          // Não é erro de conexão, não tentar retry
+          console.error('❌ [REMINDER-JOB] Erro ao buscar transações (não é erro de conexão):', fetchError.message);
+          return { sent: 0, error: fetchError.message };
+        }
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [REMINDER-JOB] Erro de conexão detectado: ${fetchError.message}`);
+          console.warn(`⚠️ [REMINDER-JOB] Tentando novamente... (${retries} tentativas restantes)`);
+          // Aguardar 2 segundos antes de tentar novamente
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          console.error('❌ [REMINDER-JOB] Erro ao buscar transações após 3 tentativas:', fetchError.message);
+          return { sent: 0, error: fetchError.message };
+        }
+      }
+    }
+    
+    // Se ainda tiver erro após retries, retornar
     if (error) {
-      console.error('❌ [REMINDER-JOB] Erro ao buscar transações:', error);
-      return { sent: 0, error: error.message };
+      console.error('❌ [REMINDER-JOB] Erro do Supabase:', error);
+      return { sent: 0, error: error.message || JSON.stringify(error) };
     }
     
     if (!transactions || transactions.length === 0) {
