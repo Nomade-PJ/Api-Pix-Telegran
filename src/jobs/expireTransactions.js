@@ -12,15 +12,72 @@ async function expireOldTransactions() {
     console.log('🕐 [EXPIRE-JOB] Iniciando verificação de transações expiradas...');
     
     // Buscar todas as transações pendentes ou com comprovante enviado
-    const { data: transactions, error } = await db.supabase
-      .from('transactions')
-      .select('*')
-      .in('status', ['pending', 'proof_sent'])
-      .order('created_at', { ascending: true });
+    // Adicionar retry em caso de erro de conexão
+    let transactions, error;
+    let retries = 3;
+    let lastError;
     
+    while (retries > 0) {
+      try {
+        const result = await db.supabase
+          .from('transactions')
+          .select('*')
+          .in('status', ['pending', 'proof_sent'])
+          .order('created_at', { ascending: true });
+        
+        // Verificar se houve erro na resposta
+        if (result.error) {
+          // Erro do Supabase (erro na query, não conexão)
+          error = result.error;
+          break;
+        }
+        
+        // Verificar se result.data existe (sucesso)
+        if (result.data !== undefined) {
+          transactions = result.data;
+          error = null;
+          break; // Sucesso, sair do loop
+        }
+        
+        // Se chegou aqui, algo inesperado aconteceu
+        throw new Error('Resposta inválida do Supabase');
+        
+      } catch (fetchError) {
+        // Erro de conexão/network (SocketError, fetch failed, etc)
+        lastError = fetchError;
+        retries--;
+        
+        // Verificar se é erro de conexão (não deve tentar retry para outros erros)
+        const isConnectionError = fetchError.message && (
+          fetchError.message.includes('fetch failed') ||
+          fetchError.message.includes('SocketError') ||
+          fetchError.message.includes('other side closed') ||
+          fetchError.message.includes('ECONNRESET') ||
+          fetchError.message.includes('ETIMEDOUT')
+        );
+        
+        if (!isConnectionError) {
+          // Não é erro de conexão, não tentar retry
+          console.error('❌ [EXPIRE-JOB] Erro ao buscar transações (não é erro de conexão):', fetchError.message);
+          return { expired: 0, error: fetchError.message };
+        }
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [EXPIRE-JOB] Erro de conexão detectado: ${fetchError.message}`);
+          console.warn(`⚠️ [EXPIRE-JOB] Tentando novamente... (${retries} tentativas restantes)`);
+          // Aguardar 2 segundos antes de tentar novamente
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          console.error('❌ [EXPIRE-JOB] Erro ao buscar transações após 3 tentativas:', fetchError.message);
+          return { expired: 0, error: fetchError.message };
+        }
+      }
+    }
+    
+    // Se ainda tiver erro após retries, retornar
     if (error) {
-      console.error('❌ [EXPIRE-JOB] Erro ao buscar transações:', error);
-      return { expired: 0, error: error.message };
+      console.error('❌ [EXPIRE-JOB] Erro do Supabase:', error);
+      return { expired: 0, error: error.message || JSON.stringify(error) };
     }
     
     if (!transactions || transactions.length === 0) {
