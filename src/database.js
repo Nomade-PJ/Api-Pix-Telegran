@@ -1567,6 +1567,15 @@ function extractAreaCode(phoneNumber) {
   if (cleaned.length >= 12 && cleaned.startsWith('55')) {
     // Formato internacional: 5511999999999
     return cleaned.substring(2, 4);
+  } else if (cleaned.length === 11 && cleaned.startsWith('5')) {
+    // Formato especial: 59892253870 (DDD nas posições 2-3, não nas posições 0-1)
+    // Verificar se posições 2-3 formam um DDD válido bloqueado (98, 86, 64)
+    const possibleDDD = cleaned.substring(1, 3);
+    if (['98', '86', '64'].includes(possibleDDD)) {
+      return possibleDDD;
+    }
+    // Se não for um DDD bloqueado conhecido, retorna os primeiros 2 dígitos
+    return cleaned.substring(0, 2);
   } else if (cleaned.length >= 10) {
     // Formato nacional: 11999999999
     return cleaned.substring(0, 2);
@@ -1595,6 +1604,166 @@ async function getMonthlyUsers() {
   } catch (err) {
     console.error('Erro ao buscar usuários mensais:', err.message);
     return 0;
+  }
+}
+
+// Função para gerar relatório detalhado de usuários
+async function getUserReport() {
+  try {
+    // Total de usuários
+    const { count: totalUsers } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true });
+    
+    // Usuários que compraram (têm transações entregues)
+    const { data: usersWhoBought } = await supabase
+      .from('transactions')
+      .select('user_id')
+      .eq('status', 'delivered');
+    
+    const uniqueBuyers = new Set(usersWhoBought?.map(t => t.user_id) || []);
+    const usersWhoBoughtCount = uniqueBuyers.size;
+    
+    // Usuários desbloqueados/liberados (is_blocked = false)
+    const { count: unblockedUsers } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_blocked', false);
+    
+    // Usuários bloqueados (is_blocked = true)
+    const { count: blockedUsers } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_blocked', true);
+    
+    // Usuários desbloqueados que NÃO compraram
+    const { data: unblockedWithoutPurchase } = await supabase
+      .from('users')
+      .select('id')
+      .eq('is_blocked', false);
+    
+    const unblockedIds = unblockedWithoutPurchase?.map(u => u.id) || [];
+    let unblockedWhoBought = new Set();
+    
+    if (unblockedIds.length > 0) {
+      const { data: purchasesFromUnblocked } = await supabase
+        .from('transactions')
+        .select('user_id')
+        .eq('status', 'delivered')
+        .in('user_id', unblockedIds);
+      
+      unblockedWhoBought = new Set(purchasesFromUnblocked?.map(t => t.user_id) || []);
+    }
+    
+    const unblockedWithoutPurchaseCount = unblockedIds.length - unblockedWhoBought.size;
+    
+    // Usuários bloqueados por DDD
+    // Buscar DDDs bloqueados
+    const { data: blockedDDDs } = await supabase
+      .from('blocked_area_codes')
+      .select('area_code');
+    
+    const blockedDDDList = blockedDDDs?.map(d => d.area_code) || [];
+    
+    let usersBlockedByDDD = 0; // Bloqueados por DDD que NÃO foram liberados
+    let usersBlockedByDDDDetails = [];
+    let usersWithBlockedDDDButUnlocked = 0; // Liberados manualmente mas têm DDD bloqueado
+    
+    if (blockedDDDList.length > 0) {
+      // Buscar todos os usuários com telefone, admin e creator status
+      const { data: usersWithPhone } = await supabase
+        .from('users')
+        .select('id, telegram_id, phone_number, is_blocked, is_admin, is_creator, first_name, username');
+      
+      if (usersWithPhone) {
+        // Separar admins e creators
+        const adminIds = new Set();
+        const creatorIds = new Set();
+        
+        for (const user of usersWithPhone) {
+          if (user.is_admin) adminIds.add(user.id);
+          if (user.is_creator) creatorIds.add(user.id);
+        }
+        
+        // Filtrar usuários com DDD bloqueado (todos que tentaram acessar com DDD bloqueado)
+        const usersWithBlockedDDD = usersWithPhone.filter(user => {
+          if (!user.phone_number) return false;
+          const areaCode = extractAreaCode(user.phone_number);
+          return areaCode && blockedDDDList.includes(areaCode);
+        });
+        
+        // TODOS os usuários que tentaram acessar com DDD bloqueado (exceto admin/creator que não são afetados)
+        // Isso inclui tanto os que ainda estão bloqueados quanto os que foram liberados depois
+        const allBlockedByDDDUsers = usersWithBlockedDDD.filter(user => {
+          // Admin e creator não são bloqueados por DDD (bypass automático)
+          if (adminIds.has(user.id) || creatorIds.has(user.id)) return false;
+          // Todos os outros que têm DDD bloqueado tentaram acessar e foram bloqueados
+          return true;
+        });
+        
+        // Dos que foram bloqueados por DDD, quantos foram DESBLOQUEADOS MANUALMENTE
+        // (is_blocked = false significa que foi liberado manualmente)
+        const unblockedButWithBlockedDDD = allBlockedByDDDUsers.filter(user => {
+          // Se is_blocked = false, foi desbloqueado manualmente
+          if (user.is_blocked === false) return true;
+          return false;
+        });
+        
+        // Usuários que ainda estão bloqueados por DDD (não foram liberados)
+        const stillBlockedByDDD = allBlockedByDDDUsers.filter(user => {
+          // Se is_blocked = false, foi liberado (não está mais bloqueado)
+          if (user.is_blocked === false) return false;
+          // Se is_blocked = true ou null, ainda está bloqueado
+          return true;
+        });
+        
+        // Total de usuários que foram bloqueados por DDD (inclui liberados e não liberados)
+        usersBlockedByDDD = allBlockedByDDDUsers.length;
+        usersWithBlockedDDDButUnlocked = unblockedButWithBlockedDDD.length;
+        
+        // Lista detalhada dos que ainda estão bloqueados (não foram liberados)
+        usersBlockedByDDDDetails = stillBlockedByDDD.map(u => ({
+          telegram_id: u.telegram_id,
+          name: u.first_name || u.username || 'Sem nome',
+          phone: u.phone_number,
+          ddd: extractAreaCode(u.phone_number)
+        }));
+      }
+    }
+    
+    // Calcular percentuais
+    const buyRate = totalUsers > 0 ? ((usersWhoBoughtCount / totalUsers) * 100).toFixed(2) : '0.00';
+    const unblockedBuyRate = unblockedUsers > 0 ? ((unblockedWhoBought.size / unblockedUsers) * 100).toFixed(2) : '0.00';
+    
+    return {
+      totalUsers: totalUsers || 0,
+      usersWhoBought: usersWhoBoughtCount,
+      unblockedUsers: unblockedUsers || 0,
+      blockedUsers: blockedUsers || 0,
+      unblockedWithoutPurchase: unblockedWithoutPurchaseCount,
+      usersBlockedByDDD: usersBlockedByDDD,
+      usersBlockedByDDDDetails: usersBlockedByDDDDetails,
+      usersWithBlockedDDDButUnlocked: usersWithBlockedDDDButUnlocked,
+      buyRate: buyRate,
+      unblockedBuyRate: unblockedBuyRate,
+      unblockedWhoBought: unblockedWhoBought.size
+    };
+    
+  } catch (err) {
+    console.error('Erro ao gerar relatório de usuários:', err.message);
+    return {
+      totalUsers: 0,
+      usersWhoBought: 0,
+      unblockedUsers: 0,
+      blockedUsers: 0,
+      unblockedWithoutPurchase: 0,
+      usersBlockedByDDD: 0,
+      usersBlockedByDDDDetails: [],
+      usersWithBlockedDDDButUnlocked: 0,
+      buyRate: '0.00',
+      unblockedBuyRate: '0.00',
+      unblockedWhoBought: 0
+    };
   }
 }
 
@@ -1659,6 +1828,7 @@ module.exports = {
   addBlockedAreaCode,
   removeBlockedAreaCode,
   updateUserPhone,
-  extractAreaCode
+  extractAreaCode,
+  getUserReport
 };
 

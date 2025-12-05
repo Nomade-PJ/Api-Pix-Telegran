@@ -3290,6 +3290,71 @@ Exemplo: 30.00 ou 50`, {
     }
   });
 
+  // ===== RELATÓRIO DETALHADO DE USUÁRIOS =====
+  bot.command('relatorio_usuarios', async (ctx) => {
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+    
+    try {
+      await ctx.reply('⏳ Gerando relatório de usuários...');
+      
+      const report = await db.getUserReport();
+      
+      let message = `📊 *RELATÓRIO DETALHADO DE USUÁRIOS*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+👥 *TOTAL DE USUÁRIOS:* ${report.totalUsers}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 *COMPRAS*
+✅ Usuários que compraram: ${report.usersWhoBought}
+📈 Taxa de conversão: ${report.buyRate}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔓 *USUÁRIOS DESBLOQUEADOS/LIBERADOS*
+📊 Total desbloqueados: ${report.unblockedUsers}
+✅ Desbloqueados que compraram: ${report.unblockedWhoBought}
+❌ Desbloqueados SEM compra: ${report.unblockedWithoutPurchase}
+📈 Taxa de conversão: ${report.unblockedBuyRate}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚫 *BLOQUEIOS POR DDD*
+📍 Total de usuários bloqueados por DDD (tentaram acessar): ${report.usersBlockedByDDD}
+   ├─ ⛔ Desbloqueados manualmente: ${report.usersWithBlockedDDDButUnlocked || 0}
+   └─ 🚫 Ainda bloqueados: ${report.usersBlockedByDDD - (report.usersWithBlockedDDDButUnlocked || 0)}`;
+
+      // Adicionar lista detalhada de usuários ainda bloqueados por DDD (limitar a 20 para não exceder limite do Telegram)
+      const stillBlockedCount = report.usersBlockedByDDD - (report.usersWithBlockedDDDButUnlocked || 0);
+      if (stillBlockedCount > 0 && report.usersBlockedByDDDDetails && report.usersBlockedByDDDDetails.length > 0) {
+        message += `\n\n📋 *LISTA DE USUÁRIOS AINDA BLOQUEADOS POR DDD:*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+        
+        const limitedList = report.usersBlockedByDDDDetails.slice(0, 20);
+        
+        limitedList.forEach((user, index) => {
+          const name = user.name.length > 20 ? user.name.substring(0, 17) + '...' : user.name;
+          message += `\n${index + 1}. ${name} | DDD: ${user.ddd} | ID: ${user.telegram_id}`;
+        });
+        
+        if (stillBlockedCount > 20) {
+          message += `\n\n... e mais ${stillBlockedCount - 20} usuário(s) ainda bloqueado(s) por DDD.`;
+        }
+      }
+
+      message += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📅 *Atualizado:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
+
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+      
+    } catch (err) {
+      console.error('Erro ao gerar relatório:', err);
+      return ctx.reply('❌ Erro ao gerar relatório. Verifique os logs.');
+    }
+  });
+
 }
 
 module.exports = { registerAdminCommands };
