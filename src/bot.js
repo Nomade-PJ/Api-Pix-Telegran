@@ -59,7 +59,7 @@ function createBot(token) {
     try {
       console.log('🎯 [START] Comando /start recebido de:', ctx.from.id);
       
-      // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD (DISCRETA)
+      // 🚫 VERIFICAÇÃO DE BLOQUEIO INDIVIDUAL (PRIORIDADE MÁXIMA)
       // Primeiro, verificar se o usuário já existe no banco
       console.log('🔍 [START] Verificando usuário no banco...');
       const { data: existingUser, error: userError } = await db.supabase
@@ -67,6 +67,22 @@ function createBot(token) {
         .select('*')
         .eq('telegram_id', ctx.from.id)
         .single();
+      
+      // 🚫 SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE (is_blocked = true), BLOQUEAR ACESSO
+      if (existingUser && existingUser.is_blocked === true) {
+        console.log(`🚫 [START] Usuário ${ctx.from.id} está BLOQUEADO INDIVIDUALMENTE (is_blocked = true)`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.\n\n' +
+          'Estamos trabalhando para expandir nosso atendimento em breve!',
+          { 
+            parse_mode: 'Markdown',
+            reply_markup: { remove_keyboard: true }
+          }
+        );
+      }
+      
+      // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD (DISCRETA)
       
       // Se usuário não existe E tem telefone no Telegram, verificar DDD
       if (userError && userError.code === 'PGRST116') {
@@ -291,6 +307,21 @@ Selecione uma opção abaixo:`;
       // Verificar se é o próprio contato do usuário
       if (contact.user_id !== ctx.from.id) {
         return ctx.reply('❌ Por favor, compartilhe SEU próprio número de telefone.');
+      }
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const existingUserCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (existingUserCheck && existingUserCheck.is_blocked === true) {
+        console.log(`🚫 [CONTACT] Usuário ${ctx.from.id} está BLOQUEADO - não aceitar contato`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.\n\n' +
+          'Estamos trabalhando para expandir nosso atendimento em breve!',
+          { 
+            parse_mode: 'Markdown',
+            reply_markup: { remove_keyboard: true }
+          }
+        );
       }
       
       const phoneNumber = contact.phone_number;
@@ -1342,6 +1373,18 @@ Um administrador irá validar manualmente.
   bot.command('meuspedidos', async (ctx) => {
     try {
       console.log('📋 [MEUS-PEDIDOS] Comando /meuspedidos recebido de:', ctx.from.id);
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [MEUS-PEDIDOS] Usuário ${ctx.from.id} está BLOQUEADO`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
       const user = await db.getOrCreateUser(ctx.from);
       const transactions = await db.getUserTransactions(ctx.from.id, 20);
       console.log('📋 [MEUS-PEDIDOS] Transações encontradas:', transactions?.length || 0);
@@ -1433,6 +1476,18 @@ Para ver nossos produtos disponíveis e fazer sua primeira compra!
   bot.command('renovar', async (ctx) => {
     try {
       console.log('🔄 [RENOVAR] Comando /renovar recebido de:', ctx.from.id);
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [RENOVAR] Usuário ${ctx.from.id} está BLOQUEADO`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
       const user = await db.getOrCreateUser(ctx.from);
       const groups = await db.getAllGroups();
       console.log('🔄 [RENOVAR] Grupos encontrados:', groups?.length || 0);
@@ -1524,6 +1579,18 @@ Clique no botão abaixo para renovar:`, {
   bot.action(/buy:(.+)/, async (ctx) => {
     try {
       const productId = ctx.match[1];
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [BUY] Usuário ${ctx.from.id} está BLOQUEADO - não pode comprar`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
       
       // OTIMIZAÇÃO #1: Responder imediatamente ao clique (feedback visual instantâneo)
       await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
@@ -1696,6 +1763,18 @@ Esta transação foi cancelada automaticamente.
   bot.action(/buy_media:(.+)/, async (ctx) => {
     try {
       const packId = ctx.match[1];
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [BUY-MEDIA] Usuário ${ctx.from.id} está BLOQUEADO - não pode comprar`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
       
       // Responder imediatamente ao clique
       await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
@@ -1883,6 +1962,18 @@ Esta transação foi cancelada automaticamente.
     try {
       const groupId = parseInt(ctx.match[1]);
       
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [SUBSCRIBE] Usuário ${ctx.from.id} está BLOQUEADO - não pode assinar`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
       await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
       
       const group = await db.getGroupById(groupId);
@@ -2061,6 +2152,18 @@ Esta transação foi cancelada automaticamente.
   // ===== SISTEMA DE SUPORTE INTERNO =====
   bot.action('support_menu', async (ctx) => {
     try {
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [SUPPORT] Usuário ${ctx.from.id} está BLOQUEADO`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
       await ctx.answerCbQuery();
       
       console.log(`💬 [SUPPORT] Usuário ${ctx.from.id} acessou suporte`);
@@ -2227,6 +2330,18 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
   // Handler para voltar ao menu inicial
   bot.action('back_to_start', async (ctx) => {
     try {
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [BACK-TO-START] Usuário ${ctx.from.id} está BLOQUEADO`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
       await ctx.answerCbQuery();
       
       // Buscar dados novamente
