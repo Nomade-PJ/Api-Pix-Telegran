@@ -953,6 +953,67 @@ async function getRecentUsers(limit = 20) {
   }
 }
 
+// Buscar apenas usuários que já compraram e estão desbloqueados (para broadcast)
+async function getActiveBuyers() {
+  try {
+    console.log('🔍 [DB] Buscando usuários ativos que já compraram...');
+    
+    // Passo 1: Buscar todas as transações entregues para pegar os user_ids
+    const { data: transactions, error: txError } = await supabase
+      .from('transactions')
+      .select('user_id')
+      .eq('status', 'delivered');
+    
+    if (txError) {
+      console.error('❌ [DB] Erro ao buscar transações:', txError);
+      throw txError;
+    }
+    
+    // Passo 2: Pegar IDs únicos de usuários que compraram
+    const buyerIds = [...new Set(transactions?.map(t => t.user_id).filter(id => id) || [])];
+    
+    if (buyerIds.length === 0) {
+      console.log('ℹ️ [DB] Nenhum comprador encontrado');
+      return [];
+    }
+    
+    console.log(`📊 [DB] ${buyerIds.length} usuários únicos que compraram encontrados`);
+    
+    // Passo 3: Buscar usuários que compraram e estão desbloqueados
+    // Dividir em chunks se houver muitos IDs (limite do Supabase é ~1000 por query)
+    const chunkSize = 1000;
+    const chunks = [];
+    for (let i = 0; i < buyerIds.length; i += chunkSize) {
+      chunks.push(buyerIds.slice(i, i + chunkSize));
+    }
+    
+    let allUsers = [];
+    for (const chunk of chunks) {
+      const { data: users, error: usersError } = await supabase
+        .from('users')
+        .select('telegram_id, first_name, username, is_blocked')
+        .eq('is_blocked', false)
+        .in('id', chunk);
+      
+      if (usersError) {
+        console.error('❌ [DB] Erro ao buscar usuários:', usersError);
+        throw usersError;
+      }
+      
+      if (users) {
+        allUsers = allUsers.concat(users);
+      }
+    }
+    
+    console.log(`✅ [DB] ${allUsers.length} compradores ativos encontrados (desbloqueados)`);
+    return allUsers;
+  } catch (err) {
+    console.error('❌ [DB] Erro ao buscar compradores ativos:', err.message);
+    // Em caso de erro, retornar array vazio para não quebrar o broadcast
+    return [];
+  }
+}
+
 async function getAllAdmins() {
   try {
     console.log('🔍 [DB] Buscando admins na tabela users...');
@@ -2009,6 +2070,7 @@ module.exports = {
   isUserCreator,
   setUserAsCreator,
   getRecentUsers,
+  getActiveBuyers,
   getAllAdmins,
   getProduct,
   getAllProducts,

@@ -601,8 +601,13 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
       const message = session.data.message;
       const user = await db.getOrCreateUser(ctx.from);
       
-      // Buscar todos os usuários
-      const users = await db.getRecentUsers(10000); // Buscar muitos usuários
+      // Buscar apenas usuários que já compraram e estão desbloqueados
+      const users = await db.getActiveBuyers();
+      
+      if (users.length === 0) {
+        delete global._SESSIONS[ctx.from.id];
+        return ctx.reply('❌ Nenhum comprador ativo encontrado para enviar o broadcast.');
+      }
       
       // Salvar campanha de broadcast no banco
       const { data: campaign, error: campaignError } = await db.supabase
@@ -625,7 +630,9 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
       
       await ctx.editMessageText(`📢 *ENVIANDO BROADCAST...*
 
-📨 Mensagem sendo enviada para ${users.length} usuários...
+📨 Mensagem sendo enviada para ${users.length} compradores ativos...
+
+✅ Apenas usuários que já compraram e estão desbloqueados
 
 ⏳ Aguarde...`, {
         parse_mode: 'Markdown'
@@ -690,9 +697,12 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
       
       let resultMessage = `✅ *BROADCAST CONCLUÍDO!*
 
+📊 *Estatísticas:*
 ✅ Enviados: ${success}
 ❌ Falhas: ${failed}
-📊 Total: ${users.length}`;
+📝 Total de compradores ativos: ${users.length}
+
+💡 *Nota:* Enviado apenas para usuários que já compraram e estão desbloqueados.`;
 
       if (session.broadcastType === 'product' && session.productName) {
         resultMessage += `\n\n📦 *Produto divulgado:* ${session.productName}`;
