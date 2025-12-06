@@ -1206,54 +1206,40 @@ ${product.delivery_type === 'file' ? '📄 Arquivo anexado acima' : `🔗 Link: 
               console.error(`❌ [AUTO-ANALYSIS] Erro na aprovação automática:`, approvalErr.message);
             }
           }
-          // ❌ REJEIÇÃO AUTOMÁTICA (confidence < 40 e isValid = false)
+          // ⚠️ ANÁLISE COM BAIXA CONFIANÇA (confidence < 40 e isValid = false)
+          // NÃO CANCELAR AUTOMATICAMENTE - deixar admin decidir manualmente
           else if (analysis && analysis.isValid === false && analysis.confidence < 40) {
-            console.log(`❌ [AUTO-ANALYSIS] REJEIÇÃO AUTOMÁTICA para TXID ${transactionData.txid}`);
+            console.log(`⚠️ [AUTO-ANALYSIS] BAIXA CONFIANÇA para TXID ${transactionData.txid} - DEIXANDO PARA ADMIN DECIDIR`);
             
             try {
-              // Cancelar transação no banco
-              await db.cancelTransaction(transactionData.txid);
-              console.log(`❌ [AUTO-ANALYSIS] Transação cancelada no banco`);
+              // NÃO cancelar transação - manter como proof_sent para admin revisar
+              // await db.cancelTransaction(transactionData.txid); // ❌ REMOVIDO!
+              console.log(`⚠️ [AUTO-ANALYSIS] Transação mantida como 'proof_sent' para revisão manual do admin`);
               
-              // Notificar USUÁRIO sobre rejeição
-              console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de rejeição para cliente ${chatId}`);
+              // Notificar USUÁRIO que comprovante está em análise (sem assustar)
+              console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de análise para cliente ${chatId}`);
               
-              // Preparar mensagem com código PIX
-              let rejectionMessage = `❌ *COMPROVANTE INVÁLIDO*
+              await telegram.sendMessage(chatId, `⚠️ *COMPROVANTE EM ANÁLISE*
 
-🤖 Análise automática detectou problemas:
-${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado'}
+📸 Seu comprovante foi recebido e está sendo analisado.
 
-💰 *Valor esperado:* R$ ${transactionData.amount}
-🔑 *Chave PIX:* ${transactionData.pix_key}`;
+⏳ *Um admin irá validar manualmente em breve.*
 
-              // Adicionar código PIX (copia e cola) se disponível
-              if (transactionData.pix_payload) {
-                rejectionMessage += `\n\n📋 *Código PIX (Copiar e Colar):*
-\`${transactionData.pix_payload}\``;
-              }
+💡 *Dica:* Se o comprovante estiver com baixa qualidade, você pode enviar outro mais claro.
 
-              rejectionMessage += `\n\n🔄 *O que fazer:*
-1. Verifique se pagou o valor EXATO (R$ ${transactionData.amount})
-2. Verifique se pagou para a chave CORRETA
-3. Envie um novo comprovante CLARO e LEGÍVEL
-4. Ou faça uma nova compra: /start
-
-🆔 TXID: ${transactionData.txid}`;
-
-              await telegram.sendMessage(chatId, rejectionMessage, { 
+🆔 TXID: ${transactionData.txid}`, { 
                 parse_mode: 'Markdown' 
               });
               
-              // Notificar ADMIN sobre rejeição automática
+              // Notificar ADMIN sobre baixa confiança - MAS COM BOTÕES DE APROVAR/REJEITAR
               const admins = await db.getAllAdmins();
               for (const admin of admins) {
                 try {
                   await telegram.sendMessage(admin.telegram_id, 
-                    `❌ *COMPROVANTE REJEITADO AUTOMATICAMENTE*
+                    `⚠️ *COMPROVANTE COM BAIXA CONFIANÇA - VALIDAÇÃO MANUAL NECESSÁRIA*
 
-🤖 *Análise OCR:* ${analysis.confidence}% de confiança
-⚠️ Motivo: ${analysis.details.reason || 'Inválido'}
+🤖 *Análise OCR:* ${analysis.confidence}% de confiança (< 40%)
+⚠️ Motivo: ${analysis.details.reason || 'Comprovante não corresponde aos dados esperados'}
 👤 Usuário: ${fromUser.first_name} (@${fromUser.username || 'N/A'})
 🆔 ID: ${fromUser.id}
 📦 Produto: ${productName}
@@ -1262,18 +1248,29 @@ ${analysis.details.reason || 'Comprovante não corresponde ao pagamento esperado
 
 🆔 TXID: ${transactionData.txid}
 
-❌ Status: *CANCELADO AUTOMATICAMENTE*
-⚠️ Usuário foi notificado para enviar novo comprovante`, {
-                    parse_mode: 'Markdown'
+⚠️ *Status:* PENDENTE DE VALIDAÇÃO MANUAL
+👁️ *Revise o comprovante acima e decida:*`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                      inline_keyboard: [
+                        [
+                          { text: '✅ Aprovar (Comprovante OK)', callback_data: `approve_${transactionData.txid}` },
+                          { text: '❌ Rejeitar (Comprovante Inválido)', callback_data: `reject_${transactionData.txid}` }
+                        ],
+                        [
+                          { text: '📋 Ver detalhes', callback_data: `details_${transactionData.txid}` }
+                        ]
+                      ]
+                    }
                   });
-                  console.log(`✅ [AUTO-ANALYSIS] Admin ${admin.telegram_id} notificado sobre rejeição automática`);
+                  console.log(`✅ [AUTO-ANALYSIS] Admin ${admin.telegram_id} notificado sobre baixa confiança (com botões)`);
                 } catch (notifyErr) {
                   console.error(`❌ [AUTO-ANALYSIS] Erro ao notificar admin:`, notifyErr.message);
                 }
               }
               
-            } catch (rejectionErr) {
-              console.error(`❌ [AUTO-ANALYSIS] Erro na rejeição automática:`, rejectionErr.message);
+            } catch (lowConfidenceErr) {
+              console.error(`❌ [AUTO-ANALYSIS] Erro ao processar baixa confiança:`, lowConfidenceErr.message);
             }
           }
           // ⚠️ ANÁLISE INCONCLUSIVA (deixar para validação manual)

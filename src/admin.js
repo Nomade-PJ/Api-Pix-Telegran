@@ -2631,8 +2631,17 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
         return ctx.reply('❌ Transação não encontrada.');
       }
       
-      if (transaction.status !== 'proof_sent') {
+      // Permitir aprovação de transações com comprovante (proof_sent) ou expiradas (expired)
+      // Se já foi validada/entregue/cancelada, não permitir
+      if (!['proof_sent', 'expired', 'pending'].includes(transaction.status)) {
         return ctx.reply(`⚠️ Esta transação já foi processada.\n\nStatus: ${transaction.status}`);
+      }
+      
+      // Se não tem comprovante, avisar admin
+      if (!transaction.proof_file_id && transaction.status === 'pending') {
+        return ctx.reply(`⚠️ *Atenção!*\n\nEsta transação não tem comprovante enviado.\n\n🆔 TXID: ${txid}\nStatus: ${transaction.status}\n\n❓ Tem certeza que deseja aprovar mesmo assim?\n\n_Responda com:_ /force_approve_${txid}`, {
+          parse_mode: 'Markdown'
+        });
       }
       
       // Validar transação
@@ -2856,7 +2865,9 @@ ${zwsp}${zwnj}${zwsp}`, {
         return ctx.reply('❌ Transação não encontrada.');
       }
       
-      if (transaction.status !== 'proof_sent') {
+      // Permitir rejeição de transações com comprovante (proof_sent), expiradas (expired) ou pendentes
+      // Se já foi validada/entregue/cancelada, não permitir
+      if (!['proof_sent', 'expired', 'pending'].includes(transaction.status)) {
         return ctx.reply(`⚠️ Esta transação já foi processada.\n\nStatus: ${transaction.status}`);
       }
       

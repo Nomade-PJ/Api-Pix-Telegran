@@ -11,7 +11,8 @@ async function expireOldTransactions() {
   try {
     console.log('🕐 [EXPIRE-JOB] Iniciando verificação de transações expiradas...');
     
-    // Buscar todas as transações pendentes ou com comprovante enviado
+    // Buscar APENAS transações pendentes (SEM comprovante)
+    // NÃO expirar transações com comprovante enviado (proof_sent) - essas aguardam aprovação do admin
     // Adicionar retry em caso de erro de conexão
     let transactions, error;
     let retries = 3;
@@ -22,7 +23,7 @@ async function expireOldTransactions() {
         const result = await db.supabase
           .from('transactions')
           .select('*')
-          .in('status', ['pending', 'proof_sent'])
+          .eq('status', 'pending')
           .order('created_at', { ascending: true });
         
         // Verificar se houve erro na resposta
