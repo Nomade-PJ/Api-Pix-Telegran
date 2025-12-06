@@ -339,7 +339,13 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
           await new Promise(resolve => setTimeout(resolve, 50)); // Rate limit
         } catch (err) {
           failed++;
-          console.error(`Erro ao enviar para ${user.telegram_id}:`, err.message);
+          // Não logar como erro se o bot foi bloqueado pelo usuário (comportamento esperado)
+          if (err.message && err.message.includes('bot was blocked by the user')) {
+            // Silencioso - apenas contar como falha
+          } else {
+            // Logar apenas erros reais (não relacionados a bloqueio)
+            console.error(`❌ [BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
+          }
         }
       }
       
@@ -2167,7 +2173,13 @@ _Cancelar:_ /cancelar`;
           await new Promise(resolve => setTimeout(resolve, 50));
         } catch (err) {
           failed++;
-          console.error(`❌ [BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
+          // Não logar como erro se o bot foi bloqueado pelo usuário (comportamento esperado)
+          if (err.message && err.message.includes('bot was blocked by the user')) {
+            // Silencioso - apenas contar como falha
+          } else {
+            // Logar apenas erros reais (não relacionados a bloqueio)
+            console.error(`❌ [BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
+          }
         }
       }
       
