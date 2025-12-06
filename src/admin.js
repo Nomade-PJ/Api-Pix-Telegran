@@ -174,6 +174,7 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('📢 Broadcast', 'admin_broadcast')
         ],
         [
+          Markup.button.callback('🔓 Gerenciar Bloqueios', 'admin_manage_blocks'),
           Markup.button.callback('🎟️ Cupons', 'admin_coupons')
         ],
         [
@@ -1550,11 +1551,15 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
       ],
       [
-        Markup.button.callback('🔑 Alterar PIX', 'admin_setpix'),
-        Markup.button.callback('👥 Usuários', 'admin_users')
+        Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),
+        Markup.button.callback('🔑 Alterar PIX', 'admin_setpix')
       ],
       [
-        Markup.button.callback('📢 Broadcast', 'admin_broadcast'),
+        Markup.button.callback('👤 Usuários', 'admin_users'),
+        Markup.button.callback('📢 Broadcast', 'admin_broadcast')
+      ],
+      [
+        Markup.button.callback('🔓 Gerenciar Bloqueios', 'admin_manage_blocks'),
         Markup.button.callback('🎟️ Cupons', 'admin_coupons')
       ],
       [
@@ -3378,6 +3383,330 @@ Exemplo: 30.00 ou 50`, {
     } catch (err) {
       console.error('Erro ao remover DDD:', err);
       return ctx.reply('❌ Erro ao desbloquear DDD.');
+    }
+  });
+
+  // ===== GERENCIAMENTO DE BLOQUEIOS INDIVIDUAIS =====
+  
+  // Handler do botão "Gerenciar Bloqueios"
+  bot.action('admin_manage_blocks', async (ctx) => {
+    await ctx.answerCbQuery();
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    const message = `🔓 *GERENCIAR BLOQUEIOS DE USUÁRIOS*
+
+Você pode bloquear ou desbloquear usuários específicos pelo ID do Telegram.
+
+🟢 *DESBLOQUEAR:* Libera acesso mesmo com DDD bloqueado
+🔴 *BLOQUEAR:* Impede acesso aos produtos
+
+Escolha uma ação:`;
+
+    return ctx.editMessageText(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🟢 Desbloquear Usuário', 'block_action_unblock'),
+          Markup.button.callback('🔴 Bloquear Usuário', 'block_action_block')
+        ],
+        [
+          Markup.button.callback('🔍 Verificar Status', 'block_action_check')
+        ],
+        [
+          Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')
+        ]
+      ])
+    });
+  });
+  
+  // Handler: Desbloquear Usuário
+  bot.action('block_action_unblock', async (ctx) => {
+    await ctx.answerCbQuery();
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    // Criar sessão
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'unblock_user',
+      step: 'waiting_id'
+    };
+    
+    return ctx.editMessageText(
+      `🟢 *DESBLOQUEAR USUÁRIO*
+
+Digite o *ID do Telegram* do usuário que deseja desbloquear:
+
+💡 *Como obter o ID:*
+• Peça ao usuário para enviar /start no bot
+• Ou use @userinfobot no Telegram
+• O ID aparece nos logs quando o usuário interage
+
+_Cancelar:_ /cancelar`, 
+      { 
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
+        ])
+      }
+    );
+  });
+  
+  // Handler: Bloquear Usuário
+  bot.action('block_action_block', async (ctx) => {
+    await ctx.answerCbQuery();
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    // Criar sessão
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'block_user',
+      step: 'waiting_id'
+    };
+    
+    return ctx.editMessageText(
+      `🔴 *BLOQUEAR USUÁRIO*
+
+Digite o *ID do Telegram* do usuário que deseja bloquear:
+
+⚠️ *Atenção:* O usuário não verá mais os produtos disponíveis.
+
+💡 *Como obter o ID:*
+• Peça ao usuário para enviar /start no bot
+• Ou use @userinfobot no Telegram
+• O ID aparece nos logs quando o usuário interage
+
+_Cancelar:_ /cancelar`, 
+      { 
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
+        ])
+      }
+    );
+  });
+  
+  // Handler: Verificar Status
+  bot.action('block_action_check', async (ctx) => {
+    await ctx.answerCbQuery();
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    // Criar sessão
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'check_block_status',
+      step: 'waiting_id'
+    };
+    
+    return ctx.editMessageText(
+      `🔍 *VERIFICAR STATUS DE BLOQUEIO*
+
+Digite o *ID do Telegram* do usuário:
+
+_Cancelar:_ /cancelar`, 
+      { 
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
+        ])
+      }
+    );
+  });
+  
+  // Handler: Cancelar ação de bloqueio
+  bot.action('cancel_block_action', async (ctx) => {
+    await ctx.answerCbQuery('❌ Cancelado');
+    
+    // Limpar sessão
+    if (global._SESSIONS && global._SESSIONS[ctx.from.id]) {
+      delete global._SESSIONS[ctx.from.id];
+    }
+    
+    // Voltar ao menu de bloqueios
+    return bot.handleUpdate({ 
+      ...ctx.update, 
+      callback_query: { 
+        ...ctx.update.callback_query, 
+        data: 'admin_manage_blocks' 
+      } 
+    });
+  });
+  
+  // Interceptar texto quando em sessão de bloqueio
+  bot.on('text', async (ctx, next) => {
+    // Verificar se está em sessão de bloqueio
+    const session = global._SESSIONS && global._SESSIONS[ctx.from.id];
+    
+    if (!session || !['unblock_user', 'block_user', 'check_block_status'].includes(session.type)) {
+      return next(); // Passar para próximo handler
+    }
+    
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) {
+      delete global._SESSIONS[ctx.from.id];
+      return;
+    }
+    
+    // Cancelar
+    if (ctx.message.text === '/cancelar') {
+      delete global._SESSIONS[ctx.from.id];
+      return ctx.reply('❌ Operação cancelada. Use /admin para voltar ao painel.');
+    }
+    
+    // Processar ID
+    const telegramId = parseInt(ctx.message.text.trim());
+    
+    if (isNaN(telegramId) || telegramId <= 0) {
+      return ctx.reply('❌ ID inválido. Digite apenas números.\n\nExemplo: `123456789`\n\n_Cancelar:_ /cancelar', {
+        parse_mode: 'Markdown'
+      });
+    }
+    
+    try {
+      if (session.type === 'unblock_user') {
+        // DESBLOQUEAR
+        await ctx.reply('⏳ Desbloqueando usuário...');
+        
+        const user = await db.unblockUserByTelegramId(telegramId);
+        
+        delete global._SESSIONS[ctx.from.id];
+        
+        return ctx.reply(
+          `✅ *USUÁRIO DESBLOQUEADO COM SUCESSO!*
+
+🆔 *ID:* \`${telegramId}\`
+👤 *Nome:* ${user.first_name || 'N/A'}
+📱 *Username:* @${user.username || 'N/A'}
+🔓 *Status:* Desbloqueado
+
+O usuário agora pode acessar todos os produtos, mesmo se o DDD dele estiver bloqueado.
+
+Use /admin para voltar ao painel.`, 
+          { 
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+            ])
+          }
+        );
+        
+      } else if (session.type === 'block_user') {
+        // BLOQUEAR
+        await ctx.reply('⏳ Bloqueando usuário...');
+        
+        const user = await db.blockUserByTelegramId(telegramId);
+        
+        delete global._SESSIONS[ctx.from.id];
+        
+        // Enviar mensagem de bloqueio ao usuário
+        try {
+          await ctx.telegram.sendMessage(
+            telegramId,
+            '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+            'No momento, não conseguimos processar seu acesso.\n\n' +
+            'Estamos trabalhando para expandir nosso atendimento em breve!',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: { remove_keyboard: true }
+            }
+          );
+        } catch (notifyErr) {
+          console.log('ℹ️ [BLOCK] Não foi possível notificar usuário (pode ter bloqueado o bot)');
+        }
+        
+        return ctx.reply(
+          `🔴 *USUÁRIO BLOQUEADO COM SUCESSO!*
+
+🆔 *ID:* \`${telegramId}\`
+👤 *Nome:* ${user.first_name || 'N/A'}
+📱 *Username:* @${user.username || 'N/A'}
+🔒 *Status:* Bloqueado
+
+O usuário não poderá mais acessar os produtos.
+Ele receberá a mensagem de "Serviço Indisponível".
+
+Use /admin para voltar ao painel.`, 
+          { 
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+            ])
+          }
+        );
+        
+      } else if (session.type === 'check_block_status') {
+        // VERIFICAR STATUS
+        await ctx.reply('⏳ Verificando status...');
+        
+        const user = await db.checkBlockStatus(telegramId);
+        
+        delete global._SESSIONS[ctx.from.id];
+        
+        if (!user) {
+          return ctx.reply(
+            `ℹ️ *USUÁRIO NÃO ENCONTRADO*
+
+🆔 *ID:* \`${telegramId}\`
+
+Este usuário ainda não interagiu com o bot.
+
+💡 *O que fazer:*
+• Peça ao usuário para enviar /start no bot
+• Depois você poderá bloquear/desbloquear
+
+Use /admin para voltar ao painel.`, 
+            { 
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+              ])
+            }
+          );
+        }
+        
+        const ddd = user.phone_number ? db.extractAreaCode(user.phone_number) : 'N/A';
+        const statusEmoji = user.is_blocked ? '🔴' : '🟢';
+        const statusText = user.is_blocked ? 'BLOQUEADO' : 'DESBLOQUEADO';
+        
+        return ctx.reply(
+          `${statusEmoji} *STATUS DO USUÁRIO*
+
+🆔 *ID:* \`${telegramId}\`
+👤 *Nome:* ${user.first_name || 'N/A'}
+📱 *Username:* @${user.username || 'N/A'}
+📞 *Telefone:* ${user.phone_number || 'N/A'}
+📍 *DDD:* ${ddd}
+${statusEmoji} *Status:* ${statusText}
+
+Use /admin para voltar ao painel.`, 
+          { 
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [
+                Markup.button.callback(user.is_blocked ? '🟢 Desbloquear' : '🔴 Bloquear', user.is_blocked ? 'block_action_unblock' : 'block_action_block')
+              ],
+              [
+                Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')
+              ]
+            ])
+          }
+        );
+      }
+      
+    } catch (err) {
+      console.error('❌ [BLOCK-HANDLER] Erro:', err);
+      delete global._SESSIONS[ctx.from.id];
+      return ctx.reply(
+        `❌ *ERRO AO PROCESSAR*
+
+Erro: ${err.message}
+
+Use /admin para voltar ao painel.`,
+        { parse_mode: 'Markdown' }
+      );
     }
   });
 

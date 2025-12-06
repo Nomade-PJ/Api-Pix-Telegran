@@ -1899,6 +1899,107 @@ async function getUserReport() {
   }
 }
 
+// ===== GERENCIAMENTO DE BLOQUEIOS (BYPASS) =====
+
+/**
+ * Desbloqueia usuário por ID do Telegram
+ * Cria o usuário se não existir (UPSERT)
+ */
+async function unblockUserByTelegramId(telegramId) {
+  try {
+    console.log(`🔓 [UNBLOCK] Desbloqueando usuário ${telegramId}...`);
+    
+    const { data, error } = await supabase
+      .from('users')
+      .upsert(
+        {
+          telegram_id: telegramId,
+          is_blocked: false,
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: 'telegram_id',
+          ignoreDuplicates: false
+        }
+      )
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('❌ [UNBLOCK] Erro ao desbloquear:', error);
+      throw error;
+    }
+    
+    console.log(`✅ [UNBLOCK] Usuário ${telegramId} desbloqueado com sucesso`);
+    return data;
+  } catch (err) {
+    console.error('❌ [UNBLOCK] Erro crítico:', err);
+    throw err;
+  }
+}
+
+/**
+ * Bloqueia usuário por ID do Telegram
+ * Cria o usuário se não existir (UPSERT)
+ */
+async function blockUserByTelegramId(telegramId) {
+  try {
+    console.log(`🔒 [BLOCK] Bloqueando usuário ${telegramId}...`);
+    
+    const { data, error } = await supabase
+      .from('users')
+      .upsert(
+        {
+          telegram_id: telegramId,
+          is_blocked: true,
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: 'telegram_id',
+          ignoreDuplicates: false
+        }
+      )
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('❌ [BLOCK] Erro ao bloquear:', error);
+      throw error;
+    }
+    
+    console.log(`✅ [BLOCK] Usuário ${telegramId} bloqueado com sucesso`);
+    return data;
+  } catch (err) {
+    console.error('❌ [BLOCK] Erro crítico:', err);
+    throw err;
+  }
+}
+
+/**
+ * Verifica status de bloqueio de um usuário
+ */
+async function checkBlockStatus(telegramId) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('telegram_id, first_name, username, is_blocked, phone_number')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (error && error.code === 'PGRST116') {
+      // Usuário não existe
+      return null;
+    }
+    
+    if (error) throw error;
+    
+    return data;
+  } catch (err) {
+    console.error('❌ [CHECK-BLOCK] Erro:', err);
+    return null;
+  }
+}
+
 module.exports = {
   supabase,
   getOrCreateUser,
@@ -1962,6 +2063,10 @@ module.exports = {
   removeBlockedAreaCode,
   updateUserPhone,
   extractAreaCode,
-  getUserReport
+  getUserReport,
+  // Gerenciamento de bloqueios individuais
+  unblockUserByTelegramId,
+  blockUserByTelegramId,
+  checkBlockStatus
 };
 
