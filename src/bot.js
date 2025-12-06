@@ -1216,10 +1216,20 @@ ${product.delivery_type === 'file' ? '📄 Arquivo anexado acima' : `🔗 Link: 
               // await db.cancelTransaction(transactionData.txid); // ❌ REMOVIDO!
               console.log(`⚠️ [AUTO-ANALYSIS] Transação mantida como 'proof_sent' para revisão manual do admin`);
               
-              // Notificar USUÁRIO que comprovante está em análise (sem assustar)
-              console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de análise para cliente ${chatId}`);
+              // 🆕 VERIFICAR STATUS ANTES DE NOTIFICAR CLIENTE
+              // Se admin já aprovou enquanto OCR estava analisando, NÃO enviar mensagem de análise
+              const currentTransaction = await db.getTransactionByTxid(transactionData.txid);
               
-              await telegram.sendMessage(chatId, `⚠️ *COMPROVANTE EM ANÁLISE*
+              if (!currentTransaction) {
+                console.warn(`⚠️ [AUTO-ANALYSIS] Transação ${transactionData.txid} não encontrada - pulando notificação`);
+              } else if (currentTransaction.status === 'validated' || currentTransaction.status === 'delivered') {
+                // Admin já aprovou/entregou enquanto OCR analisava - NÃO notificar cliente
+                console.log(`✅ [AUTO-ANALYSIS] Admin já aprovou transação ${transactionData.txid} (status: ${currentTransaction.status}) - pulando notificação de análise ao cliente`);
+              } else if (currentTransaction.status === 'proof_sent') {
+                // Transação ainda está pendente - notificar cliente que está em análise
+                console.log(`📨 [AUTO-ANALYSIS] Enviando notificação de análise para cliente ${chatId} (status ainda é proof_sent)`);
+                
+                await telegram.sendMessage(chatId, `⚠️ *COMPROVANTE EM ANÁLISE*
 
 📸 Seu comprovante foi recebido e está sendo analisado.
 
@@ -1228,8 +1238,13 @@ ${product.delivery_type === 'file' ? '📄 Arquivo anexado acima' : `🔗 Link: 
 💡 *Dica:* Se o comprovante estiver com baixa qualidade, você pode enviar outro mais claro.
 
 🆔 TXID: ${transactionData.txid}`, { 
-                parse_mode: 'Markdown' 
-              });
+                  parse_mode: 'Markdown' 
+                });
+                console.log(`✅ [AUTO-ANALYSIS] Notificação de análise enviada ao cliente ${chatId}`);
+              } else {
+                // Outro status (expired, cancelled, etc) - não notificar
+                console.log(`ℹ️ [AUTO-ANALYSIS] Transação ${transactionData.txid} tem status ${currentTransaction.status} - não enviando notificação de análise`);
+              }
               
               // Notificar ADMIN sobre baixa confiança - MAS COM BOTÕES DE APROVAR/REJEITAR
               const admins = await db.getAllAdmins();
