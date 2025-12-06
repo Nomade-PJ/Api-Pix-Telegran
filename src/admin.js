@@ -3403,21 +3403,30 @@ Você pode bloquear ou desbloquear usuários específicos pelo ID do Telegram.
 
 Escolha uma ação:`;
 
-    return ctx.editMessageText(message, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [
-          Markup.button.callback('🟢 Desbloquear Usuário', 'block_action_unblock'),
-          Markup.button.callback('🔴 Bloquear Usuário', 'block_action_block')
-        ],
-        [
-          Markup.button.callback('🔍 Verificar Status', 'block_action_check')
-        ],
-        [
-          Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')
-        ]
-      ])
-    });
+    try {
+      return await ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('🟢 Desbloquear Usuário', 'block_action_unblock'),
+            Markup.button.callback('🔴 Bloquear Usuário', 'block_action_block')
+          ],
+          [
+            Markup.button.callback('🔍 Verificar Status', 'block_action_check')
+          ],
+          [
+            Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')
+          ]
+        ])
+      });
+    } catch (err) {
+      // Ignorar erro se mensagem já é a mesma (usuário clicou duas vezes)
+      if (err.message && err.message.includes('message is not modified')) {
+        console.log('ℹ️ [MANAGE-BLOCKS] Mensagem já está atualizada, ignorando erro');
+        return;
+      }
+      throw err;
+    }
   });
   
   // Handler: Desbloquear Usuário
@@ -3433,8 +3442,9 @@ Escolha uma ação:`;
       step: 'waiting_id'
     };
     
-    return ctx.editMessageText(
-      `🟢 *DESBLOQUEAR USUÁRIO*
+    try {
+      return await ctx.editMessageText(
+        `🟢 *DESBLOQUEAR USUÁRIO*
 
 Digite o *ID do Telegram* do usuário que deseja desbloquear:
 
@@ -3444,13 +3454,20 @@ Digite o *ID do Telegram* do usuário que deseja desbloquear:
 • O ID aparece nos logs quando o usuário interage
 
 _Cancelar:_ /cancelar`, 
-      { 
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
-        ])
+        { 
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
+          ])
+        }
+      );
+    } catch (err) {
+      if (err.message && err.message.includes('message is not modified')) {
+        console.log('ℹ️ [UNBLOCK-ACTION] Mensagem já está atualizada');
+        return;
       }
-    );
+      throw err;
+    }
   });
   
   // Handler: Bloquear Usuário
@@ -3466,8 +3483,9 @@ _Cancelar:_ /cancelar`,
       step: 'waiting_id'
     };
     
-    return ctx.editMessageText(
-      `🔴 *BLOQUEAR USUÁRIO*
+    try {
+      return await ctx.editMessageText(
+        `🔴 *BLOQUEAR USUÁRIO*
 
 Digite o *ID do Telegram* do usuário que deseja bloquear:
 
@@ -3479,13 +3497,20 @@ Digite o *ID do Telegram* do usuário que deseja bloquear:
 • O ID aparece nos logs quando o usuário interage
 
 _Cancelar:_ /cancelar`, 
-      { 
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
-        ])
+        { 
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
+          ])
+        }
+      );
+    } catch (err) {
+      if (err.message && err.message.includes('message is not modified')) {
+        console.log('ℹ️ [BLOCK-ACTION] Mensagem já está atualizada');
+        return;
       }
-    );
+      throw err;
+    }
   });
   
   // Handler: Verificar Status
@@ -3501,19 +3526,27 @@ _Cancelar:_ /cancelar`,
       step: 'waiting_id'
     };
     
-    return ctx.editMessageText(
-      `🔍 *VERIFICAR STATUS DE BLOQUEIO*
+    try {
+      return await ctx.editMessageText(
+        `🔍 *VERIFICAR STATUS DE BLOQUEIO*
 
 Digite o *ID do Telegram* do usuário:
 
 _Cancelar:_ /cancelar`, 
-      { 
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
-        ])
+        { 
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Cancelar', 'cancel_block_action')]
+          ])
+        }
+      );
+    } catch (err) {
+      if (err.message && err.message.includes('message is not modified')) {
+        console.log('ℹ️ [CHECK-STATUS] Mensagem já está atualizada');
+        return;
       }
-    );
+      throw err;
+    }
   });
   
   // Handler: Cancelar ação de bloqueio
