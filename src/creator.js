@@ -579,7 +579,16 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
   
   // Confirmar e enviar broadcast
   bot.action('confirm_creator_broadcast', async (ctx) => {
-    await ctx.answerCbQuery('📢 Enviando broadcast...');
+    // Responder ao callback query imediatamente (pode falhar se já expirou, mas não é crítico)
+    try {
+      await ctx.answerCbQuery('📢 Enviando broadcast...');
+    } catch (err) {
+      // Query pode ter expirado, mas não é crítico - apenas remove o loading do botão
+      if (!err.message || !err.message.includes('query is too old')) {
+        console.error('Erro ao responder callback query:', err.message);
+      }
+    }
+    
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
     
@@ -654,7 +663,13 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
           
         } catch (err) {
           failed++;
-          console.error(`Erro ao enviar para ${user.telegram_id}:`, err.message);
+          // Não logar como erro se o bot foi bloqueado pelo usuário (comportamento esperado)
+          if (err.message && err.message.includes('bot was blocked by the user')) {
+            // Silencioso - apenas contar como falha
+          } else {
+            // Logar apenas erros reais (não relacionados a bloqueio)
+            console.error(`❌ [CREATOR-BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
+          }
         }
       }
       
