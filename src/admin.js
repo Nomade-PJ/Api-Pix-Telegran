@@ -747,15 +747,19 @@ Digite o ID do produto:
   });
   
   // ===== HANDLER DE MENSAGENS (PARA SESSÕES INTERATIVAS) =====
-  bot.on('text', async (ctx) => {
+  bot.on('text', async (ctx, next) => {
     try {
       // Ignorar comandos (mensagens que começam com /)
-      if (ctx.message.text.startsWith('/')) return;
+      if (ctx.message.text.startsWith('/')) return next();
       
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
       
-      if (!session) return; // Não há sessão ativa
+      // Se não há sessão ou é sessão de bloqueio, passar para próximo handler
+      if (!session) return next();
+      if (['unblock_user', 'block_user', 'check_block_status'].includes(session.type)) {
+        return next(); // Deixar o handler de bloqueios processar
+      }
       
       // Verificar se é broadcast do criador
       if (session.type === 'creator_broadcast' && session.step === 'message') {
@@ -1351,6 +1355,8 @@ O botão "🔞 Grupo Privado 🔞" aparecerá no menu principal!`, {
       
     } catch (err) {
       console.error('Erro no handler de texto:', err);
+      // Passar para próximo handler em caso de erro
+      return next();
     }
   });
   
@@ -1567,10 +1573,18 @@ Selecione uma opção abaixo:`;
       ]
     ]);
     
-    return ctx.editMessageText(message, {
-      parse_mode: 'Markdown',
-      ...keyboard
-    });
+    try {
+      return await ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...keyboard
+      });
+    } catch (err) {
+      if (err.message && err.message.includes('message is not modified')) {
+        console.log('ℹ️ [ADMIN-REFRESH] Mensagem já está atualizada');
+        return;
+      }
+      throw err;
+    }
   });
 
   // ===== ACTIONS DO PAINEL ADMIN =====
@@ -3570,21 +3584,30 @@ _Cancelar:_ /cancelar`,
   
   // Interceptar texto quando em sessão de bloqueio
   bot.on('text', async (ctx, next) => {
+    console.log('🔍 [BLOCK-HANDLER] Handler de bloqueio executado');
+    
     // Verificar se está em sessão de bloqueio
     const session = global._SESSIONS && global._SESSIONS[ctx.from.id];
     
+    console.log('🔍 [BLOCK-HANDLER] Sessão encontrada:', session ? session.type : 'nenhuma');
+    
     if (!session || !['unblock_user', 'block_user', 'check_block_status'].includes(session.type)) {
+      console.log('🔍 [BLOCK-HANDLER] Não é sessão de bloqueio, passando para próximo handler');
       return next(); // Passar para próximo handler
     }
     
+    console.log('✅ [BLOCK-HANDLER] Sessão de bloqueio detectada:', session.type);
+    
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) {
+      console.log('❌ [BLOCK-HANDLER] Usuário não é admin');
       delete global._SESSIONS[ctx.from.id];
       return;
     }
     
     // Cancelar
     if (ctx.message.text === '/cancelar') {
+      console.log('❌ [BLOCK-HANDLER] Operação cancelada pelo usuário');
       delete global._SESSIONS[ctx.from.id];
       return ctx.reply('❌ Operação cancelada. Use /admin para voltar ao painel.');
     }
@@ -3592,7 +3615,10 @@ _Cancelar:_ /cancelar`,
     // Processar ID
     const telegramId = parseInt(ctx.message.text.trim());
     
+    console.log('📋 [BLOCK-HANDLER] ID recebido:', ctx.message.text.trim(), '→ Parsed:', telegramId);
+    
     if (isNaN(telegramId) || telegramId <= 0) {
+      console.log('❌ [BLOCK-HANDLER] ID inválido');
       return ctx.reply('❌ ID inválido. Digite apenas números.\n\nExemplo: `123456789`\n\n_Cancelar:_ /cancelar', {
         parse_mode: 'Markdown'
       });
@@ -3628,9 +3654,12 @@ Use /admin para voltar ao painel.`,
         
       } else if (session.type === 'block_user') {
         // BLOQUEAR
+        console.log(`🔴 [BLOCK-HANDLER] Iniciando bloqueio do usuário ${telegramId}`);
         await ctx.reply('⏳ Bloqueando usuário...');
         
+        console.log(`📤 [BLOCK-HANDLER] Chamando db.blockUserByTelegramId(${telegramId})`);
         const user = await db.blockUserByTelegramId(telegramId);
+        console.log(`✅ [BLOCK-HANDLER] Usuário bloqueado:`, user);
         
         delete global._SESSIONS[ctx.from.id];
         
