@@ -761,6 +761,43 @@ Digite o ID do produto:
         return next(); // Deixar o handler de bloqueios processar
       }
       
+      // Verificar se é broadcast do admin
+      if (session.type === 'admin_broadcast' && session.step === 'waiting_message') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        const message = ctx.message.text;
+        
+        // Confirmar antes de enviar
+        global._SESSIONS[ctx.from.id] = {
+          type: 'admin_broadcast',
+          step: 'confirm',
+          data: { message }
+        };
+        
+        const previewMessage = `📢 *CONFIRMAR BROADCAST*
+
+*Mensagem:*
+${message}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ *Esta mensagem será enviada para TODOS os usuários não bloqueados.*
+
+Deseja continuar?`;
+        
+        return ctx.reply(previewMessage, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Confirmar e Enviar', 'confirm_admin_broadcast')],
+            [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
+          ])
+        });
+      }
+      
       // Verificar se é broadcast do criador
       if (session.type === 'creator_broadcast' && session.step === 'message') {
         const isCreator = await db.isUserCreator(ctx.from.id);
@@ -1561,6 +1598,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('🔑 Alterar PIX', 'admin_setpix')
       ],
       [
+        Markup.button.callback('💬 Configurar Suporte', 'admin_support')
+      ],
+      [
         Markup.button.callback('👤 Usuários', 'admin_users'),
         Markup.button.callback('📢 Broadcast', 'admin_broadcast')
       ],
@@ -2046,31 +2086,134 @@ Digite /setpix seguido da nova chave
     if (!isAdmin) return;
     
     try {
-      const message = `📢 *NOVO BROADCAST*
+      const message = `📢 *BROADCAST*
 
-Escolha o tipo de broadcast:
+Digite a mensagem que deseja enviar para todos os usuários:
 
-1️⃣ *Broadcast Simples* - Mensagem para todos os usuários
-2️⃣ *Broadcast com Produto* - Associar a um produto específico
-3️⃣ *Broadcast com Cupom* - Criar cupom e divulgar
+💡 *Dica:* Você pode usar formatação Markdown:
+• \`*negrito*\` para **negrito**
+• \`_itálico_\` para _itálico_
+• \`\`\`código\`\`\` para \`código\`
 
-Selecione uma opção:`;
+_Cancelar:_ /cancelar`;
 
-      const buttons = [
-        [Markup.button.callback('📣 Broadcast Simples', 'admin_broadcast_simple')],
-        [Markup.button.callback('🛍️ Broadcast + Produto', 'admin_broadcast_product')],
-        [Markup.button.callback('🎟️ Broadcast + Cupom', 'admin_broadcast_coupon')],
-        [Markup.button.callback('🔙 Voltar', 'admin_refresh')]
-      ];
+      // Criar sessão para capturar mensagem
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'admin_broadcast',
+        step: 'waiting_message'
+      };
       
-      return ctx.editMessageText(message, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard(buttons)
-      });
+      try {
+        return await ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
+          ])
+        });
+      } catch (editErr) {
+        if (editErr.message && editErr.message.includes('message is not modified')) {
+          console.log('ℹ️ [BROADCAST] Mensagem já está atualizada');
+          return;
+        }
+        // Se falhou ao editar, tentar enviar nova mensagem
+        console.log('⚠️ [BROADCAST] Erro ao editar, enviando nova mensagem');
+        return await ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
+          ])
+        });
+      }
     } catch (err) {
       console.error('Erro no broadcast:', err);
       return ctx.reply('❌ Erro ao carregar opções de broadcast.');
     }
+  });
+  
+  // Confirmar broadcast do admin
+  bot.action('confirm_admin_broadcast', async (ctx) => {
+    await ctx.answerCbQuery('📤 Enviando...');
+    
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    const session = global._SESSIONS && global._SESSIONS[ctx.from.id];
+    if (!session || !session.data || !session.data.message) {
+      return ctx.reply('❌ Sessão expirada. Tente novamente.');
+    }
+    
+    try {
+      const message = session.data.message;
+      
+      // Buscar todos os usuários não bloqueados
+      const { data: users, error } = await db.supabase
+        .from('users')
+        .select('telegram_id')
+        .eq('is_blocked', false);
+      
+      if (error) throw error;
+      
+      let sent = 0;
+      let failed = 0;
+      
+      await ctx.reply(`📤 Enviando broadcast para ${users.length} usuários...\n\n⏳ Aguarde...`);
+      
+      for (const user of users) {
+        try {
+          await ctx.telegram.sendMessage(user.telegram_id, message, { parse_mode: 'Markdown' });
+          sent++;
+          // Rate limit para evitar bloqueio do Telegram
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (err) {
+          failed++;
+          console.error(`❌ [BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
+        }
+      }
+      
+      // Limpar sessão
+      delete global._SESSIONS[ctx.from.id];
+      
+      return ctx.reply(`✅ *BROADCAST CONCLUÍDO!*
+
+📊 *Estatísticas:*
+✔️ Enviados: ${sent}
+❌ Falharam: ${failed}
+📝 Total: ${users.length}`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+        ])
+      });
+    } catch (err) {
+      console.error('❌ [BROADCAST] Erro ao enviar:', err);
+      
+      // Limpar sessão
+      if (global._SESSIONS && global._SESSIONS[ctx.from.id]) {
+        delete global._SESSIONS[ctx.from.id];
+      }
+      
+      return ctx.reply('❌ Erro ao enviar broadcast. Tente novamente.');
+    }
+  });
+  
+  // Cancelar broadcast
+  bot.action('cancel_admin_broadcast', async (ctx) => {
+    await ctx.answerCbQuery('❌ Cancelado');
+    
+    // Limpar sessão
+    if (global._SESSIONS && global._SESSIONS[ctx.from.id]) {
+      delete global._SESSIONS[ctx.from.id];
+    }
+    
+    // Voltar ao painel
+    return bot.handleUpdate({ 
+      ...ctx.update, 
+      callback_query: { 
+        ...ctx.update.callback_query, 
+        data: 'admin_refresh' 
+      } 
+    });
   });
 
   // ===== CUPONS (ADMIN) =====
