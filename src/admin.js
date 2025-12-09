@@ -86,6 +86,64 @@ function registerAdminCommands(bot) {
     }
   });
   
+  // ===== COMANDO PARA BUSCAR TRANSAÇÕES POR ID DE USUÁRIO =====
+  bot.command('buscar_usuario', async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) {
+        return ctx.reply('❌ Acesso negado.');
+      }
+      
+      const args = ctx.message.text.split(' ');
+      if (args.length < 2) {
+        return ctx.reply('📋 *Como usar:*\n\n`/buscar_usuario <ID_TELEGRAM>`\n\nExemplo:\n`/buscar_usuario 6224210204`', { parse_mode: 'Markdown' });
+      }
+      
+      const telegramId = args[1];
+      
+      // Buscar usuário
+      const user = await db.getUserByTelegramId(telegramId);
+      if (!user) {
+        return ctx.reply(`❌ Usuário com ID \`${telegramId}\` não encontrado.`, { parse_mode: 'Markdown' });
+      }
+      
+      // Buscar transações
+      const transactions = await db.getUserTransactions(telegramId, 50);
+      
+      if (transactions.length === 0) {
+        return ctx.reply(`👤 *Usuário encontrado:*\n\nNome: ${user.first_name}\nID: \`${telegramId}\`\n\n❌ Nenhuma transação encontrada.`, { parse_mode: 'Markdown' });
+      }
+      
+      let message = `👤 *USUÁRIO:*\n`;
+      message += `Nome: ${user.first_name}\n`;
+      message += `ID: \`${telegramId}\`\n`;
+      message += `Username: @${user.username || 'N/A'}\n`;
+      message += `\n📊 *TRANSAÇÕES (${transactions.length}):*\n\n`;
+      
+      for (const tx of transactions.slice(0, 10)) {
+        message += `🆔 TXID: \`${tx.txid}\`\n`;
+        message += `💰 Valor: R$ ${tx.amount}\n`;
+        message += `📊 Status: ${tx.status}\n`;
+        message += `📅 Data: ${new Date(tx.created_at).toLocaleString('pt-BR')}\n`;
+        
+        if (tx.proof_file_id) {
+          message += `📸 Comprovante: ✅ (ID salvo)\n`;
+        }
+        
+        message += `📋 /details_${tx.txid}\n\n`;
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n... e mais ${transactions.length - 10} transação(ões).`;
+      }
+      
+      return ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('Erro ao buscar usuário:', err);
+      return ctx.reply('❌ Erro ao buscar usuário. Verifique os logs.');
+    }
+  });
+
   // ===== COMANDO DE TESTE PARA ATUALIZAR DESCRIÇÃO =====
   bot.command('teste_descricao', async (ctx) => {
     console.log('🔍 [TESTE-DESC] ========== COMANDO CAPTURADO ==========');
@@ -3106,7 +3164,15 @@ Seu comprovante foi analisado e não foi aprovado.
       // Buscar produto OU media pack
       let productName = 'N/A';
       try {
-        if (transaction.media_pack_id) {
+        if (transaction.group_id) {
+          // É uma transação de grupo
+          const { data: groupData } = await db.supabase
+            .from('groups')
+            .select('group_name')
+            .eq('id', transaction.group_id)
+            .single();
+          productName = groupData?.group_name || 'Grupo';
+        } else if (transaction.media_pack_id) {
           // É um media pack
         const pack = await db.getMediaPackById(transaction.media_pack_id);
           productName = pack ? pack.name : transaction.media_pack_id || 'Media Pack';
@@ -3131,22 +3197,124 @@ Seu comprovante foi analisado e não foi aprovado.
       message += `💰 Valor: R$ ${transaction.amount}\n`;
       message += `📦 Produto: ${productName}\n`;
       message += `👤 Usuário: ${user ? user.first_name : 'N/A'} (@${user?.username || 'N/A'})\n`;
+      message += `🆔 ID Usuário: ${user ? user.telegram_id : 'N/A'}\n`;
       message += `🔑 Chave PIX: \`${transaction.pix_key}\`\n`;
       message += `📊 Status: ${transaction.status}\n`;
       message += `📅 Criada: ${new Date(transaction.created_at).toLocaleString('pt-BR')}\n`;
       
       if (transaction.proof_received_at) {
-        message += `📸 Comprovante: ${new Date(transaction.proof_received_at).toLocaleString('pt-BR')}\n`;
+        message += `📸 Comprovante recebido: ${new Date(transaction.proof_received_at).toLocaleString('pt-BR')}\n`;
+      }
+      
+      if (transaction.validated_at) {
+        message += `✅ Validado em: ${new Date(transaction.validated_at).toLocaleString('pt-BR')}\n`;
+      }
+      
+      if (transaction.delivered_at) {
+        message += `📦 Entregue em: ${new Date(transaction.delivered_at).toLocaleString('pt-BR')}\n`;
+      }
+      
+      // 🆕 Verificar se tem comprovante e tentar recuperar
+      const hasProof = transaction.proof_file_id || transaction.proof_file_url;
+      const keyboard = [];
+      
+      if (hasProof) {
+        keyboard.push([
+          { text: '📸 Ver Comprovante', callback_data: `get_proof_${txid}` }
+        ]);
+      }
+      
+      if (transaction.status === 'proof_sent' || transaction.status === 'pending' || transaction.status === 'expired') {
+        keyboard.push([
+          { text: '✅ Aprovar', callback_data: `approve_${txid}` },
+          { text: '❌ Rejeitar', callback_data: `reject_${txid}` }
+        ]);
       }
       
       message += `\n*Ações:*\n`;
       message += `✅ /validar${txid} - Aprovar\n`;
       message += `❌ /rejeitar${txid} - Rejeitar`;
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined
+      });
     } catch (err) {
       console.error('Erro ao buscar detalhes:', err);
       return ctx.reply('❌ Erro ao buscar detalhes.');
+    }
+  });
+
+  // 🆕 HANDLER PARA RECUPERAR COMPROVANTE
+  bot.action(/^get_proof_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('📸 Tentando recuperar comprovante...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      if (!transaction.proof_file_id && !transaction.proof_file_url) {
+        return ctx.reply('❌ Comprovante não encontrado no banco de dados.');
+      }
+      
+      // Tentar recuperar usando File ID primeiro (mais confiável)
+      if (transaction.proof_file_id) {
+        try {
+          console.log(`📸 [GET-PROOF] Tentando recuperar comprovante via File ID: ${transaction.proof_file_id.substring(0, 30)}...`);
+          
+          // Tentar obter informações do arquivo
+          const file = await ctx.telegram.getFile(transaction.proof_file_id);
+          
+          if (file && file.file_path) {
+            // Construir URL temporária
+            const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+            
+            // Detectar se é PDF ou imagem
+            const isPDF = file.file_path.toLowerCase().endsWith('.pdf') || 
+                         (transaction.proof_file_url && transaction.proof_file_url.toLowerCase().includes('.pdf'));
+            
+            // Tentar enviar o arquivo
+            if (isPDF) {
+              await ctx.reply('📄 *Comprovante em PDF:*', { parse_mode: 'Markdown' });
+              await ctx.telegram.sendDocument(ctx.from.id, transaction.proof_file_id, {
+                caption: `📄 Comprovante - TXID: ${txid}\n📅 Recebido em: ${transaction.proof_received_at ? new Date(transaction.proof_received_at).toLocaleString('pt-BR') : 'N/A'}`
+              });
+            } else {
+              await ctx.reply('🖼️ *Comprovante em imagem:*', { parse_mode: 'Markdown' });
+              await ctx.telegram.sendPhoto(ctx.from.id, transaction.proof_file_id, {
+                caption: `🖼️ Comprovante - TXID: ${txid}\n📅 Recebido em: ${transaction.proof_received_at ? new Date(transaction.proof_received_at).toLocaleString('pt-BR') : 'N/A'}`
+              });
+            }
+            
+            return ctx.reply(`✅ *Comprovante recuperado com sucesso!*\n\n🆔 TXID: \`${txid}\`\n📎 File ID: \`${transaction.proof_file_id.substring(0, 30)}...\``, { parse_mode: 'Markdown' });
+          }
+        } catch (fileErr) {
+          console.error('❌ [GET-PROOF] Erro ao recuperar via File ID:', fileErr.message);
+          
+          // Se File ID não funcionar, tentar URL (pode estar expirada)
+          if (transaction.proof_file_url) {
+            return ctx.reply(`⚠️ *File ID expirado ou inválido*\n\n📎 URL salva: ${transaction.proof_file_url}\n\n❌ URLs do Telegram expiram após algum tempo. O comprovante pode não estar mais acessível.\n\n💡 *Solução:* Implementar salvamento permanente de comprovantes (Supabase Storage) para evitar perda de arquivos.`, { parse_mode: 'Markdown' });
+          }
+          
+          return ctx.reply(`❌ *Não foi possível recuperar o comprovante*\n\n📎 File ID: \`${transaction.proof_file_id.substring(0, 30)}...\`\n\n⚠️ O arquivo pode ter expirado no Telegram (arquivos ficam disponíveis por tempo limitado).\n\n💡 *Recomendação:* Solicitar ao cliente que reenvie o comprovante se necessário.`, { parse_mode: 'Markdown' });
+        }
+      }
+      
+      // Se não tem File ID, tentar URL (provavelmente expirada)
+      if (transaction.proof_file_url) {
+        return ctx.reply(`⚠️ *Comprovante encontrado, mas URL pode estar expirada*\n\n📎 URL: ${transaction.proof_file_url}\n\n❌ URLs do Telegram expiram após algum tempo.\n\n💡 *Solução:* Implementar salvamento permanente de comprovantes.`, { parse_mode: 'Markdown' });
+      }
+      
+      return ctx.reply('❌ Comprovante não encontrado.');
+    } catch (err) {
+      console.error('❌ [GET-PROOF] Erro ao recuperar comprovante:', err);
+      return ctx.reply('❌ Erro ao recuperar comprovante. Verifique os logs.');
     }
   });
 
