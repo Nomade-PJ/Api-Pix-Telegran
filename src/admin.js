@@ -2211,13 +2211,18 @@ Selecione uma opção abaixo:`;
       const result = await db.recalculateTotalSales();
       const stats = await db.getStats();
       
+      let fixedMessage = '';
+      if (result.fixed && result.fixed > 0) {
+        fixedMessage = `\n🔧 *Correções:* ${result.fixed} transação(ões) corrigida(s) automaticamente`;
+      }
+      
       const message = `✅ *VALORES RECALCULADOS COM SUCESSO!*
 ━━━━━━━━━━━━━━━━━━━━━
 
 📊 *Resultado do recálculo:*
 💰 Total de vendas: R$ ${result.totalSales}
 📦 Total de transações: ${result.totalTransactions}
-📅 Vendas de hoje: R$ ${result.todaySales} (${result.todayTransactions} transações)
+📅 Vendas de hoje: R$ ${result.todaySales} (${result.todayTransactions} transações)${fixedMessage}
 
 📊 *Estatísticas Atualizadas:*
 👥 Usuários: ${stats.totalUsers}
