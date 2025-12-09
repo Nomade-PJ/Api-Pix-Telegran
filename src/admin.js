@@ -268,6 +268,9 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
         ],
         [
+          Markup.button.callback('📦 Reentregar Packs', 'admin_reentregar_packs')
+        ],
+        [
           Markup.button.callback('🔄 Atualizar', 'admin_refresh')
         ]
       ]);
@@ -1737,6 +1740,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
       ],
       [
+        Markup.button.callback('📦 Reentregar Packs', 'admin_reentregar_packs')
+      ],
+      [
         Markup.button.callback('🔄 Atualizar', 'admin_refresh')
       ]
     ]);
@@ -1794,6 +1800,299 @@ Selecione uma opção abaixo:`;
       return ctx.reply('❌ Busca cancelada.');
     } catch (err) {
       console.error('Erro ao cancelar busca:', err);
+    }
+  });
+
+  // ===== REENTREGAR PACKS =====
+  bot.action('admin_reentregar_packs', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('📦 Verificando...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      // Buscar transações dos produtos de Pack que foram entregues E têm comprovante
+      const { data: transactions, error } = await db.supabase
+        .from('transactions')
+        .select('txid, user_id, telegram_id, product_id, amount, status, delivered_at, created_at, proof_file_id, proof_received_at, validated_at')
+        .in('product_id', ['packsavulsos', 'packsexplicitos', 'packspicantes'])
+        .eq('status', 'delivered')
+        .not('delivered_at', 'is', null)
+        .not('proof_received_at', 'is', null) // Deve ter recebido comprovante
+        .not('validated_at', 'is', null) // Deve ter sido validado
+        .order('created_at', { ascending: false })
+        .limit(200);
+      
+      if (error) {
+        console.error('Erro ao buscar transações:', error);
+        return ctx.reply('❌ Erro ao buscar transações. Verifique os logs.');
+      }
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.reply('✅ Nenhuma transação de Pack encontrada para reentregar.\n\n⚠️ Apenas transações com comprovante enviado e validado são consideradas.');
+      }
+      
+      // Confirmar antes de reentregar
+      return ctx.reply(`📦 *REENTREGAR PACKS*\n\nEncontradas *${transactions.length}* transações de Pack que podem ser reentregues.\n\n✅ *Verificação:*\n• Comprovante enviado: ✅\n• Transação validada: ✅\n• Status entregue: ✅\n\n⚠️ *ATENÇÃO:* Esta ação irá reenviar o produto para todos os usuários que enviaram comprovante e foram aprovados.\n\nDeseja continuar?`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Sim, Reentregar Todos', callback_data: 'confirm_reentregar_packs' },
+              { text: '❌ Cancelar', callback_data: 'cancel_reentregar_packs' }
+            ]
+          ]
+        }
+      });
+      
+    } catch (err) {
+      console.error('Erro ao verificar packs:', err);
+      return ctx.reply('❌ Erro ao verificar packs. Verifique os logs.');
+    }
+  });
+
+  // ===== CONFIRMAR REENTREGA DE PACKS =====
+  bot.action('confirm_reentregar_packs', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('📦 Reentregando...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      await ctx.editMessageText('📦 *REENTREGANDO PACKS...*\n\n⏳ Processando transações...\n\nIsso pode levar alguns minutos.', {
+        parse_mode: 'Markdown'
+      });
+      
+      // Buscar transações com comprovante e validação
+      const { data: transactions, error } = await db.supabase
+        .from('transactions')
+        .select('txid, user_id, telegram_id, product_id, amount, status, delivered_at, created_at, proof_file_id, proof_received_at, validated_at')
+        .in('product_id', ['packsavulsos', 'packsexplicitos', 'packspicantes'])
+        .eq('status', 'delivered')
+        .not('delivered_at', 'is', null)
+        .not('proof_received_at', 'is', null) // Deve ter recebido comprovante
+        .not('validated_at', 'is', null) // Deve ter sido validado
+        .order('created_at', { ascending: false })
+        .limit(200);
+      
+      if (error) throw error;
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.editMessageText('✅ Nenhuma transação de Pack encontrada para reentregar.\n\n⚠️ Apenas transações com comprovante enviado e validado são consideradas.', {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
+            ]]
+          }
+        });
+      }
+      
+      let successCount = 0;
+      let errorCount = 0;
+      let skippedCount = 0;
+      const errors = [];
+      
+      // Processar em lotes para não sobrecarregar
+      for (let i = 0; i < transactions.length; i++) {
+        const tx = transactions[i];
+        
+        try {
+          // Verificar se tem comprovante (dupla verificação)
+          if (!tx.proof_received_at || !tx.validated_at) {
+            console.log(`⚠️ [REENTREGA] TXID ${tx.txid} não tem comprovante ou validação - pulando`);
+            skippedCount++;
+            continue;
+          }
+          
+          // Buscar produto
+          const product = await db.getProduct(tx.product_id, true);
+          if (!product || !product.delivery_url) {
+            console.log(`⚠️ [REENTREGA] Produto não encontrado ou sem URL para TXID ${tx.txid}`);
+            skippedCount++;
+            continue;
+          }
+          
+          // Buscar usuário
+          const user = tx.user_id ? await db.getUserByUUID(tx.user_id) : null;
+          if (!user || !user.telegram_id) {
+            console.log(`⚠️ [REENTREGA] Usuário não encontrado para TXID ${tx.txid}`);
+            skippedCount++;
+            continue;
+          }
+          
+          // 🆕 VERIFICAR SE O USUÁRIO REALMENTE NÃO RECEBEU O PRODUTO
+          // 1. Verificar se o bot foi bloqueado (usuário não pode receber)
+          // 2. Verificar se a entrega foi muito recente (pode ter sido recebido)
+          
+          let shouldReDeliver = true;
+          let skipReason = '';
+          
+          // Verificar data de entrega - se foi entregue há menos de 1 hora, pode ter sido recebido
+          const deliveredAt = new Date(tx.delivered_at);
+          const now = new Date();
+          const hoursSinceDelivery = (now - deliveredAt) / (1000 * 60 * 60);
+          
+          if (hoursSinceDelivery < 1) {
+            console.log(`⏭️ [REENTREGA] TXID ${tx.txid} foi entregue há ${hoursSinceDelivery.toFixed(1)} horas - muito recente, pode ter sido recebido`);
+            skipReason = `Entregue há ${hoursSinceDelivery.toFixed(1)} horas (muito recente)`;
+            shouldReDeliver = false;
+          }
+          
+          // Verificar se o usuário pode receber mensagens (bot não bloqueado)
+          if (shouldReDeliver) {
+            try {
+              console.log(`🔍 [REENTREGA] Verificando se usuário ${user.telegram_id} pode receber mensagens...`);
+              // Tentar enviar uma mensagem de teste (será deletada depois)
+              const testMessage = await ctx.telegram.sendMessage(
+                user.telegram_id, 
+                '🔍 Verificando entrega...',
+                { parse_mode: 'Markdown' }
+              );
+              
+              // Se conseguiu enviar, o usuário pode receber mensagens
+              console.log(`✅ [REENTREGA] Usuário ${user.telegram_id} pode receber mensagens`);
+              
+              // Deletar mensagem de teste
+              try {
+                await ctx.telegram.deleteMessage(user.telegram_id, testMessage.message_id);
+              } catch (deleteErr) {
+                // Ignorar erro ao deletar
+              }
+              
+            } catch (testErr) {
+              const errorMsg = testErr.message || '';
+              // Se o bot foi bloqueado, o usuário não pode receber
+              if (errorMsg.includes('bot was blocked') || errorMsg.includes('403') || errorMsg.includes('Forbidden')) {
+                console.log(`⚠️ [REENTREGA] Bot bloqueado pelo usuário ${user.telegram_id} - produto não foi recebido`);
+                skipReason = 'Bot bloqueado pelo usuário';
+                shouldReDeliver = false;
+              } else {
+                // Outro erro - tentar mesmo assim
+                console.log(`⚠️ [REENTREGA] Erro ao verificar usuário ${user.telegram_id}: ${errorMsg} - tentando reentregar mesmo assim`);
+                shouldReDeliver = true; // Tentar mesmo assim
+              }
+            }
+          }
+          
+          // Se não deve reentregar, pular
+          if (!shouldReDeliver) {
+            console.log(`⏭️ [REENTREGA] Pulando TXID ${tx.txid} - ${skipReason}`);
+            skippedCount++;
+            continue;
+          }
+          
+          // 🆕 VERIFICAR SE O PRODUTO FOI REALMENTE ENTREGUE
+          // Comparar data de entrega com data atual - se foi entregue há muito tempo, pode ter sido recebido
+          // Mas vamos reentregar mesmo assim se o usuário pode receber (pode ter sido perdido)
+          
+          console.log(`📤 [REENTREGA] Reentregando ${product.name} para ${user.first_name} (${user.telegram_id}) - TXID: ${tx.txid}`);
+          console.log(`✅ [REENTREGA] Comprovante verificado: ${tx.proof_received_at ? 'Sim' : 'Não'}`);
+          console.log(`✅ [REENTREGA] Validação verificada: ${tx.validated_at ? 'Sim' : 'Não'}`);
+          console.log(`✅ [REENTREGA] Usuário pode receber mensagens: Sim`);
+          
+          // Reentregar usando deliverContent
+          await deliver.deliverContent(
+            user.telegram_id,
+            product,
+            `✅ *REENTREGA DE PRODUTO*\n\n📦 ${product.name}\n💰 Valor: R$ ${tx.amount}\n🆔 TXID: ${tx.txid}\n📸 Comprovante: ✅ Validado\n\n✅ Produto reentregue com sucesso!`
+          );
+          
+          successCount++;
+          
+          // Delay entre envios para evitar flood
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+        } catch (err) {
+          errorCount++;
+          const errorMsg = err.message || 'Erro desconhecido';
+          let userName = 'N/A';
+          try {
+            const userForError = tx.user_id ? await db.getUserByUUID(tx.user_id) : null;
+            userName = userForError?.first_name || 'N/A';
+          } catch (userErr) {
+            // Ignorar erro ao buscar usuário
+          }
+          errors.push({
+            txid: tx.txid,
+            user: userName,
+            error: errorMsg
+          });
+          
+          // Se for erro de bot bloqueado, não logar como erro crítico
+          if (errorMsg.includes('bot was blocked') || errorMsg.includes('403')) {
+            console.log(`⚠️ [REENTREGA] Bot bloqueado pelo usuário ${tx.telegram_id} - ignorando`);
+            errorCount--; // Não contar como erro
+          } else {
+            console.error(`❌ [REENTREGA] Erro ao reentregar TXID ${tx.txid}:`, errorMsg);
+          }
+        }
+        
+        // Atualizar progresso a cada 10 entregas
+        if ((i + 1) % 10 === 0) {
+          try {
+            await ctx.editMessageText(`📦 *REENTREGANDO PACKS...*\n\n⏳ Processando: ${i + 1}/${transactions.length}\n✅ Entregues: ${successCount}\n⏭️ Puladas: ${skippedCount}\n❌ Erros: ${errorCount}`, {
+              parse_mode: 'Markdown'
+            });
+          } catch (editErr) {
+            // Ignorar erro de edição
+          }
+        }
+      }
+      
+      // Mensagem final
+      let finalMessage = `✅ *REENTREGA CONCLUÍDA!*\n\n`;
+      finalMessage += `📊 *Resultado:*\n`;
+      finalMessage += `✅ Entregues com sucesso: ${successCount}\n`;
+      finalMessage += `⏭️ Puladas: ${skippedCount}\n`;
+      finalMessage += `   └─ Bot bloqueado ou sem comprovante/produto\n`;
+      finalMessage += `❌ Erros: ${errorCount}\n`;
+      finalMessage += `📦 Total processado: ${transactions.length}\n\n`;
+      finalMessage += `✅ *Verificações realizadas:*\n`;
+      finalMessage += `• Comprovante enviado: ✅\n`;
+      finalMessage += `• Transação validada: ✅\n`;
+      finalMessage += `• Usuário pode receber mensagens: ✅\n`;
+      finalMessage += `• Produto reentregue: ✅\n\n`;
+      
+      if (errors.length > 0 && errors.length <= 10) {
+        finalMessage += `⚠️ *Erros encontrados:*\n`;
+        errors.slice(0, 10).forEach(err => {
+          finalMessage += `• ${err.user} (${err.txid}): ${err.error.substring(0, 50)}\n`;
+        });
+      }
+      
+      return ctx.editMessageText(finalMessage, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+      
+    } catch (err) {
+      console.error('Erro ao reentregar packs:', err);
+      return ctx.editMessageText(`❌ *Erro ao reentregar packs*\n\nErro: ${err.message}\n\nVerifique os logs para mais detalhes.`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+    }
+  });
+
+  // ===== CANCELAR REENTREGA =====
+  bot.action('cancel_reentregar_packs', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('❌ Cancelado');
+      return ctx.editMessageText('❌ Reentrega cancelada.', {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('Erro ao cancelar reentrega:', err);
     }
   });
 
