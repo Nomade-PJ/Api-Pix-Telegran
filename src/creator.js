@@ -87,6 +87,9 @@ Selecione uma opção abaixo:`;
 📅 *PERÍODO*
 • Transações Hoje: ${stats.todayTransactions || 0}
 
+🔄 *Atualização:* Automática em tempo real
+📅 *Última atualização:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+
 ⏰ *Atualizado:* ${new Date().toLocaleString('pt-BR')}`;
 
       return ctx.editMessageText(message, {

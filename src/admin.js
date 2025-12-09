@@ -1853,7 +1853,14 @@ Selecione uma opção abaixo:`;
   // ===== CONFIRMAR REENTREGA DE PACKS =====
   bot.action('confirm_reentregar_packs', async (ctx) => {
     try {
-      await ctx.answerCbQuery('📦 Reentregando...');
+      try {
+        await ctx.answerCbQuery('📦 Reentregando...');
+      } catch (cbErr) {
+        // Ignorar erro de callback query expirado
+        if (cbErr.message && !cbErr.message.includes('query is too old')) {
+          console.error('Erro ao responder callback query:', cbErr.message);
+        }
+      }
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return;
       
@@ -2130,7 +2137,11 @@ Selecione uma opção abaixo:`;
   });
 
   bot.action('admin_stats', async (ctx) => {
-    await ctx.answerCbQuery('📊 Carregando estatísticas...');
+    try {
+      await ctx.answerCbQuery('📊 Carregando estatísticas...');
+    } catch (err) {
+      // Ignorar erro de callback query expirado
+    }
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) return;
     
@@ -2149,12 +2160,97 @@ Selecione uma opção abaixo:`;
 💰 *Total em vendas:* R$ ${stats.totalSales}
 💵 *Ticket médio:* R$ ${stats.avgTicket || '0.00'}
 
-📅 *Atualizado:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
+📅 *Hoje:*
+💰 Vendas: R$ ${stats.todaySales || '0.00'}
+📦 Transações: ${stats.todayTransactions || 0}
+
+🔄 *Atualização:* Automática em tempo real
+📅 *Última atualização:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🔄 Recalcular Valores', 'admin_recalcular_valores')
+        ],
+        [
+          Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')
+        ]
+      ]);
+      
+      try {
+        return ctx.editMessageText(message, { 
+          parse_mode: 'Markdown',
+          reply_markup: keyboard.reply_markup
+        });
+      } catch (editErr) {
+        return ctx.reply(message, { 
+          parse_mode: 'Markdown',
+          reply_markup: keyboard.reply_markup
+        });
+      }
     } catch (err) {
       console.error('Erro ao buscar stats:', err);
       return ctx.reply('❌ Erro ao buscar estatísticas.');
+    }
+  });
+  
+  // Recalcular valores de vendas
+  bot.action('admin_recalcular_valores', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Recalculando...');
+    } catch (err) {
+      // Ignorar erro de callback query expirado
+    }
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      await ctx.editMessageText('🔄 *RECALCULANDO VALORES...*\n\n⏳ Aguarde, isso pode levar alguns segundos...', {
+        parse_mode: 'Markdown'
+      });
+      
+      const result = await db.recalculateTotalSales();
+      const stats = await db.getStats();
+      
+      const message = `✅ *VALORES RECALCULADOS COM SUCESSO!*
+━━━━━━━━━━━━━━━━━━━━━
+
+📊 *Resultado do recálculo:*
+💰 Total de vendas: R$ ${result.totalSales}
+📦 Total de transações: ${result.totalTransactions}
+📅 Vendas de hoje: R$ ${result.todaySales} (${result.todayTransactions} transações)
+
+📊 *Estatísticas Atualizadas:*
+👥 Usuários: ${stats.totalUsers}
+💳 Transações: ${stats.totalTransactions}
+⏳ Pendentes: ${stats.pendingTransactions}
+💰 Total em vendas: R$ ${stats.totalSales}
+💵 Ticket médio: R$ ${stats.avgTicket || '0.00'}
+
+🔄 *Sistema:* Atualização automática em tempo real
+📅 *Recalculado em:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
+      
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('📊 Ver Estatísticas', 'admin_stats')
+        ],
+        [
+          Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')
+        ]
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (err) {
+      console.error('Erro ao recalcular valores:', err);
+      return ctx.editMessageText('❌ Erro ao recalcular valores. Verifique os logs.', {
+        reply_markup: {
+          inline_keyboard: [[
+            Markup.button.callback('🔙 Voltar', 'admin_refresh')
+          ]]
+        }
+      });
     }
   });
 

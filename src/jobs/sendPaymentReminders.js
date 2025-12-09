@@ -31,9 +31,32 @@ async function sendPaymentReminders(bot) {
         
         // Verificar se houve erro na resposta
         if (result.error) {
-          // Erro do Supabase (erro na query, não conexão)
-          error = result.error;
-          break;
+          // Verificar se é erro de conexão
+          const errorMessage = result.error.message || '';
+          const errorDetails = result.error.details || '';
+          const errorString = JSON.stringify(result.error);
+          
+          const isConnectionError = (
+            errorMessage.includes('fetch failed') ||
+            errorMessage.includes('SocketError') ||
+            errorMessage.includes('other side closed') ||
+            errorMessage.includes('ECONNRESET') ||
+            errorMessage.includes('ETIMEDOUT') ||
+            errorMessage.includes('UND_ERR_SOCKET') ||
+            errorDetails.includes('UND_ERR_SOCKET') ||
+            errorDetails.includes('other side closed') ||
+            errorDetails.includes('SocketError') ||
+            errorString.includes('UND_ERR_SOCKET')
+          );
+          
+          if (isConnectionError) {
+            // É erro de conexão - tratar como exceção para entrar no catch
+            throw result.error;
+          } else {
+            // Erro real do Supabase (erro na query, não conexão)
+            error = result.error;
+            break;
+          }
         }
         
         // Verificar se result.data existe (sucesso)
@@ -75,25 +98,77 @@ async function sendPaymentReminders(bot) {
         if (!isConnectionError) {
           // Não é erro de conexão, não tentar retry
           console.error('❌ [REMINDER-JOB] Erro ao buscar transações (não é erro de conexão):', fetchError.message);
-          return { sent: 0, error: fetchError.message };
+          error = fetchError; // Marcar como erro real
+          break; // Sair do loop
         }
         
         if (retries > 0) {
-          console.warn(`⚠️ [REMINDER-JOB] Erro de conexão detectado: ${fetchError.message}`);
+          console.warn(`⚠️ [REMINDER-JOB] Erro de conexão detectado: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
           console.warn(`⚠️ [REMINDER-JOB] Tentando novamente... (${retries} tentativas restantes)`);
           // Aguardar 2 segundos antes de tentar novamente
           await new Promise(resolve => setTimeout(resolve, 2000));
         } else {
-          console.error('❌ [REMINDER-JOB] Erro ao buscar transações após 3 tentativas:', fetchError.message);
-          return { sent: 0, error: fetchError.message };
+          // Última tentativa falhou - marcar como erro de conexão temporário
+          console.warn(`⚠️ [REMINDER-JOB] Erro de conexão após 3 tentativas - será tentado novamente no próximo ciclo`);
+          // Não logar como erro crítico - apenas retornar silenciosamente
+          return { sent: 0 }; // Retornar sem erro para não logar como crítico
         }
       }
     }
     
-    // Se ainda tiver erro após retries, retornar
+    // Se ainda tiver erro após retries, verificar se é erro de conexão
     if (error) {
-      console.error('❌ [REMINDER-JOB] Erro do Supabase:', error);
-      return { sent: 0, error: error.message || JSON.stringify(error) };
+      const errorMessage = error.message || '';
+      const errorDetails = error.details || '';
+      const errorString = JSON.stringify(error);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorString.includes('UND_ERR_SOCKET')
+      );
+      
+      if (isConnectionError) {
+        // Erro de conexão temporário - não logar como erro crítico
+        console.warn('⚠️ [REMINDER-JOB] Erro de conexão temporário com Supabase - será tentado novamente no próximo ciclo');
+        return { sent: 0, error: 'Erro de conexão temporário' };
+      } else {
+        // Erro real do Supabase
+        console.error('❌ [REMINDER-JOB] Erro do Supabase:', error);
+        return { sent: 0, error: error.message || JSON.stringify(error) };
+      }
+    }
+    
+    // Se lastError existe mas não foi capturado como error, verificar
+    if (lastError && !transactions) {
+      const errorMessage = lastError.message || '';
+      const errorDetails = lastError.details || '';
+      const errorString = JSON.stringify(lastError);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorString.includes('UND_ERR_SOCKET')
+      );
+      
+      if (isConnectionError) {
+        console.warn('⚠️ [REMINDER-JOB] Erro de conexão temporário com Supabase - será tentado novamente no próximo ciclo');
+        return { sent: 0, error: 'Erro de conexão temporário' };
+      }
     }
     
     if (!transactions || transactions.length === 0) {
@@ -255,8 +330,33 @@ async function sendPaymentReminders(bot) {
     return { sent: sentCount, total: transactions.length };
     
   } catch (err) {
-    console.error('❌ [REMINDER-JOB] Erro crítico:', err);
-    return { sent: 0, error: err.message };
+    // Verificar se é erro de conexão
+    const errorMessage = err.message || '';
+    const errorDetails = err.details || '';
+    const errorString = JSON.stringify(err);
+    
+    const isConnectionError = (
+      errorMessage.includes('fetch failed') ||
+      errorMessage.includes('SocketError') ||
+      errorMessage.includes('other side closed') ||
+      errorMessage.includes('ECONNRESET') ||
+      errorMessage.includes('ETIMEDOUT') ||
+      errorMessage.includes('UND_ERR_SOCKET') ||
+      errorDetails.includes('UND_ERR_SOCKET') ||
+      errorDetails.includes('other side closed') ||
+      errorDetails.includes('SocketError') ||
+      errorString.includes('UND_ERR_SOCKET')
+    );
+    
+    if (isConnectionError) {
+      // Erro de conexão temporário - não logar como crítico
+      console.warn('⚠️ [REMINDER-JOB] Erro de conexão temporário - será tentado novamente no próximo ciclo');
+      return { sent: 0 };
+    } else {
+      // Erro crítico real
+      console.error('❌ [REMINDER-JOB] Erro crítico:', err);
+      return { sent: 0, error: err.message };
+    }
   }
 }
 

@@ -737,42 +737,15 @@ async function getStats() {
       .select('*', { count: 'exact', head: true })
       .eq('status', 'proof_sent');
     
-    // Total em vendas (entregues) - TODAS desde o início do bot
-    // Primeiro tenta buscar o valor confirmado do extrato bancário
-    let totalSales = 0;
-    try {
-      const confirmedTotalValue = await getSetting('total_vendas_confirmado');
-      if (confirmedTotalValue) {
-        totalSales = parseFloat(confirmedTotalValue) || 0;
-        if (totalSales > 0) {
-          console.log('💰 [STATS] Usando valor confirmado do extrato bancário:', totalSales);
-        } else {
-          // Se o valor for 0 ou inválido, calcula pelas transações
-          const { data: sales } = await supabase
-            .from('transactions')
-            .select('amount')
-            .eq('status', 'delivered');
-          totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-          console.log('💰 [STATS] Valor confirmado inválido, calculando pelas transações:', totalSales);
-        }
-      } else {
-        // Se não houver valor confirmado, calcula pelas transações
-        const { data: sales } = await supabase
-          .from('transactions')
-          .select('amount')
-          .eq('status', 'delivered');
-        totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-        console.log('💰 [STATS] Calculando valor pelas transações:', totalSales);
-      }
-    } catch (err) {
-      // Em caso de erro, calcula pelas transações
-      console.warn('⚠️ [STATS] Erro ao buscar valor confirmado, calculando pelas transações:', err.message);
-      const { data: sales } = await supabase
-        .from('transactions')
-        .select('amount')
-        .eq('status', 'delivered');
-      totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-    }
+    // Total em vendas (entregues) - SEMPRE calcula automaticamente pelas transações
+    // Atualização automática em tempo real - não usa valores manuais
+    const { data: sales } = await supabase
+      .from('transactions')
+      .select('amount')
+      .eq('status', 'delivered');
+    
+    const totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+    console.log('💰 [STATS] Valor calculado automaticamente pelas transações:', totalSales.toFixed(2));
     
     // Transações validadas (apenas status validated)
     const { count: validatedTransactions } = await supabase
@@ -856,42 +829,15 @@ async function getCreatorStats() {
       .select('*', { count: 'exact', head: true })
       .eq('status', 'delivered');
     
-    // Total em vendas (apenas entregues)
-    // Primeiro tenta buscar o valor confirmado do extrato bancário
-    let totalSales = 0;
-    try {
-      const confirmedTotalValue = await getSetting('total_vendas_confirmado');
-      if (confirmedTotalValue) {
-        totalSales = parseFloat(confirmedTotalValue) || 0;
-        if (totalSales > 0) {
-          console.log('💰 [CREATOR-STATS] Usando valor confirmado do extrato bancário:', totalSales);
-        } else {
-          // Se o valor for 0 ou inválido, calcula pelas transações
-          const { data: approvedSales } = await supabase
-            .from('transactions')
-            .select('amount')
-            .eq('status', 'delivered');
-          totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-          console.log('💰 [CREATOR-STATS] Valor confirmado inválido, calculando pelas transações:', totalSales);
-        }
-      } else {
-        // Se não houver valor confirmado, calcula pelas transações
-        const { data: approvedSales } = await supabase
-          .from('transactions')
-          .select('amount')
-          .eq('status', 'delivered');
-        totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-        console.log('💰 [CREATOR-STATS] Calculando valor pelas transações:', totalSales);
-      }
-    } catch (err) {
-      // Em caso de erro, calcula pelas transações
-      console.warn('⚠️ [CREATOR-STATS] Erro ao buscar valor confirmado, calculando pelas transações:', err.message);
-      const { data: approvedSales } = await supabase
-        .from('transactions')
-        .select('amount')
-        .eq('status', 'delivered');
-      totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-    }
+    // Total em vendas (apenas entregues) - SEMPRE calcula automaticamente pelas transações
+    // Atualização automática em tempo real - não usa valores manuais
+    const { data: approvedSales } = await supabase
+      .from('transactions')
+      .select('amount')
+      .eq('status', 'delivered');
+    
+    const totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+    console.log('💰 [CREATOR-STATS] Valor calculado automaticamente pelas transações:', totalSales.toFixed(2));
     
     // Vendas de HOJE (usando delivered_at no horário de Brasília)
     // Atualiza automaticamente em tempo real a cada chamada
@@ -2061,6 +2007,64 @@ async function checkBlockStatus(telegramId) {
   }
 }
 
+/**
+ * Recalcula e atualiza o valor total de vendas baseado em todas as transações entregues
+ * Útil para sincronizar valores após mudanças ou correções
+ */
+async function recalculateTotalSales() {
+  try {
+    console.log('🔄 [RECALC] Iniciando recálculo de vendas totais...');
+    
+    // Buscar todas as transações entregues
+    const { data: sales, error } = await supabase
+      .from('transactions')
+      .select('amount, delivered_at, txid')
+      .eq('status', 'delivered')
+      .order('delivered_at', { ascending: true });
+    
+    if (error) {
+      console.error('❌ [RECALC] Erro ao buscar transações:', error);
+      throw error;
+    }
+    
+    if (!sales || sales.length === 0) {
+      console.log('✅ [RECALC] Nenhuma transação entregue encontrada');
+      return {
+        totalSales: 0,
+        totalTransactions: 0,
+        message: 'Nenhuma transação entregue encontrada'
+      };
+    }
+    
+    // Calcular total
+    const totalSales = sales.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+    const totalTransactions = sales.length;
+    
+    // Calcular por período
+    const todayStartISO = getTodayStartBrasil();
+    const todaySales = sales
+      .filter(t => t.delivered_at && new Date(t.delivered_at) >= new Date(todayStartISO))
+      .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+    const todayTransactions = sales.filter(t => t.delivered_at && new Date(t.delivered_at) >= new Date(todayStartISO)).length;
+    
+    console.log(`✅ [RECALC] Recalculado com sucesso:`);
+    console.log(`   📊 Total de vendas: R$ ${totalSales.toFixed(2)}`);
+    console.log(`   📦 Total de transações: ${totalTransactions}`);
+    console.log(`   📅 Vendas de hoje: R$ ${todaySales.toFixed(2)} (${todayTransactions} transações)`);
+    
+    return {
+      totalSales: totalSales.toFixed(2),
+      totalTransactions,
+      todaySales: todaySales.toFixed(2),
+      todayTransactions,
+      message: `Recalculado: R$ ${totalSales.toFixed(2)} em ${totalTransactions} transações`
+    };
+  } catch (err) {
+    console.error('❌ [RECALC] Erro ao recalcular vendas:', err);
+    throw err;
+  }
+}
+
 module.exports = {
   supabase,
   getOrCreateUser,
@@ -2089,6 +2093,7 @@ module.exports = {
   getPendingTransactions,
   getStats,
   getCreatorStats,
+  recalculateTotalSales,
   getSetting,
   setSetting,
   getPixKey,
