@@ -86,6 +86,72 @@ function registerAdminCommands(bot) {
     }
   });
   
+  // ===== FUNÇÃO PARA BUSCAR E EXIBIR INFORMAÇÕES DO USUÁRIO =====
+  async function buscarUsuarioInfo(ctx, telegramId) {
+    try {
+      // Buscar usuário
+      const user = await db.getUserByTelegramId(telegramId);
+      if (!user) {
+        return ctx.reply(`❌ Usuário com ID ${telegramId} não encontrado.`);
+      }
+      
+      // Buscar transações
+      const transactions = await db.getUserTransactions(telegramId, 50);
+      
+      // Construir mensagem sem Markdown problemático
+      let message = `👤 *USUÁRIO ENCONTRADO:*\n\n`;
+      message += `Nome: ${user.first_name || 'N/A'}\n`;
+      message += `ID: ${telegramId}\n`;
+      message += `Username: @${user.username || 'N/A'}\n`;
+      message += `Bloqueado: ${user.is_blocked ? 'Sim' : 'Não'}\n`;
+      message += `Cadastrado em: ${new Date(user.created_at).toLocaleString('pt-BR')}\n`;
+      
+      if (transactions.length === 0) {
+        message += `\n❌ Nenhuma transação encontrada.`;
+        return ctx.reply(message, { parse_mode: 'Markdown' });
+      }
+      
+      message += `\n📊 *TRANSAÇÕES (${transactions.length}):*\n\n`;
+      
+      const keyboard = [];
+      
+      for (const tx of transactions.slice(0, 5)) {
+        message += `🆔 TXID: ${tx.txid}\n`;
+        message += `💰 Valor: R$ ${tx.amount}\n`;
+        message += `📊 Status: ${tx.status}\n`;
+        message += `📅 Data: ${new Date(tx.created_at).toLocaleString('pt-BR')}\n`;
+        
+        if (tx.proof_file_id) {
+          message += `📸 Comprovante: ✅ Disponível\n`;
+        }
+        
+        // Adicionar botão para ver detalhes
+        keyboard.push([
+          { text: `📋 Ver TXID: ${tx.txid.substring(0, 10)}...`, callback_data: `details_${tx.txid}` }
+        ]);
+        
+        message += `\n`;
+      }
+      
+      if (transactions.length > 5) {
+        message += `\n... e mais ${transactions.length - 5} transação(ões).`;
+      }
+      
+      // Adicionar botão para voltar
+      keyboard.push([
+        { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
+      ]);
+      
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+      });
+    } catch (err) {
+      console.error('Erro ao buscar usuário:', err);
+      return ctx.reply('❌ Erro ao buscar usuário. Verifique os logs.');
+    }
+  }
+
   // ===== COMANDO PARA BUSCAR TRANSAÇÕES POR ID DE USUÁRIO =====
   bot.command('buscar_usuario', async (ctx) => {
     try {
@@ -96,48 +162,11 @@ function registerAdminCommands(bot) {
       
       const args = ctx.message.text.split(' ');
       if (args.length < 2) {
-        return ctx.reply('📋 *Como usar:*\n\n`/buscar_usuario <ID_TELEGRAM>`\n\nExemplo:\n`/buscar_usuario 6224210204`', { parse_mode: 'Markdown' });
+        return ctx.reply('📋 *Como usar:*\n\n/buscar_usuario <ID_TELEGRAM>\n\nExemplo:\n/buscar_usuario 6224210204', { parse_mode: 'Markdown' });
       }
       
       const telegramId = args[1];
-      
-      // Buscar usuário
-      const user = await db.getUserByTelegramId(telegramId);
-      if (!user) {
-        return ctx.reply(`❌ Usuário com ID \`${telegramId}\` não encontrado.`, { parse_mode: 'Markdown' });
-      }
-      
-      // Buscar transações
-      const transactions = await db.getUserTransactions(telegramId, 50);
-      
-      if (transactions.length === 0) {
-        return ctx.reply(`👤 *Usuário encontrado:*\n\nNome: ${user.first_name}\nID: \`${telegramId}\`\n\n❌ Nenhuma transação encontrada.`, { parse_mode: 'Markdown' });
-      }
-      
-      let message = `👤 *USUÁRIO:*\n`;
-      message += `Nome: ${user.first_name}\n`;
-      message += `ID: \`${telegramId}\`\n`;
-      message += `Username: @${user.username || 'N/A'}\n`;
-      message += `\n📊 *TRANSAÇÕES (${transactions.length}):*\n\n`;
-      
-      for (const tx of transactions.slice(0, 10)) {
-        message += `🆔 TXID: \`${tx.txid}\`\n`;
-        message += `💰 Valor: R$ ${tx.amount}\n`;
-        message += `📊 Status: ${tx.status}\n`;
-        message += `📅 Data: ${new Date(tx.created_at).toLocaleString('pt-BR')}\n`;
-        
-        if (tx.proof_file_id) {
-          message += `📸 Comprovante: ✅ (ID salvo)\n`;
-        }
-        
-        message += `📋 /details_${tx.txid}\n\n`;
-      }
-      
-      if (transactions.length > 10) {
-        message += `\n... e mais ${transactions.length - 10} transação(ões).`;
-      }
-      
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      return await buscarUsuarioInfo(ctx, telegramId);
     } catch (err) {
       console.error('Erro ao buscar usuário:', err);
       return ctx.reply('❌ Erro ao buscar usuário. Verifique os logs.');
@@ -234,6 +263,9 @@ Selecione uma opção abaixo:`;
         [
           Markup.button.callback('🔓 Gerenciar Bloqueios', 'admin_manage_blocks'),
           Markup.button.callback('🎟️ Cupons', 'admin_coupons')
+        ],
+        [
+          Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
         ],
         [
           Markup.button.callback('🔄 Atualizar', 'admin_refresh')
@@ -823,6 +855,35 @@ Digite o ID do produto:
       if (!session) return next();
       if (['unblock_user', 'block_user', 'check_block_status'].includes(session.type)) {
         return next(); // Deixar o handler de bloqueios processar
+      }
+      
+      // Verificar se é busca de usuário
+      if (session.type === 'buscar_usuario' && session.step === 'waiting_id') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        const telegramId = ctx.message.text.trim();
+        
+        // Validar ID (deve ser numérico)
+        if (!/^\d+$/.test(telegramId)) {
+          return ctx.reply('❌ ID inválido. Digite apenas números.\n\nExemplo: `6224210204`', {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }
+              ]]
+            }
+          });
+        }
+        
+        // Limpar sessão
+        delete global._SESSIONS[ctx.from.id];
+        
+        // Buscar e exibir informações
+        return await buscarUsuarioInfo(ctx, telegramId);
       }
       
       // Verificar se é broadcast do admin
@@ -1673,6 +1734,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('🎟️ Cupons', 'admin_coupons')
       ],
       [
+        Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
+      ],
+      [
         Markup.button.callback('🔄 Atualizar', 'admin_refresh')
       ]
     ]);
@@ -1688,6 +1752,48 @@ Selecione uma opção abaixo:`;
         return;
       }
       throw err;
+    }
+  });
+
+  // ===== BUSCAR USUÁRIO =====
+  bot.action('admin_buscar_usuario', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔍 Buscando usuário...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      // Criar sessão para pedir o ID
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'buscar_usuario',
+        step: 'waiting_id'
+      };
+      
+      return ctx.reply('🔍 *BUSCAR USUÁRIO*\n\nDigite o *ID do Telegram* do usuário que deseja buscar:\n\nExemplo: `6224210204`', {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('Erro ao iniciar busca de usuário:', err);
+      return ctx.reply('❌ Erro ao iniciar busca. Verifique os logs.');
+    }
+  });
+
+  // ===== CANCELAR BUSCA DE USUÁRIO =====
+  bot.action('cancel_buscar_usuario', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('❌ Cancelado');
+      global._SESSIONS = global._SESSIONS || {};
+      if (global._SESSIONS[ctx.from.id]) {
+        delete global._SESSIONS[ctx.from.id];
+      }
+      return ctx.reply('❌ Busca cancelada.');
+    } catch (err) {
+      console.error('Erro ao cancelar busca:', err);
     }
   });
 
