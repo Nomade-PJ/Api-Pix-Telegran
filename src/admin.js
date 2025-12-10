@@ -856,16 +856,34 @@ Digite o ID do produto:
   // ===== HANDLER DE MENSAGENS (PARA SESSÕES INTERATIVAS) =====
   bot.on('text', async (ctx, next) => {
     try {
+      // 🆕 DEBUG: Log para verificar se este handler está sendo executado
+      console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Handler executado para usuário ${ctx.from.id}`);
+      console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Mensagem: ${ctx.message.text?.substring(0, 50)}`);
+      
       // Ignorar comandos (mensagens que começam com /)
-      if (ctx.message.text.startsWith('/')) return next();
+      if (ctx.message.text.startsWith('/')) {
+        console.log(`🔍 [ADMIN-TEXT-HANDLER-1] É comando, passando para próximo handler`);
+        return next();
+      }
       
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
+      console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Sessão: ${session ? session.type : 'nenhuma'}`);
       
       // Se não há sessão ou é sessão de bloqueio, passar para próximo handler
-      if (!session) return next();
+      if (!session) {
+        console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Sem sessão, passando para próximo handler`);
+        return next();
+      }
       if (['unblock_user', 'block_user', 'check_block_status'].includes(session.type)) {
+        console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Sessão de bloqueio, passando para próximo handler`);
         return next(); // Deixar o handler de bloqueios processar
+      }
+      
+      // 🆕 Se for sessão admin_reply_ticket, passar para próximo handler (que está na linha 4861)
+      if (session.type === 'admin_reply_ticket') {
+        console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Sessão admin_reply_ticket detectada, passando para próximo handler`);
+        return next();
       }
       
       // Verificar se é busca de usuário
