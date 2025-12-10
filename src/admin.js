@@ -2991,18 +2991,40 @@ _Cancelar:_ /cancelar`;
       const messages = await db.getTicketMessages(ticketId);
       const user = await db.getUserByTelegramId(ticket.telegram_id);
       
-      let message = `📋 *TICKET ${ticket.ticket_number}*\n\n`;
-      message += `👤 *Usuário:* ${user?.first_name || 'N/A'} (@${user?.username || 'N/A'})\n`;
+      // Escapar caracteres especiais do Markdown
+      const escapeMarkdown = (text) => {
+        if (!text) return '';
+        return String(text)
+          .replace(/\*/g, '\\*')
+          .replace(/_/g, '\\_')
+          .replace(/\[/g, '\\[')
+          .replace(/\]/g, '\\]')
+          .replace(/\(/g, '\\(')
+          .replace(/\)/g, '\\)')
+          .replace(/~/g, '\\~')
+          .replace(/`/g, '\\`');
+      };
+      
+      const ticketNumber = escapeMarkdown(ticket.ticket_number);
+      const userName = escapeMarkdown(user?.first_name || 'N/A');
+      const userUsername = escapeMarkdown(user?.username || 'N/A');
+      const subject = escapeMarkdown(ticket.subject || 'Sem assunto');
+      
+      let message = `📋 *TICKET ${ticketNumber}*\n\n`;
+      message += `👤 *Usuário:* ${userName} (@${userUsername})\n`;
       message += `🆔 *ID:* ${ticket.telegram_id}\n`;
-      message += `📝 *Assunto:* ${ticket.subject || 'Sem assunto'}\n`;
+      message += `📝 *Assunto:* ${subject}\n`;
       message += `📊 *Status:* ${ticket.status === 'open' ? '🟢 Aberto' : ticket.status === 'in_progress' ? '🟡 Em andamento' : ticket.status === 'resolved' ? '✅ Resolvido' : '🔴 Fechado'}\n`;
       message += `📅 *Criado:* ${new Date(ticket.created_at).toLocaleString('pt-BR')}\n\n`;
       message += `💬 *Conversa:*\n\n`;
       
       for (const msg of messages) {
-        const sender = msg.is_admin ? '👨‍💼 Admin' : '👤 Cliente';
-        message += `${sender} (${new Date(msg.created_at).toLocaleString('pt-BR')}):\n`;
-        message += `${msg.message}\n\n`;
+        const sender = msg.is_admin ? '👨\\u200d💼 Admin' : '👤 Cliente';
+        const dateStr = new Date(msg.created_at).toLocaleString('pt-BR');
+        message += `${sender} \\(${dateStr}\\):\n`;
+        // Escapar caracteres especiais do Markdown na mensagem
+        const escapedMessage = escapeMarkdown(msg.message);
+        message += `${escapedMessage}\n\n`;
       }
       
       const buttons = [];
@@ -3021,10 +3043,22 @@ _Cancelar:_ /cancelar`;
         Markup.button.callback('🔙 Voltar', 'admin_refresh')
       ]);
       
-      return ctx.reply(message, {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
-      });
+      // Tentar editar a mensagem, se falhar, enviar nova mensagem
+      try {
+        return await ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+        });
+      } catch (editErr) {
+        // Se falhar ao editar (mensagem muito antiga ou erro de parsing), enviar nova mensagem
+        if (editErr.message && (editErr.message.includes('can\'t parse entities') || editErr.message.includes('message is not modified') || editErr.message.includes('message to edit not found'))) {
+          return ctx.reply(message, {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+          });
+        }
+        throw editErr;
+      }
     } catch (err) {
       console.error('❌ [ADMIN-TICKET] Erro:', err);
       return ctx.reply('❌ Erro ao visualizar ticket.');
