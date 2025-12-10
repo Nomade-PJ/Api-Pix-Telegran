@@ -4862,6 +4862,8 @@ _Cancelar:_ /cancelar`,
     const session = global._SESSIONS?.[ctx.from.id];
     
     // 🆕 DEBUG: Log para verificar se o handler está sendo executado
+    console.log(`🔍 [ADMIN-TEXT-HANDLER] Handler executado para usuário ${ctx.from.id}`);
+    console.log(`🔍 [ADMIN-TEXT-HANDLER] Sessão: ${session ? session.type : 'nenhuma'}`);
     if (session && session.type === 'admin_reply_ticket') {
       console.log(`🔍 [ADMIN-REPLY-TICKET] Handler executado para usuário ${ctx.from.id}, ticket: ${session.ticketId}`);
       console.log(`🔍 [ADMIN-REPLY-TICKET] Mensagem: ${ctx.message.text?.substring(0, 50)}`);
