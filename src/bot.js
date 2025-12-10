@@ -2610,6 +2610,177 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
     }
   });
   
+  // Handler para botão "Meus Pedidos" - reutilizar lógica do comando
+  bot.action('action_meuspedidos', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('📋 Carregando seus pedidos...');
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*\n\nNo momento, não conseguimos processar seu acesso.', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.reply('📦 *Nenhum pedido encontrado*\n\nVocê ainda não realizou nenhuma compra.\n\n🛍️ Use o menu para ver nossos produtos!', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      // Agrupar transações por status
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌',
+        'rejected': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada',
+        'rejected': 'Transação rejeitada'
+      };
+      
+      const delivered = transactions.filter(t => t.status === 'delivered');
+      const pending = transactions.filter(t => ['pending', 'proof_sent'].includes(t.status));
+      const expired = transactions.filter(t => ['expired', 'cancelled', 'rejected'].includes(t.status));
+      
+      let message = `📋 *MEUS PEDIDOS*\n\n✅ *Entregues:* ${delivered.length}\n⏳ *Pendentes:* ${pending.length}\n❌ *Canceladas:* ${expired.length}\n\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      const buttons = [];
+      
+      // Mostrar últimas 10 transações
+      for (const transaction of transactions.slice(0, 10)) {
+        const emoji = statusEmoji[transaction.status] || '📦';
+        const status = statusText[transaction.status] || transaction.status;
+        const productName = transaction.product_name || transaction.product_id || transaction.media_pack_id || (transaction.group_id ? 'Grupo' : 'Produto');
+        const date = new Date(transaction.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        message += `${emoji} *${productName}*\n`;
+        message += `💰 R$ ${parseFloat(transaction.amount).toFixed(2)}\n`;
+        message += `📊 ${status}\n`;
+        message += `📅 ${date}\n`;
+        message += `🆔 \`${transaction.txid}\`\n\n`;
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
+      }
+      
+      buttons.push([Markup.button.callback('🏠 Voltar', 'back_to_start')]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ACTION] Erro ao executar meuspedidos:', err);
+      return ctx.reply('❌ Erro ao carregar pedidos. Use /meuspedidos');
+    }
+  });
+  
+  // Handler para botão "Renovar" - reutilizar lógica do comando
+  bot.action('action_renovar', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Carregando renovações...');
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*\n\nNo momento, não conseguimos processar seu acesso.', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const groups = await db.getAllGroups();
+      const activeGroups = groups.filter(g => g.is_active);
+      
+      if (activeGroups.length === 0) {
+        return ctx.reply('📋 *Nenhum grupo disponível para renovação*\n\nNo momento, não há grupos ativos.', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos em Promoção', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      // Verificar se tem assinatura ativa
+      let hasActiveSubscription = false;
+      const subscriptionInfo = [];
+      
+      for (const group of activeGroups) {
+        const member = await db.getGroupMember(ctx.from.id, group.group_id);
+        if (member && member.expires_at && new Date(member.expires_at) > new Date()) {
+          hasActiveSubscription = true;
+          const expiresAt = new Date(member.expires_at);
+          const daysLeft = Math.ceil((expiresAt - new Date()) / (1000 * 60 * 60 * 24));
+          subscriptionInfo.push({
+            group: group,
+            expiresAt: expiresAt,
+            daysLeft: daysLeft
+          });
+        }
+      }
+      
+      if (!hasActiveSubscription) {
+        return ctx.reply('📋 *Nenhuma assinatura ativa*\n\nVocê não possui assinaturas ativas no momento.\n\n🛍️ Use o menu para assinar um grupo!', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Grupos Disponíveis', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      let message = `🔄 *RENOVAR ASSINATURA*\n\n📋 *Grupos com assinatura ativa:*\n\n`;
+      const buttons = [];
+      
+      for (const info of subscriptionInfo) {
+        const group = info.group;
+        const groupName = group.group_name || `Grupo ${group.group_id}`;
+        
+        message += `👥 *${groupName}*\n`;
+        message += `💰 R$ ${parseFloat(group.subscription_price).toFixed(2)}/mês\n`;
+        message += `⏰ Expira em: ${info.daysLeft} dia(s)\n\n`;
+        
+        buttons.push([Markup.button.callback(`🔄 Renovar ${groupName}`, `subscribe:${group.group_id}`)]);
+      }
+      
+      buttons.push([Markup.button.callback('🏠 Voltar', 'back_to_start')]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ACTION] Erro ao executar renovar:', err);
+      return ctx.reply('❌ Erro ao carregar renovações. Use /renovar');
+    }
+  });
+  
   // Handler para voltar ao menu inicial
   bot.action('back_to_start', async (ctx) => {
     try {
