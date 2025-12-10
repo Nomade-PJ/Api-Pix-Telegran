@@ -2363,16 +2363,21 @@ Esta transação foi cancelada automaticamente.
       const user = await db.getOrCreateUser(ctx.from);
       const tickets = await db.getUserTickets(ctx.from.id, 10);
       
-      const message = `💬 *SUPORTE - SISTEMA DE TICKETS*
-
-📋 *Seus Tickets:* ${tickets.length}
-
-${tickets.length > 0 ? '📝 *Tickets Recentes:*\n\n' : ''}${tickets.slice(0, 5).map(t => {
-  const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
-  return `${statusEmoji} *${t.ticket_number}*\n📅 ${new Date(t.created_at).toLocaleDateString('pt-BR')}\n📊 ${t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado'}\n`;
-}).join('\n')}
-
-*O que deseja fazer?*`;
+      let message = `💬 *SUPORTE - SISTEMA DE TICKETS*\n\n`;
+      message += `📋 *Seus Tickets:* ${tickets.length}\n\n`;
+      
+      if (tickets.length > 0) {
+        message += `📝 *Tickets Recentes:*\n\n`;
+        for (const t of tickets.slice(0, 5)) {
+          const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
+          const statusText = t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado';
+          const ticketNumber = (t.ticket_number || '').replace(/\*/g, '\\*').replace(/_/g, '\\_'); // Escapar caracteres Markdown
+          const dateStr = new Date(t.created_at).toLocaleDateString('pt-BR');
+          message += `${statusEmoji} *${ticketNumber}*\n📅 ${dateStr}\n📊 ${statusText}\n\n`;
+        }
+      }
+      
+      message += `*O que deseja fazer?*`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('➕ Novo Ticket', 'create_ticket')],
@@ -2411,16 +2416,21 @@ ${tickets.length > 0 ? '📝 *Tickets Recentes:*\n\n' : ''}${tickets.slice(0, 5)
       const user = await db.getOrCreateUser(ctx.from);
       const tickets = await db.getUserTickets(ctx.from.id, 10);
       
-      const message = `💬 *SUPORTE - SISTEMA DE TICKETS*
-
-📋 *Seus Tickets:* ${tickets.length}
-
-${tickets.length > 0 ? '📝 *Tickets Recentes:*\n\n' : ''}${tickets.slice(0, 5).map(t => {
-  const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
-  return `${statusEmoji} *${t.ticket_number}*\n📅 ${new Date(t.created_at).toLocaleDateString('pt-BR')}\n📊 ${t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado'}\n`;
-}).join('\n')}
-
-*O que deseja fazer?*`;
+      let message = `💬 *SUPORTE - SISTEMA DE TICKETS*\n\n`;
+      message += `📋 *Seus Tickets:* ${tickets.length}\n\n`;
+      
+      if (tickets.length > 0) {
+        message += `📝 *Tickets Recentes:*\n\n`;
+        for (const t of tickets.slice(0, 5)) {
+          const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
+          const statusText = t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado';
+          const ticketNumber = (t.ticket_number || '').replace(/\*/g, '\\*').replace(/_/g, '\\_'); // Escapar caracteres Markdown
+          const dateStr = new Date(t.created_at).toLocaleDateString('pt-BR');
+          message += `${statusEmoji} *${ticketNumber}*\n📅 ${dateStr}\n📊 ${statusText}\n\n`;
+        }
+      }
+      
+      message += `*O que deseja fazer?*`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('➕ Novo Ticket', 'create_ticket')],

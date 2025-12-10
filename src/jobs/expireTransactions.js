@@ -212,13 +212,6 @@ async function expireOldTransactions() {
             console.error(`❌ [EXPIRE-JOB] Erro ao cancelar transação ${transaction.txid}:`, err.message);
           }
         }
-        
-        if (canceled) {
-          expiredCount++;
-          console.log(`✅ [EXPIRE-JOB] Transação ${transaction.txid} expirada com sucesso`);
-        } else {
-          console.error(`❌ [EXPIRE-JOB] Erro ao expirar transação ${transaction.txid}`);
-        }
       } else {
         const minutesLeft = Math.floor(30 - diffMinutes);
         console.log(`⏳ [EXPIRE-JOB] Transação ${transaction.txid} ainda válida (${minutesLeft} minutos restantes)`);
