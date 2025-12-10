@@ -2435,6 +2435,10 @@ Esta transação foi cancelada automaticamente.
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('➕ Novo Ticket', 'create_ticket')],
         ...(tickets.length > 0 ? [[Markup.button.callback('📋 Ver Meus Tickets', 'view_my_tickets')]] : []),
+        [
+          Markup.button.callback('📋 Meus Pedidos', 'action_meuspedidos'),
+          Markup.button.callback('🔄 Renovar', 'action_renovar')
+        ],
         [Markup.button.callback('🏠 Voltar', 'back_to_start')]
       ]);
       
