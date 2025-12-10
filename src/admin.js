@@ -240,11 +240,14 @@ Verifique os logs do servidor para mais detalhes.`, { parse_mode: 'Markdown' });
 
 Selecione uma opção abaixo:`;
 
-      const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('⏳ Pendentes (' + stats.pendingTransactions + ')', 'admin_pendentes'),
-          Markup.button.callback('📊 Estatísticas', 'admin_stats')
-        ],
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('⏳ Pendentes (' + stats.pendingTransactions + ')', 'admin_pendentes'),
+        Markup.button.callback('📦 Entregues', 'admin_entregues')
+      ],
+      [
+        Markup.button.callback('📊 Estatísticas', 'admin_stats')
+      ],
         [
           Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos'),
           Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
@@ -1945,6 +1948,9 @@ Selecione uma opção abaixo:`;
     const keyboard = Markup.inlineKeyboard([
       [
         Markup.button.callback('⏳ Pendentes (' + stats.pendingTransactions + ')', 'admin_pendentes'),
+        Markup.button.callback('📦 Entregues', 'admin_entregues')
+      ],
+      [
         Markup.button.callback('📊 Estatísticas', 'admin_stats')
       ],
       [
@@ -2345,25 +2351,157 @@ Selecione uma opção abaixo:`;
       const pending = pendingResult.data || [];
       
       if (pending.length === 0) {
-        return ctx.reply('✅ Nenhuma transação pendente!');
+        return ctx.reply('✅ Nenhuma transação pendente!', {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+            ]]
+          }
+        });
       }
       
       let message = `⏳ *${pendingResult.total} TRANSAÇÕES PENDENTES* (mostrando ${pending.length}):\n\n`;
       
+      const keyboard = [];
+      
       for (const tx of pending) {
-        message += `🆔 TXID: ${tx.txid}\n`;
+        message += `🆔 TXID: \`${tx.txid}\`\n`;
         message += `👤 User: ${tx.user?.first_name || 'N/A'} (@${tx.user?.username || 'N/A'})\n`;
         message += `📦 Produto: ${tx.product?.name || tx.product_id}\n`;
         message += `💵 Valor: R$ ${tx.amount}\n`;
-        message += `📅 Recebido: ${new Date(tx.proof_received_at).toLocaleString('pt-BR')}\n`;
-        message += `\n/validar_${tx.txid}\n`;
+        message += `📅 Recebido: ${new Date(tx.proof_received_at).toLocaleString('pt-BR')}\n\n`;
+        
+        // Adicionar botões para cada transação
+        keyboard.push([
+          { text: `📋 Ver Detalhes - ${tx.txid.substring(0, 10)}...`, callback_data: `details_${tx.txid}` }
+        ]);
+        
         message += `——————————\n\n`;
       }
       
-      return ctx.reply(message, { parse_mode: 'Markdown' });
+      keyboard.push([
+        { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+      ]);
+      
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+      });
     } catch (err) {
       console.error('Erro ao listar pendentes:', err);
       return ctx.reply('❌ Erro ao buscar pendentes.');
+    }
+  });
+  
+  // ===== VER TRANSAÇÕES ENTREGUES/VALIDADAS =====
+  bot.action('admin_entregues', async (ctx) => {
+    await ctx.answerCbQuery('📦 Carregando entregues...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      // Buscar transações entregues ou validadas recentes
+      const { data: transactions, error } = await db.supabase
+        .from('transactions')
+        .select('*')
+        .in('status', ['validated', 'delivered'])
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (error) throw error;
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.reply('✅ Nenhuma transação entregue ou validada encontrada!', {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+            ]]
+          }
+        });
+      }
+      
+      // Buscar informações adicionais para cada transação
+      for (const tx of transactions) {
+        // Buscar usuário
+        if (tx.user_id) {
+          const { data: userData } = await db.supabase
+            .from('users')
+            .select('telegram_id, username, first_name')
+            .eq('id', tx.user_id)
+            .single();
+          
+          if (userData) {
+            tx.user = userData;
+          }
+        }
+        
+        // Buscar produto OU media pack
+        if (tx.product_id) {
+          const { data: productData } = await db.supabase
+            .from('products')
+            .select('name')
+            .eq('product_id', tx.product_id)
+            .single();
+          
+          if (productData) {
+            tx.product = productData;
+          }
+        } else if (tx.media_pack_id) {
+          const { data: packData } = await db.supabase
+            .from('media_packs')
+            .select('name')
+            .eq('pack_id', tx.media_pack_id)
+            .single();
+          
+          if (packData) {
+            tx.media_pack = packData;
+          }
+        }
+      }
+      
+      let message = `📦 *TRANSAÇÕES ENTREGUES/VALIDADAS* (últimas ${transactions.length}):\n\n`;
+      
+      const keyboard = [];
+      
+      for (const tx of transactions) {
+        const productName = tx.product?.name || tx.media_pack?.name || tx.product_id || tx.media_pack_id || 'N/A';
+        const userName = tx.user?.first_name || 'N/A';
+        const userUsername = tx.user?.username || 'N/A';
+        const statusEmoji = tx.status === 'delivered' ? '✅' : '⏳';
+        
+        message += `${statusEmoji} TXID: \`${tx.txid}\`\n`;
+        message += `👤 ${userName} (@${userUsername})\n`;
+        message += `📦 ${productName}\n`;
+        message += `💵 R$ ${tx.amount}\n`;
+        message += `📅 ${new Date(tx.created_at).toLocaleString('pt-BR')}\n`;
+        
+        if (tx.delivered_at) {
+          message += `✅ Entregue: ${new Date(tx.delivered_at).toLocaleString('pt-BR')}\n`;
+        } else if (tx.validated_at) {
+          message += `⏳ Validada: ${new Date(tx.validated_at).toLocaleString('pt-BR')}\n`;
+        }
+        
+        message += `\n`;
+        
+        // Adicionar botão para ver detalhes (onde o botão de reverter aparecerá)
+        keyboard.push([
+          { text: `📋 Ver Detalhes - ${tx.txid.substring(0, 10)}...`, callback_data: `details_${tx.txid}` }
+        ]);
+        
+        message += `——————————\n\n`;
+      }
+      
+      keyboard.push([
+        { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+      ]);
+      
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+      });
+    } catch (err) {
+      console.error('Erro ao listar entregues:', err);
+      return ctx.reply('❌ Erro ao buscar transações entregues.');
     }
   });
 
