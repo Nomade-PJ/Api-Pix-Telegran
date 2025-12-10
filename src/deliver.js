@@ -39,7 +39,7 @@ async function deliverContent(chatId, product, caption = '✅ **Pagamento Confir
     }
     
     // Caption simples e curto - aparece ABAIXO do arquivo na mesma mensagem
-    const fullCaption = `✅ *PAGAMENTO APROVADO!*\n\n📦 ${product.name}\n\n✅ Produto entregue com sucesso!`;
+    const fullCaption = `✅ *PRODUTO ENTREGUE COM SUCESSO!*\n\n📦 ${product.name}\n\n🎉 Obrigado pela compra!`;
     
     // Enviar arquivo com caption (tudo em UMA mensagem)
     if (product.delivery_url && product.delivery_url.startsWith('telegram_file:')) {

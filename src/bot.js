@@ -184,8 +184,8 @@ function createBot(token) {
         
         // Buscar estatísticas em tempo real (apenas transações aprovadas para criadores)
         const stats = await db.getCreatorStats();
-        const pendingTxs = await db.getPendingTransactions();
-        const pendingCount = pendingTxs.length;
+        const pendingResult = await db.getPendingTransactions(10, 0);
+        const pendingCount = pendingResult.total || 0;
         
         const message = `👑 *PAINEL DO CRIADOR*
 
@@ -528,21 +528,21 @@ Selecione uma opção abaixo:`;
         // Continuar mesmo com erro - notificar admin é mais importante
       }
       
-      // 🆕 RESPOSTA IMEDIATA AO USUÁRIO (NÃO ESPERAR ANÁLISE)
-      console.log(`💬 [HANDLER] Enviando confirmação ao usuário...`);
+      // 🆕 NOTIFICAÇÃO 1: COMPROVANTE RECEBIDO
+      console.log(`💬 [HANDLER] Enviando notificação de comprovante recebido...`);
       try {
-        await ctx.reply('✅ *Comprovante recebido!*\n\n⏳ Um admin irá validar em breve.\n\n🆔 TXID: ' + transaction.txid, { 
+        await ctx.reply('✅ *Comprovante recebido!*\n\n⏳ *Analisando pagamento...*\n\n🔍 Verificando comprovante automaticamente.\n\n🆔 TXID: ' + transaction.txid, { 
           parse_mode: 'Markdown' 
         });
-        console.log(`✅ [HANDLER] Confirmação enviada ao usuário com sucesso`);
+        console.log(`✅ [HANDLER] Notificação 1 enviada ao usuário com sucesso`);
       } catch (err) {
-        console.error('❌ [HANDLER] Erro ao enviar confirmação:', err.message);
+        console.error('❌ [HANDLER] Erro ao enviar notificação:', err.message);
         // Tentar novamente
         try {
-          await ctx.telegram.sendMessage(ctx.chat.id, '✅ *Comprovante recebido!*\n\n⏳ Um admin irá validar em breve.\n\n🆔 TXID: ' + transaction.txid, { 
+          await ctx.telegram.sendMessage(ctx.chat.id, '✅ *Comprovante recebido!*\n\n⏳ *Analisando pagamento...*\n\n🔍 Verificando comprovante automaticamente.\n\n🆔 TXID: ' + transaction.txid, { 
             parse_mode: 'Markdown' 
           });
-          console.log(`✅ [HANDLER] Confirmação enviada na segunda tentativa`);
+          console.log(`✅ [HANDLER] Notificação enviada na segunda tentativa`);
         } catch (retryErr) {
           console.error('❌ [HANDLER] Erro na segunda tentativa:', retryErr.message);
         }
@@ -997,6 +997,16 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             console.log(`✅ [AUTO-ANALYSIS] APROVAÇÃO AUTOMÁTICA para TXID ${transactionData.txid}`);
             
             try {
+              // 🆕 NOTIFICAÇÃO 2: PAGAMENTO APROVADO, ENTREGANDO
+              try {
+                await telegram.sendMessage(chatId, `✅ *Pagamento aprovado!*\n\n📦 *Entregando produto...*\n\n⏳ Preparando sua entrega.\n\n🆔 TXID: ${transactionData.txid}`, {
+                  parse_mode: 'Markdown'
+                });
+                console.log(`✅ [NOTIFY] Notificação 2 (aprovado, entregando) enviada`);
+              } catch (notifyErr) {
+                console.error('❌ [NOTIFY] Erro ao enviar notificação 2:', notifyErr.message);
+              }
+              
               // Aprovar transação no banco
               await db.validateTransaction(transactionData.txid, transactionData.user_id);
               console.log(`✅ [AUTO-ANALYSIS] Transação validada no banco`);
@@ -1367,6 +1377,104 @@ Um administrador irá validar manualmente.
   // ===== REGISTRAR COMANDOS DE USUÁRIO ANTES DO ADMIN =====
   // Isso garante que comandos como /meuspedidos e /renovar sejam processados antes do bot.on('text') do admin
   console.log('✅ [BOT-INIT] Registrando comandos de usuário...');
+  
+  // ===== HISTÓRICO DE COMPRAS =====
+  console.log('✅ [BOT-INIT] Registrando comando /historico...');
+  bot.command('historico', async (ctx) => {
+    try {
+      console.log('📋 [HISTORICO] Comando /historico recebido de:', ctx.from.id);
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 50);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.reply(`📦 *Nenhuma compra encontrada*
+
+Você ainda não realizou nenhuma compra.
+
+🛍️ *Use:* /start para ver nossos produtos!`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      // Agrupar por status
+      const delivered = transactions.filter(t => t.status === 'delivered');
+      const pending = transactions.filter(t => ['pending', 'proof_sent'].includes(t.status));
+      const expired = transactions.filter(t => ['expired', 'cancelled', 'rejected'].includes(t.status));
+      
+      let message = `📋 *HISTÓRICO DE COMPRAS*
+
+✅ *Entregues:* ${delivered.length}
+⏳ *Pendentes:* ${pending.length}
+❌ *Canceladas:* ${expired.length}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+`;
+      
+      // Mostrar entregues primeiro
+      if (delivered.length > 0) {
+        message += `✅ *PRODUTOS ENTREGUES*\n\n`;
+        for (const tx of delivered.slice(0, 10)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const date = new Date(tx.delivered_at || tx.created_at).toLocaleDateString('pt-BR');
+          message += `✅ *${productName}*\n`;
+          message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)} | 📅 ${date}\n`;
+          message += `🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (delivered.length > 10) {
+          message += `_Mostrando 10 de ${delivered.length} entregues_\n\n`;
+        }
+      }
+      
+      // Mostrar pendentes
+      if (pending.length > 0) {
+        message += `⏳ *PAGAMENTOS PENDENTES*\n\n`;
+        for (const tx of pending.slice(0, 5)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const statusText = tx.status === 'proof_sent' ? '📸 Em análise' : '⏳ Aguardando pagamento';
+          message += `${statusText} *${productName}*\n`;
+          message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
+          message += `🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (pending.length > 5) {
+          message += `_Mostrando 5 de ${pending.length} pendentes_\n\n`;
+        }
+      }
+      
+      const keyboard = Markup.inlineKeyboard([
+        ...delivered.slice(0, 5).map(tx => [
+          Markup.button.callback(
+            `📦 Ver ${tx.product_name || 'Produto'} - ${tx.txid.substring(0, 8)}...`,
+            `view_transaction_${tx.txid}`
+          )
+        ]),
+        [
+          Markup.button.callback('🔄 Atualizar', 'refresh_history'),
+          Markup.button.callback('🏠 Início', 'back_to_start')
+        ]
+      ]);
+      
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [HISTORICO] Erro:', err);
+      return ctx.reply('❌ Erro ao buscar histórico. Tente novamente.');
+    }
+  });
   
   // ===== MEUS PEDIDOS =====
   console.log('✅ [BOT-INIT] Registrando comando /meuspedidos...');
@@ -2149,7 +2257,46 @@ Esta transação foi cancelada automaticamente.
     }
   });
 
-  // ===== SISTEMA DE SUPORTE INTERNO =====
+  // ===== COMANDO /suporte (Sistema de Tickets) =====
+  console.log('✅ [BOT-INIT] Registrando comando /suporte...');
+  bot.command('suporte', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const tickets = await db.getUserTickets(ctx.from.id, 10);
+      
+      const message = `💬 *SUPORTE - SISTEMA DE TICKETS*
+
+📋 *Seus Tickets:* ${tickets.length}
+
+${tickets.length > 0 ? '📝 *Tickets Recentes:*\n\n' : ''}${tickets.slice(0, 5).map(t => {
+  const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
+  return `${statusEmoji} *${t.ticket_number}*\n📅 ${new Date(t.created_at).toLocaleDateString('pt-BR')}\n📊 ${t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado'}\n`;
+}).join('\n')}
+
+*O que deseja fazer?*`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Novo Ticket', 'create_ticket')],
+        ...(tickets.length > 0 ? [[Markup.button.callback('📋 Ver Meus Tickets', 'view_my_tickets')]] : []),
+        [Markup.button.callback('🏠 Voltar', 'back_to_start')]
+      ]);
+      
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [SUPORTE] Erro:', err);
+      return ctx.reply('❌ Erro ao acessar suporte. Tente novamente.');
+    }
+  });
+  
+  // ===== SISTEMA DE SUPORTE INTERNO (LEGADO - MANTIDO PARA COMPATIBILIDADE) =====
   bot.action('support_menu', async (ctx) => {
     try {
       // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
@@ -2165,6 +2312,32 @@ Esta transação foi cancelada automaticamente.
       }
       
       await ctx.answerCbQuery();
+      
+      // Redirecionar para novo sistema de tickets
+      const user = await db.getOrCreateUser(ctx.from);
+      const tickets = await db.getUserTickets(ctx.from.id, 10);
+      
+      const message = `💬 *SUPORTE - SISTEMA DE TICKETS*
+
+📋 *Seus Tickets:* ${tickets.length}
+
+${tickets.length > 0 ? '📝 *Tickets Recentes:*\n\n' : ''}${tickets.slice(0, 5).map(t => {
+  const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
+  return `${statusEmoji} *${t.ticket_number}*\n📅 ${new Date(t.created_at).toLocaleDateString('pt-BR')}\n📊 ${t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado'}\n`;
+}).join('\n')}
+
+*O que deseja fazer?*`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Novo Ticket', 'create_ticket')],
+        ...(tickets.length > 0 ? [[Markup.button.callback('📋 Ver Meus Tickets', 'view_my_tickets')]] : []),
+        [Markup.button.callback('🏠 Voltar', 'back_to_start')]
+      ]);
+      
+      return ctx.editMessageText(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
       
       console.log(`💬 [SUPPORT] Usuário ${ctx.from.id} acessou suporte`);
       
@@ -2381,6 +2554,506 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
       console.error('Erro ao voltar ao menu:', err);
       return ctx.reply('Use /start para ver o menu novamente.');
     }
+  });
+
+  // ===== HANDLERS DE TICKETS =====
+  
+  // Criar novo ticket
+  bot.action('create_ticket', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const user = await db.getOrCreateUser(ctx.from);
+      
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'create_ticket',
+        step: 'subject'
+      };
+      
+      return ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
+
+📝 *Passo 1/2: Assunto*
+
+Digite o assunto do seu ticket (ex: "Problema com entrega", "Dúvida sobre produto"):
+
+_Cancelar: /cancelar`, {
+        parse_mode: 'Markdown'
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao criar ticket.');
+    }
+  });
+  
+  // Ver tickets do usuário
+  bot.action('view_my_tickets', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const tickets = await db.getUserTickets(ctx.from.id, 20);
+      
+      if (tickets.length === 0) {
+        return ctx.editMessageText('📋 *Nenhum ticket encontrado*\n\nUse "➕ Novo Ticket" para criar um.', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '➕ Novo Ticket', callback_data: 'create_ticket' },
+              { text: '🏠 Voltar', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      let message = `📋 *MEUS TICKETS*\n\n`;
+      const buttons = [];
+      
+      for (const ticket of tickets.slice(0, 10)) {
+        const statusEmoji = ticket.status === 'open' ? '🟢' : ticket.status === 'in_progress' ? '🟡' : ticket.status === 'resolved' ? '✅' : '🔴';
+        const statusText = ticket.status === 'open' ? 'Aberto' : ticket.status === 'in_progress' ? 'Em andamento' : ticket.status === 'resolved' ? 'Resolvido' : 'Fechado';
+        
+        message += `${statusEmoji} *${ticket.ticket_number}*\n`;
+        message += `📝 ${ticket.subject || 'Sem assunto'}\n`;
+        message += `📊 ${statusText}\n`;
+        message += `📅 ${new Date(ticket.created_at).toLocaleDateString('pt-BR')}\n\n`;
+        
+        buttons.push([Markup.button.callback(
+          `📋 Ver ${ticket.ticket_number}`,
+          `view_ticket_${ticket.id}`
+        )]);
+      }
+      
+      buttons.push([
+        Markup.button.callback('➕ Novo Ticket', 'create_ticket'),
+        Markup.button.callback('🏠 Voltar', 'back_to_start')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao buscar tickets.');
+    }
+  });
+  
+  // Ver detalhes de um ticket
+  bot.action(/^view_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      if (!ticket || ticket.telegram_id !== ctx.from.id) {
+        return ctx.reply('❌ Ticket não encontrado.');
+      }
+      
+      const messages = await db.getTicketMessages(ticketId);
+      
+      let message = `📋 *TICKET ${ticket.ticket_number}*\n\n`;
+      message += `📝 *Assunto:* ${ticket.subject || 'Sem assunto'}\n`;
+      message += `📊 *Status:* ${ticket.status === 'open' ? '🟢 Aberto' : ticket.status === 'in_progress' ? '🟡 Em andamento' : ticket.status === 'resolved' ? '✅ Resolvido' : '🔴 Fechado'}\n`;
+      message += `📅 *Criado:* ${new Date(ticket.created_at).toLocaleString('pt-BR')}\n\n`;
+      message += `💬 *Mensagens:*\n\n`;
+      
+      for (const msg of messages) {
+        const sender = msg.is_admin ? '👨‍💼 Admin' : '👤 Você';
+        message += `${sender} (${new Date(msg.created_at).toLocaleString('pt-BR')}):\n`;
+        message += `${msg.message}\n\n`;
+      }
+      
+      const buttons = [];
+      if (ticket.status !== 'closed') {
+        buttons.push([Markup.button.callback('💬 Responder', `reply_ticket_${ticketId}`)]);
+      }
+      buttons.push([
+        Markup.button.callback('📋 Meus Tickets', 'view_my_tickets'),
+        Markup.button.callback('🏠 Voltar', 'back_to_start')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao visualizar ticket.');
+    }
+  });
+  
+  // Handler para criar ticket (texto) - já existe no código, mas vou verificar se está completo
+  // Atualizar histórico
+  bot.action('refresh_history', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Atualizando...');
+      // Recarregar comando /historico
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 50);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.editMessageText(`📦 *Nenhuma compra encontrada*\n\nVocê ainda não realizou nenhuma compra.\n\n🛍️ *Use:* /start para ver nossos produtos!`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      const delivered = transactions.filter(t => t.status === 'delivered');
+      const pending = transactions.filter(t => ['pending', 'proof_sent'].includes(t.status));
+      const expired = transactions.filter(t => ['expired', 'cancelled', 'rejected'].includes(t.status));
+      
+      let message = `📋 *HISTÓRICO DE COMPRAS*\n\n✅ *Entregues:* ${delivered.length}\n⏳ *Pendentes:* ${pending.length}\n❌ *Canceladas:* ${expired.length}\n\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      if (delivered.length > 0) {
+        message += `✅ *PRODUTOS ENTREGUES*\n\n`;
+        for (const tx of delivered.slice(0, 10)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const date = new Date(tx.delivered_at || tx.created_at).toLocaleDateString('pt-BR');
+          message += `✅ *${productName}*\n💰 R$ ${parseFloat(tx.amount).toFixed(2)} | 📅 ${date}\n🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (delivered.length > 10) {
+          message += `_Mostrando 10 de ${delivered.length} entregues_\n\n`;
+        }
+      }
+      
+      if (pending.length > 0) {
+        message += `⏳ *PAGAMENTOS PENDENTES*\n\n`;
+        for (const tx of pending.slice(0, 5)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const statusText = tx.status === 'proof_sent' ? '📸 Em análise' : '⏳ Aguardando pagamento';
+          message += `${statusText} *${productName}*\n💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (pending.length > 5) {
+          message += `_Mostrando 5 de ${pending.length} pendentes_\n\n`;
+        }
+      }
+      
+      const keyboard = Markup.inlineKeyboard([
+        ...delivered.slice(0, 5).map(tx => [
+          Markup.button.callback(
+            `📦 Ver ${tx.product_name || 'Produto'} - ${tx.txid.substring(0, 8)}...`,
+            `view_transaction_${tx.txid}`
+          )
+        ]),
+        [
+          Markup.button.callback('🔄 Atualizar', 'refresh_history'),
+          Markup.button.callback('🏠 Início', 'back_to_start')
+        ]
+      ]);
+      
+      return ctx.editMessageText(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [HISTORICO] Erro:', err);
+      return ctx.answerCbQuery('❌ Erro ao atualizar', { show_alert: true });
+    }
+  });
+  
+  // Ver detalhes de transação
+  bot.action(/^view_transaction_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction || transaction.telegram_id !== ctx.from.id) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      const productName = transaction.product_name || transaction.product_id || transaction.media_pack_id || (transaction.group_id ? 'Grupo' : 'Produto');
+      const statusEmoji = transaction.status === 'delivered' ? '✅' : transaction.status === 'pending' ? '⏳' : transaction.status === 'proof_sent' ? '📸' : '❌';
+      const statusText = transaction.status === 'delivered' ? 'Entregue' : transaction.status === 'pending' ? 'Aguardando pagamento' : transaction.status === 'proof_sent' ? 'Em análise' : 'Cancelada';
+      
+      let message = `📦 *DETALHES DA COMPRA*\n\n`;
+      message += `${statusEmoji} *${productName}*\n\n`;
+      message += `💰 *Valor:* R$ ${parseFloat(transaction.amount).toFixed(2)}\n`;
+      message += `📊 *Status:* ${statusText}\n`;
+      message += `📅 *Data:* ${new Date(transaction.created_at).toLocaleString('pt-BR')}\n`;
+      if (transaction.delivered_at) {
+        message += `✅ *Entregue em:* ${new Date(transaction.delivered_at).toLocaleString('pt-BR')}\n`;
+      }
+      message += `🆔 *TXID:* \`${transaction.txid}\`\n`;
+      
+      const buttons = [];
+      if (transaction.status === 'delivered') {
+        // Botão para ver detalhes (rebaixar pode ser feito pelo admin)
+        buttons.push([Markup.button.callback('📋 Ver Detalhes', `view_transaction_${transaction.txid}`)]);
+      }
+      buttons.push([
+        Markup.button.callback('📋 Histórico', 'refresh_history'),
+        Markup.button.callback('🏠 Início', 'back_to_start')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [TRANSACTION] Erro:', err);
+      return ctx.reply('❌ Erro ao visualizar transação.');
+    }
+  });
+  
+  // Atualizar pedidos
+  bot.action('refresh_orders', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Atualizando...');
+      // Recarregar comando /meuspedidos
+      const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.editMessageText(`📦 *Nenhum pedido encontrado*\n\nVocê ainda não realizou nenhuma compra.\n\n🛍️ *Use:* /start para ver nossos produtos!`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada'
+      };
+      
+      let message = `📋 *MEUS PEDIDOS*\n\n`;
+      const buttons = [];
+      const recentTransactions = transactions.slice(0, 10);
+      
+      for (const tx of recentTransactions) {
+        const emoji = statusEmoji[tx.status] || '📦';
+        const status = statusText[tx.status] || tx.status;
+        const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+        const date = new Date(tx.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        message += `${emoji} *${productName}*\n`;
+        message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
+        message += `📊 ${status}\n`;
+        message += `📅 ${date}\n`;
+        message += `🆔 \`${tx.txid}\`\n\n`;
+        
+        if (tx.status === 'delivered') {
+          buttons.push([
+            Markup.button.callback(
+              `📦 Ver ${productName.substring(0, 20)}...`,
+              `view_transaction_${tx.txid}`
+            )
+          ]);
+        }
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
+      }
+      
+      buttons.push([
+        Markup.button.callback('📋 Ver Histórico', 'refresh_history'),
+        Markup.button.callback('🔄 Atualizar', 'refresh_orders')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [PEDIDOS] Erro:', err);
+      return ctx.answerCbQuery('❌ Erro ao atualizar', { show_alert: true });
+    }
+  });
+  
+  // Handler para responder ticket (usuário)
+  bot.action(/^reply_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      if (!ticket || ticket.telegram_id !== ctx.from.id || ticket.status === 'closed') {
+        return ctx.reply('❌ Ticket não encontrado ou já fechado.');
+      }
+      
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'reply_ticket',
+        ticketId: ticketId
+      };
+      
+      return ctx.editMessageText(`💬 *RESPONDER TICKET*
+
+📋 Ticket: ${ticket.ticket_number}
+
+Digite sua resposta:
+
+_Cancelar: /cancelar`, {
+        parse_mode: 'Markdown'
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao responder ticket.');
+    }
+  });
+  
+  // Handler para texto - criar ticket e responder ticket
+  bot.on('text', async (ctx, next) => {
+    const session = global._SESSIONS?.[ctx.from.id];
+    if (session && (session.type === 'create_ticket' || session.type === 'reply_ticket')) {
+      if (ctx.message.text.startsWith('/')) {
+        if (ctx.message.text === '/cancelar') {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Operação cancelada.');
+        }
+        return next();
+      }
+      
+      if (session.type === 'create_ticket') {
+        if (session.step === 'subject') {
+          session.data = { subject: ctx.message.text };
+          session.step = 'message';
+          
+          return ctx.reply(`💬 *NOVO TICKET DE SUPORTE*
+
+📝 *Passo 2/2: Mensagem*
+
+Agora digite sua mensagem detalhada:
+
+_Cancelar: /cancelar`, {
+            parse_mode: 'Markdown'
+          });
+        } else if (session.step === 'message') {
+          try {
+            const user = await db.getOrCreateUser(ctx.from);
+            const ticket = await db.createSupportTicket(
+              ctx.from.id,
+              user.id,
+              session.data.subject,
+              ctx.message.text
+            );
+            
+            delete global._SESSIONS[ctx.from.id];
+            
+            // Notificar admins
+            const admins = await db.getAllAdmins();
+            for (const admin of admins) {
+              try {
+                await ctx.telegram.sendMessage(admin.telegram_id, `🆕 *NOVO TICKET DE SUPORTE*
+
+📋 *Ticket:* ${ticket.ticket_number}
+👤 *Usuário:* ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 *ID:* ${ctx.from.id}
+📝 *Assunto:* ${ticket.subject}
+💬 *Mensagem:* ${ticket.message.substring(0, 200)}${ticket.message.length > 200 ? '...' : ''}
+
+📅 ${new Date().toLocaleString('pt-BR')}`, {
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                    inline_keyboard: [[
+                      { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticket.id}` },
+                      { text: '✅ Atribuir a Mim', callback_data: `admin_assign_ticket_${ticket.id}` }
+                    ]]
+                  }
+                });
+              } catch (err) {
+                console.error('Erro ao notificar admin:', err);
+              }
+            }
+            
+            return ctx.reply(`✅ *Ticket criado com sucesso!*
+
+📋 *Número:* ${ticket.ticket_number}
+📝 *Assunto:* ${ticket.subject}
+
+⏳ Um admin irá responder em breve.
+
+💬 *Use:* /suporte para ver seus tickets`, {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '📋 Ver Meus Tickets', callback_data: 'view_my_tickets' }
+                ]]
+              }
+            });
+          } catch (err) {
+            console.error('❌ [TICKET] Erro ao criar:', err);
+            delete global._SESSIONS[ctx.from.id];
+            return ctx.reply('❌ Erro ao criar ticket. Tente novamente.');
+          }
+        }
+        return;
+      } else if (session.type === 'reply_ticket') {
+        try {
+          const ticketId = session.ticketId;
+          const user = await db.getOrCreateUser(ctx.from);
+          const ticket = await db.getSupportTicket(ticketId);
+          
+          if (!ticket || ticket.telegram_id !== ctx.from.id) {
+            delete global._SESSIONS[ctx.from.id];
+            return ctx.reply('❌ Ticket não encontrado.');
+          }
+          
+          // Adicionar mensagem do usuário
+          await db.addTicketMessage(ticketId, user.id, ctx.message.text, false);
+          
+          delete global._SESSIONS[ctx.from.id];
+          
+          // Notificar admins
+          const admins = await db.getAllAdmins();
+          for (const admin of admins) {
+            try {
+              await ctx.telegram.sendMessage(admin.telegram_id, 
+                `💬 *Nova mensagem no ticket*\n\n📋 Ticket: ${ticket.ticket_number}\n\n👤 *Cliente:*\n${ctx.message.text}\n\n📋 Use o painel admin para responder.`, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [[
+                    { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticketId}` }
+                  ]]
+                }
+              });
+            } catch (err) {
+              console.error('Erro ao notificar admin:', err);
+            }
+          }
+          
+          return ctx.reply(`✅ Mensagem enviada ao ticket ${ticket.ticket_number}!`, {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '📋 Ver Ticket', callback_data: `view_ticket_${ticketId}` }
+              ]]
+            }
+          });
+        } catch (err) {
+          console.error('❌ [TICKET] Erro ao responder:', err);
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Erro ao responder ticket.');
+        }
+      }
+      return;
+    }
+    
+    return next();
   });
 
   // Integrar controle de grupos

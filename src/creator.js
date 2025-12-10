@@ -29,7 +29,7 @@ function registerCreatorCommands(bot) {
       
       // Buscar estatísticas em tempo real (apenas transações aprovadas para criadores)
       const stats = await db.getCreatorStats();
-      const pendingCount = await db.getPendingTransactions().then(txs => txs.length);
+      const pendingCount = await db.getPendingTransactions(10, 0).then(result => result.total || 0);
       
       const message = `👑 *PAINEL DO CRIADOR*
 
@@ -73,12 +73,13 @@ Selecione uma opção abaixo:`;
     
     try {
       const stats = await db.getCreatorStats();
-      const pending = await db.getPendingTransactions();
+      const pendingResult = await db.getPendingTransactions(10, 0);
+      const pending = pendingResult.data || [];
       
       const message = `📊 *ESTATÍSTICAS DETALHADAS*
 
 💳 *Transações Aprovadas:* ${stats.totalTransactions}
-⏳ *Pendentes:* ${pending.length}
+⏳ *Pendentes:* ${pendingResult.total || 0}
 
 💰 *FINANCEIRO*
 • Total Vendido: R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
@@ -756,8 +757,8 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
       
       // Buscar estatísticas em tempo real
       const stats = await db.getCreatorStats();
-      const pendingTxs = await db.getPendingTransactions();
-      const pendingCount = pendingTxs.length;
+      const pendingResult = await db.getPendingTransactions(10, 0);
+      const pendingCount = pendingResult.total || 0;
       
       const message = `👑 *PAINEL DO CRIADOR*
 

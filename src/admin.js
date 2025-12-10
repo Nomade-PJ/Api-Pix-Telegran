@@ -257,6 +257,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('💬 Configurar Suporte', 'admin_support')
       ],
         [
+          Markup.button.callback('🎫 Tickets de Suporte', 'admin_tickets')
+        ],
+        [
           Markup.button.callback('👤 Usuários', 'admin_users'),
           Markup.button.callback('📢 Broadcast', 'admin_broadcast')
         ],
@@ -291,13 +294,14 @@ Selecione uma opção abaixo:`;
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return ctx.reply('❌ Acesso negado.');
       
-      const pending = await db.getPendingTransactions(10);
+      const pendingResult = await db.getPendingTransactions(10, 0);
+      const pending = pendingResult.data || [];
       
       if (pending.length === 0) {
         return ctx.reply('✅ Nenhuma transação pendente!');
       }
       
-      let message = `⏳ *${pending.length} TRANSAÇÕES PENDENTES:*\n\n`;
+      let message = `⏳ *${pendingResult.total} TRANSAÇÕES PENDENTES* (mostrando ${pending.length}):\n\n`;
       
       for (const tx of pending) {
         message += `🆔 TXID: ${tx.txid}\n`;
@@ -2111,13 +2115,14 @@ Selecione uma opção abaixo:`;
     if (!isAdmin) return;
     
     try {
-      const pending = await db.getPendingTransactions(10);
+      const pendingResult = await db.getPendingTransactions(10, 0);
+      const pending = pendingResult.data || [];
       
       if (pending.length === 0) {
         return ctx.reply('✅ Nenhuma transação pendente!');
       }
       
-      let message = `⏳ *${pending.length} TRANSAÇÕES PENDENTES:*\n\n`;
+      let message = `⏳ *${pendingResult.total} TRANSAÇÕES PENDENTES* (mostrando ${pending.length}):\n\n`;
       
       for (const tx of pending) {
         message += `🆔 TXID: ${tx.txid}\n`;
@@ -2580,16 +2585,19 @@ Digite /setpix seguido da nova chave
     if (!isAdmin) return;
     
     try {
-      const [users, pending] = await Promise.all([
-        db.getRecentUsers(10),
-        db.getPendingTransactions(10)
+      const [usersResult, pendingResult] = await Promise.all([
+        db.getRecentUsers(10, 0),
+        db.getPendingTransactions(10, 0)
       ]);
+      
+      const users = usersResult.data || [];
+      const pending = pendingResult.data || [];
       
       let message = `👥 *GERENCIAR USUÁRIOS E TRANSAÇÕES*\n\n`;
       
       // Seção de transações pendentes
       if (pending && pending.length > 0) {
-        message += `⏳ *TRANSAÇÕES PENDENTES: ${pending.length}*\n\n`;
+        message += `⏳ *TRANSAÇÕES PENDENTES: ${pendingResult.total}* (mostrando ${pending.length})\n\n`;
         
         for (const tx of pending) {
           const user = tx.user || {};
@@ -2607,7 +2615,7 @@ Digite /setpix seguido da nova chave
       }
       
       // Seção de usuários
-      message += `👥 *ÚLTIMOS USUÁRIOS: ${users.length}*\n\n`;
+      message += `👥 *ÚLTIMOS USUÁRIOS: ${usersResult.total}* (mostrando ${users.length})\n\n`;
       
       if (users && users.length > 0) {
         for (const user of users) {
@@ -2912,6 +2920,240 @@ _Cancelar:_ /cancelar`;
   });
 
   // ===== CONFIGURAR SUPORTE =====
+  // ===== GERENCIAR TICKETS DE SUPORTE =====
+  bot.action('admin_tickets', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🎫 Carregando tickets...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const openTickets = await db.getAllOpenTickets(20);
+      
+      let message = `🎫 *TICKETS DE SUPORTE*
+
+📊 *Tickets Abertos:* ${openTickets.length}
+
+`;
+      
+      if (openTickets.length === 0) {
+        message += `✅ Nenhum ticket aberto no momento.`;
+      } else {
+        for (const ticket of openTickets.slice(0, 10)) {
+          const user = ticket.users || {};
+          const statusEmoji = ticket.status === 'open' ? '🟢' : '🟡';
+          message += `${statusEmoji} *${ticket.ticket_number}*\n`;
+          message += `👤 ${user.first_name || 'N/A'} (@${user.username || 'N/A'})\n`;
+          message += `📝 ${ticket.subject || 'Sem assunto'}\n`;
+          message += `📅 ${new Date(ticket.created_at).toLocaleDateString('pt-BR')}\n\n`;
+        }
+      }
+      
+      const buttons = [];
+      for (const ticket of openTickets.slice(0, 5)) {
+        buttons.push([Markup.button.callback(
+          `📋 ${ticket.ticket_number} - ${ticket.subject?.substring(0, 30) || 'Sem assunto'}...`,
+          `admin_view_ticket_${ticket.id}`
+        )]);
+      }
+      buttons.push([
+        Markup.button.callback('🔄 Atualizar', 'admin_tickets'),
+        Markup.button.callback('🔙 Voltar', 'admin_refresh')
+      ]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ADMIN-TICKETS] Erro:', err);
+      return ctx.reply('❌ Erro ao carregar tickets.');
+    }
+  });
+  
+  // Ver ticket específico (admin)
+  bot.action(/^admin_view_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      if (!ticket) {
+        return ctx.reply('❌ Ticket não encontrado.');
+      }
+      
+      const messages = await db.getTicketMessages(ticketId);
+      const user = await db.getUserByTelegramId(ticket.telegram_id);
+      
+      let message = `📋 *TICKET ${ticket.ticket_number}*\n\n`;
+      message += `👤 *Usuário:* ${user?.first_name || 'N/A'} (@${user?.username || 'N/A'})\n`;
+      message += `🆔 *ID:* ${ticket.telegram_id}\n`;
+      message += `📝 *Assunto:* ${ticket.subject || 'Sem assunto'}\n`;
+      message += `📊 *Status:* ${ticket.status === 'open' ? '🟢 Aberto' : ticket.status === 'in_progress' ? '🟡 Em andamento' : ticket.status === 'resolved' ? '✅ Resolvido' : '🔴 Fechado'}\n`;
+      message += `📅 *Criado:* ${new Date(ticket.created_at).toLocaleString('pt-BR')}\n\n`;
+      message += `💬 *Conversa:*\n\n`;
+      
+      for (const msg of messages) {
+        const sender = msg.is_admin ? '👨‍💼 Admin' : '👤 Cliente';
+        message += `${sender} (${new Date(msg.created_at).toLocaleString('pt-BR')}):\n`;
+        message += `${msg.message}\n\n`;
+      }
+      
+      const buttons = [];
+      if (ticket.status !== 'closed') {
+        buttons.push([Markup.button.callback('💬 Responder', `admin_reply_ticket_${ticketId}`)]);
+        if (ticket.status === 'open') {
+          buttons.push([Markup.button.callback('✅ Atribuir a Mim', `admin_assign_ticket_${ticketId}`)]);
+        }
+        buttons.push([
+          Markup.button.callback('✅ Resolver', `admin_resolve_ticket_${ticketId}`),
+          Markup.button.callback('🔴 Fechar', `admin_close_ticket_${ticketId}`)
+        ]);
+      }
+      buttons.push([
+        Markup.button.callback('🎫 Todos os Tickets', 'admin_tickets'),
+        Markup.button.callback('🔙 Voltar', 'admin_refresh')
+      ]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ADMIN-TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao visualizar ticket.');
+    }
+  });
+  
+  // Atribuir ticket
+  bot.action(/^admin_assign_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('✅ Atribuindo...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const ticketId = ctx.match[1];
+      const user = await db.getUserByTelegramId(ctx.from.id);
+      
+      await db.assignTicket(ticketId, user.id);
+      
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      // Notificar usuário
+      try {
+        await ctx.telegram.sendMessage(ticket.telegram_id, 
+          `✅ *Seu ticket foi atribuído a um admin*\n\n📋 Ticket: ${ticket.ticket_number}\n\n⏳ Um admin está analisando seu caso e responderá em breve.`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (err) {
+        console.error('Erro ao notificar usuário:', err);
+      }
+      
+      return ctx.reply(`✅ Ticket ${ticket.ticket_number} atribuído a você!`, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticketId}` }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('❌ [ADMIN-TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao atribuir ticket.');
+    }
+  });
+  
+  // Responder ticket (admin)
+  bot.action(/^admin_reply_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const ticketId = ctx.match[1];
+      
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'admin_reply_ticket',
+        ticketId: ticketId
+      };
+      
+      return ctx.reply(`💬 *RESPONDER TICKET*
+
+Digite sua resposta:
+
+_Cancelar: /cancelar`, {
+        parse_mode: 'Markdown'
+      });
+    } catch (err) {
+      console.error('❌ [ADMIN-TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao responder ticket.');
+    }
+  });
+  
+  // Resolver ticket
+  bot.action(/^admin_resolve_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('✅ Resolvendo...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const ticketId = ctx.match[1];
+      const user = await db.getUserByTelegramId(ctx.from.id);
+      
+      await db.updateTicketStatus(ticketId, 'resolved', user.id);
+      
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      // Notificar usuário
+      try {
+        await ctx.telegram.sendMessage(ticket.telegram_id, 
+          `✅ *Seu ticket foi resolvido*\n\n📋 Ticket: ${ticket.ticket_number}\n\n✅ O problema foi resolvido. Se precisar de mais ajuda, abra um novo ticket.`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (err) {
+        console.error('Erro ao notificar usuário:', err);
+      }
+      
+      return ctx.reply(`✅ Ticket ${ticket.ticket_number} marcado como resolvido!`);
+    } catch (err) {
+      console.error('❌ [ADMIN-TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao resolver ticket.');
+    }
+  });
+  
+  // Fechar ticket
+  bot.action(/^admin_close_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔴 Fechando...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const ticketId = ctx.match[1];
+      const user = await db.getUserByTelegramId(ctx.from.id);
+      
+      await db.updateTicketStatus(ticketId, 'closed', user.id);
+      
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      // Notificar usuário
+      try {
+        await ctx.telegram.sendMessage(ticket.telegram_id, 
+          `🔴 *Seu ticket foi fechado*\n\n📋 Ticket: ${ticket.ticket_number}\n\nSe precisar de mais ajuda, abra um novo ticket.`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (err) {
+        console.error('Erro ao notificar usuário:', err);
+      }
+      
+      return ctx.reply(`🔴 Ticket ${ticket.ticket_number} fechado!`);
+    } catch (err) {
+      console.error('❌ [ADMIN-TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao fechar ticket.');
+    }
+  });
+  
   bot.action('admin_support', async (ctx) => {
     await ctx.answerCbQuery('💬 Configurando suporte...');
     const isAdmin = await db.isUserAdmin(ctx.from.id);
@@ -4409,6 +4651,67 @@ _Cancelar:_ /cancelar`,
         data: 'admin_manage_blocks' 
       } 
     });
+  });
+  
+  // Handler para responder tickets (admin) - ANTES do handler de bloqueio
+  bot.on('text', async (ctx, next) => {
+    const session = global._SESSIONS?.[ctx.from.id];
+    if (session && session.type === 'admin_reply_ticket') {
+      if (ctx.message.text.startsWith('/')) {
+        return next();
+      }
+      
+      try {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Acesso negado.');
+        }
+        
+        const ticketId = session.ticketId;
+        const user = await db.getUserByTelegramId(ctx.from.id);
+        const ticket = await db.getSupportTicket(ticketId);
+        
+        if (!ticket) {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Ticket não encontrado.');
+        }
+        
+        // Adicionar mensagem do admin
+        await db.addTicketMessage(ticketId, user.id, ctx.message.text, true);
+        
+        // Atualizar status se estiver aberto
+        if (ticket.status === 'open') {
+          await db.updateTicketStatus(ticketId, 'in_progress', user.id);
+        }
+        
+        delete global._SESSIONS[ctx.from.id];
+        
+        // Notificar usuário
+        try {
+          await ctx.telegram.sendMessage(ticket.telegram_id, 
+            `💬 *Nova resposta no seu ticket*\n\n📋 Ticket: ${ticket.ticket_number}\n\n👨‍💼 *Admin:*\n${ctx.message.text}\n\n💬 Use /suporte para ver seus tickets.`, {
+            parse_mode: 'Markdown'
+          });
+        } catch (err) {
+          console.error('Erro ao notificar usuário:', err);
+        }
+        
+        return ctx.reply(`✅ Resposta enviada ao ticket ${ticket.ticket_number}!`, {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticketId}` }
+            ]]
+          }
+        });
+      } catch (err) {
+        console.error('❌ [ADMIN-TICKET] Erro ao responder:', err);
+        delete global._SESSIONS[ctx.from.id];
+        return ctx.reply('❌ Erro ao responder ticket.');
+      }
+    }
+    
+    return next();
   });
   
   // Interceptar texto quando em sessão de bloqueio
