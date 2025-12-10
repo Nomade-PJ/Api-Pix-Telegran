@@ -264,6 +264,12 @@ Selecione uma opção abaixo:`;
       // Botão de suporte fixo (sempre aparece) - callback interno
       buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
       
+      // Adicionar botões de comandos
+      buttons.push([
+        Markup.button.callback('📋 Meus Pedidos', 'action_meuspedidos'),
+        Markup.button.callback('🔄 Renovar', 'action_renovar')
+      ]);
+      
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
       
       console.log(`✅ [START] Enviando menu com ${buttons.length} botões`);
@@ -2649,6 +2655,12 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
       }
       
       buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
+      
+      // Adicionar botões de comandos
+      buttons.push([
+        Markup.button.callback('📋 Meus Pedidos', 'action_meuspedidos'),
+        Markup.button.callback('🔄 Renovar', 'action_renovar')
+      ]);
       
       const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
       
