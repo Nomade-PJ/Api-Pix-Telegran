@@ -2674,15 +2674,42 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
         step: 'subject'
       };
       
-      return ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
+      // Usar try/catch para lidar com erros de parsing de Markdown
+      try {
+        return await ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
 
 📝 *Passo 1/2: Assunto*
 
-Digite o assunto do seu ticket (ex: "Problema com entrega", "Dúvida sobre produto"):
+Digite o assunto do seu ticket \\(ex: "Problema com entrega", "Dúvida sobre produto"\\):
 
-_Cancelar: /cancelar`, {
-        parse_mode: 'Markdown'
-      });
+_Cancelar: /cancelar_`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '❌ Cancelar', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      } catch (editErr) {
+        // Se falhar ao editar, tentar enviar nova mensagem
+        if (editErr.message && editErr.message.includes('can\'t parse entities')) {
+          return ctx.reply(`💬 *NOVO TICKET DE SUPORTE*
+
+📝 *Passo 1/2: Assunto*
+
+Digite o assunto do seu ticket \\(ex: "Problema com entrega", "Dúvida sobre produto"\\):
+
+_Cancelar: /cancelar_`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'back_to_start' }
+              ]]
+            }
+          });
+        }
+        throw editErr;
+      }
     } catch (err) {
       console.error('❌ [TICKET] Erro:', err);
       return ctx.reply('❌ Erro ao criar ticket.');
