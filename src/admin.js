@@ -4861,6 +4861,96 @@ _Cancelar:_ /cancelar`,
   bot.on('text', async (ctx, next) => {
     const session = global._SESSIONS?.[ctx.from.id];
     
+    // 🆕 DEBUG: Log para verificar se o handler está sendo executado
+    if (session && session.type === 'admin_reply_ticket') {
+      console.log(`🔍 [ADMIN-REPLY-TICKET] Handler executado para usuário ${ctx.from.id}, ticket: ${session.ticketId}`);
+      console.log(`🔍 [ADMIN-REPLY-TICKET] Mensagem: ${ctx.message.text?.substring(0, 50)}`);
+    }
+    
+    // Handler para responder ticket (admin) - VERIFICAR PRIMEIRO
+    if (session && session.type === 'admin_reply_ticket') {
+      if (ctx.message.text.startsWith('/')) {
+        if (ctx.message.text === '/cancelar') {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Operação cancelada.');
+        }
+        return next();
+      }
+      
+      try {
+        console.log(`✅ [ADMIN-REPLY-TICKET] Processando resposta do ticket ${session.ticketId}`);
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Acesso negado.');
+        }
+        
+        const ticketId = session.ticketId;
+        const user = await db.getUserByTelegramId(ctx.from.id);
+        const ticket = await db.getSupportTicket(ticketId);
+        
+        if (!ticket) {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Ticket não encontrado.');
+        }
+        
+        console.log(`✅ [ADMIN-REPLY-TICKET] Adicionando mensagem ao ticket ${ticketId}`);
+        // Adicionar mensagem do admin
+        await db.addTicketMessage(ticketId, user.id, ctx.message.text, true);
+        
+        // Atualizar status se estiver aberto
+        if (ticket.status === 'open') {
+          await db.updateTicketStatus(ticketId, 'in_progress', user.id);
+        }
+        
+        delete global._SESSIONS[ctx.from.id];
+        
+        // Notificar usuário
+        try {
+          // Escapar caracteres Markdown na mensagem do admin
+          const escapeMarkdown = (text) => {
+            if (!text) return '';
+            return String(text)
+              .replace(/\*/g, '\\*')
+              .replace(/_/g, '\\_')
+              .replace(/\[/g, '\\[')
+              .replace(/\]/g, '\\]')
+              .replace(/\(/g, '\\(')
+              .replace(/\)/g, '\\)')
+              .replace(/~/g, '\\~')
+              .replace(/`/g, '\\`');
+          };
+          
+          const ticketNumber = escapeMarkdown(ticket.ticket_number);
+          const adminMessage = escapeMarkdown(ctx.message.text);
+          
+          console.log(`✅ [ADMIN-REPLY-TICKET] Notificando usuário ${ticket.telegram_id}`);
+          await ctx.telegram.sendMessage(ticket.telegram_id, 
+            `💬 *Nova resposta no seu ticket*\n\n📋 Ticket: ${ticketNumber}\n\n👨\\u200d💼 *Admin:*\n${adminMessage}\n\n💬 Use /suporte para ver seus tickets.`, {
+              parse_mode: 'Markdown'
+            });
+        } catch (err) {
+          console.error('❌ [ADMIN-REPLY-TICKET] Erro ao notificar usuário:', err);
+        }
+        
+        const ticketNumber = (ticket.ticket_number || '').replace(/\*/g, '\\*').replace(/_/g, '\\_');
+        
+        console.log(`✅ [ADMIN-REPLY-TICKET] Resposta enviada com sucesso!`);
+        return ctx.reply(`✅ Resposta enviada ao ticket ${ticketNumber}!`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticketId}` }
+            ]]
+          }
+        });
+      } catch (err) {
+        console.error('❌ [ADMIN-REPLY-TICKET] Erro ao responder:', err);
+        delete global._SESSIONS[ctx.from.id];
+        return ctx.reply('❌ Erro ao responder ticket.');
+      }
+    }
+    
     // Handler para criar resposta automática
     if (session && session.type === 'add_auto_response') {
       if (ctx.message.text.startsWith('/')) {
