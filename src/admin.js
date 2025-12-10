@@ -4405,8 +4405,8 @@ Seu comprovante foi analisado e não foi aprovado.
         ]);
       }
       
-      // 🆕 Botão para reverter transação entregue
-      if (transaction.status === 'delivered') {
+      // 🆕 Botão para reverter transação entregue ou validada
+      if (transaction.status === 'delivered' || transaction.status === 'validated') {
         keyboard.push([
           { text: '🔄 Reverter Transação', callback_data: `reverse_${txid}` }
         ]);
@@ -4416,7 +4416,7 @@ Seu comprovante foi analisado e não foi aprovado.
       if (transaction.status === 'proof_sent' || transaction.status === 'pending' || transaction.status === 'expired') {
         message += `✅ /validar${txid} - Aprovar\n`;
         message += `❌ /rejeitar${txid} - Rejeitar`;
-      } else if (transaction.status === 'delivered') {
+      } else if (transaction.status === 'delivered' || transaction.status === 'validated') {
         message += `🔄 Reverter transação (cancela e remove acesso)`;
       }
       
@@ -4444,8 +4444,8 @@ Seu comprovante foi analisado e não foi aprovado.
         return ctx.reply('❌ Transação não encontrada.');
       }
       
-      if (transaction.status !== 'delivered') {
-        return ctx.reply(`⚠️ Esta transação não pode ser revertida.\n\nStatus atual: ${transaction.status}\n\nApenas transações entregues podem ser revertidas.`);
+      if (!['validated', 'delivered'].includes(transaction.status)) {
+        return ctx.reply(`⚠️ Esta transação não pode ser revertida.\n\nStatus atual: ${transaction.status}\n\nApenas transações validadas ou entregues podem ser revertidas.`);
       }
       
       // Confirmar reversão
@@ -4462,6 +4462,7 @@ Seu comprovante foi analisado e não foi aprovado.
 
 ⚠️ *ATENÇÃO:*
 • A transação será cancelada
+• Entregas de mídia serão deletadas (se houver)
 • O usuário perderá acesso ao produto/grupo
 • Esta ação não pode ser desfeita
 
