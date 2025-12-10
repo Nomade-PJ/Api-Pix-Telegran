@@ -3097,8 +3097,13 @@ _Cancelar: /cancelar`, {
 
 Agora digite sua mensagem detalhada:
 
-_Cancelar: /cancelar`, {
-            parse_mode: 'Markdown'
+_Cancelar: /cancelar_`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'back_to_start' }
+              ]]
+            }
           });
         } else if (session.step === 'message') {
           try {
