@@ -2668,19 +2668,86 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
       await ctx.answerCbQuery();
       const user = await db.getOrCreateUser(ctx.from);
       
+      const message = `💬 *NOVO TICKET DE SUPORTE*
+
+📝 *Selecione o tipo de problema:*
+
+Escolha uma das opções abaixo ou digite seu próprio assunto:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('📦 Problemas com entrega', 'ticket_subject_entrega'),
+          Markup.button.callback('❓ Dúvidas sobre produto', 'ticket_subject_duvida')
+        ],
+        [
+          Markup.button.callback('💳 Problemas com pagamento', 'ticket_subject_pagamento'),
+          Markup.button.callback('🔐 Problemas de acesso', 'ticket_subject_acesso')
+        ],
+        [
+          Markup.button.callback('📝 Outro assunto', 'ticket_subject_outro')
+        ],
+        [
+          Markup.button.callback('❌ Cancelar', 'back_to_start')
+        ]
+      ]);
+      
+      // Tentar editar a mensagem, se falhar, enviar nova mensagem
+      try {
+        return await ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard.reply_markup
+        });
+      } catch (editErr) {
+        // Se falhar ao editar, enviar nova mensagem
+        if (editErr.message && (editErr.message.includes('can\'t parse entities') || editErr.message.includes('message is not modified'))) {
+          return ctx.reply(message, {
+            parse_mode: 'Markdown',
+            reply_markup: keyboard.reply_markup
+          });
+        }
+        throw editErr;
+      }
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao criar ticket. Tente novamente.');
+    }
+  });
+  
+  // Handlers para os assuntos pré-definidos
+  bot.action(/^ticket_subject_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const subjectType = ctx.match[1];
+      
+      const subjectMap = {
+        'entrega': 'Problemas com entrega',
+        'duvida': 'Dúvidas sobre produto',
+        'pagamento': 'Problemas com pagamento',
+        'acesso': 'Problemas de acesso',
+        'outro': 'Outro assunto'
+      };
+      
+      const subject = subjectMap[subjectType] || 'Outro assunto';
+      
       global._SESSIONS = global._SESSIONS || {};
       global._SESSIONS[ctx.from.id] = {
         type: 'create_ticket',
-        step: 'subject'
+        step: 'message',
+        subject: subject,
+        subjectType: subjectType
       };
       
-      // Usar try/catch para lidar com erros de parsing de Markdown
-      try {
-        return await ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
+      // Se for "outro", pedir para digitar o assunto
+      if (subjectType === 'outro') {
+        global._SESSIONS[ctx.from.id].step = 'subject';
+        return ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
 
-📝 *Passo 1/2: Assunto*
+📝 *Digite o assunto do seu ticket:*
 
-Digite o assunto do seu ticket \\(ex: "Problema com entrega", "Dúvida sobre produto"\\):
+Exemplos:
+• Problema com entrega
+• Dúvida sobre produto
+• Problema com pagamento
 
 _Cancelar: /cancelar_`, {
           parse_mode: 'Markdown',
@@ -2690,29 +2757,28 @@ _Cancelar: /cancelar_`, {
             ]]
           }
         });
-      } catch (editErr) {
-        // Se falhar ao editar, tentar enviar nova mensagem
-        if (editErr.message && editErr.message.includes('can\'t parse entities')) {
-          return ctx.reply(`💬 *NOVO TICKET DE SUPORTE*
+      }
+      
+      // Para outros tipos, ir direto para o passo 2 (mensagem)
+      return ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
 
-📝 *Passo 1/2: Assunto*
+📝 *Assunto:* ${subject}
 
-Digite o assunto do seu ticket \\(ex: "Problema com entrega", "Dúvida sobre produto"\\):
+📝 *Passo 2/2: Mensagem*
+
+Descreva seu problema ou dúvida em detalhes:
 
 _Cancelar: /cancelar_`, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '❌ Cancelar', callback_data: 'back_to_start' }
-              ]]
-            }
-          });
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Cancelar', callback_data: 'back_to_start' }
+          ]]
         }
-        throw editErr;
-      }
+      });
     } catch (err) {
       console.error('❌ [TICKET] Erro:', err);
-      return ctx.reply('❌ Erro ao criar ticket.');
+      return ctx.reply('❌ Erro ao processar. Tente novamente.');
     }
   });
   
@@ -3088,14 +3154,17 @@ _Cancelar: /cancelar`, {
       
       if (session.type === 'create_ticket') {
         if (session.step === 'subject') {
-          session.data = { subject: ctx.message.text };
+          // Usuário digitou o assunto manualmente
+          session.subject = ctx.message.text;
           session.step = 'message';
           
           return ctx.reply(`💬 *NOVO TICKET DE SUPORTE*
 
+📝 *Assunto:* ${ctx.message.text}
+
 📝 *Passo 2/2: Mensagem*
 
-Agora digite sua mensagem detalhada:
+Descreva seu problema ou dúvida em detalhes:
 
 _Cancelar: /cancelar_`, {
             parse_mode: 'Markdown',
@@ -3108,11 +3177,74 @@ _Cancelar: /cancelar_`, {
         } else if (session.step === 'message') {
           try {
             const user = await db.getOrCreateUser(ctx.from);
+            const subject = session.subject || session.data?.subject || 'Sem assunto';
+            const message = ctx.message.text;
+            
+            // 🆕 TENTAR AJUDAR AUTOMATICAMENTE PRIMEIRO
+            console.log(`🤖 [TICKET-AUTO-HELP] Tentando ajudar automaticamente para assunto: ${subject}`);
+            
+            let autoHelpResponse = null;
+            const subjectLower = subject.toLowerCase();
+            const messageLower = message.toLowerCase();
+            
+            // Buscar respostas automáticas baseadas no assunto e mensagem
+            const autoResponse = await db.getAutoResponse(messageLower + ' ' + subjectLower);
+            if (autoResponse) {
+              autoHelpResponse = autoResponse.response;
+              await db.updateAutoResponseUsage(autoResponse.id);
+            }
+            
+            // Se não encontrou resposta automática, tentar buscar por palavras-chave comuns
+            if (!autoHelpResponse) {
+              const keywords = ['entrega', 'produto', 'pagamento', 'pix', 'comprovante', 'acesso', 'grupo'];
+              for (const keyword of keywords) {
+                if (subjectLower.includes(keyword) || messageLower.includes(keyword)) {
+                  const keywordResponse = await db.getAutoResponse(keyword);
+                  if (keywordResponse) {
+                    autoHelpResponse = keywordResponse.response;
+                    await db.updateAutoResponseUsage(keywordResponse.id);
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Se encontrou resposta automática, mostrar e perguntar se resolveu
+            if (autoHelpResponse) {
+              delete global._SESSIONS[ctx.from.id];
+              
+              // Codificar assunto e mensagem para passar no callback_data (limite de 64 bytes)
+              const encodedSubject = encodeURIComponent(subject.substring(0, 20));
+              const encodedMessage = encodeURIComponent(message.substring(0, 20));
+              
+              return ctx.reply(`🤖 *TENTANDO AJUDAR AUTOMATICAMENTE*
+
+${autoHelpResponse}
+
+---
+
+❓ *Isso resolveu seu problema?*`, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: '✅ Sim, resolveu!', callback_data: 'ticket_resolved' },
+                      { text: '❌ Não, preciso de ajuda', callback_data: `ticket_need_help_${encodedSubject}_${encodedMessage}` }
+                    ],
+                    [
+                      { text: '🏠 Voltar', callback_data: 'back_to_start' }
+                    ]
+                  ]
+                }
+              });
+            }
+            
+            // Se não encontrou resposta automática, criar ticket direto para admin
             const ticket = await db.createSupportTicket(
               ctx.from.id,
               user.id,
-              session.data.subject,
-              ctx.message.text
+              subject,
+              message
             );
             
             delete global._SESSIONS[ctx.from.id];
@@ -3216,6 +3348,94 @@ _Cancelar: /cancelar_`, {
     }
     
     return next();
+  });
+  
+  // Handler para ticket resolvido
+  bot.action('ticket_resolved', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('✅ Ótimo! Fico feliz em ajudar!');
+      return ctx.editMessageText(`✅ *Problema Resolvido!*
+
+Fico feliz que conseguimos ajudar! 😊
+
+Se precisar de mais alguma coisa, estou sempre aqui.
+
+💬 *Use:* /suporte para acessar o suporte novamente.`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🏠 Voltar ao Início', callback_data: 'back_to_start' }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('✅ Obrigado pelo feedback!');
+    }
+  });
+  
+  // Handler para quando precisa de ajuda (criar ticket)
+  bot.action(/^ticket_need_help_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('📝 Criando ticket...');
+      const data = ctx.match[1];
+      const parts = data.split('_');
+      const subject = decodeURIComponent(parts.slice(0, -1).join('_')).substring(0, 100);
+      const message = decodeURIComponent(parts[parts.length - 1]).substring(0, 500);
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const ticket = await db.createSupportTicket(
+        ctx.from.id,
+        user.id,
+        subject || 'Precisa de ajuda',
+        message || 'Preciso de ajuda de um administrador'
+      );
+      
+      // Notificar admins
+      const admins = await db.getAllAdmins();
+      for (const admin of admins) {
+        try {
+          await ctx.telegram.sendMessage(admin.telegram_id, `🆕 *NOVO TICKET DE SUPORTE*
+
+📋 *Ticket:* ${ticket.ticket_number}
+👤 *Usuário:* ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 *ID:* ${ctx.from.id}
+📝 *Assunto:* ${ticket.subject}
+💬 *Mensagem:* ${ticket.message.substring(0, 200)}${ticket.message.length > 200 ? '...' : ''}
+
+📅 ${new Date().toLocaleString('pt-BR')}`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticket.id}` },
+                { text: '✅ Atribuir a Mim', callback_data: `admin_assign_ticket_${ticket.id}` }
+              ]]
+            }
+          });
+        } catch (err) {
+          console.error('Erro ao notificar admin:', err);
+        }
+      }
+      
+      return ctx.editMessageText(`✅ *Ticket criado com sucesso!*
+
+📋 *Número:* ${ticket.ticket_number}
+📝 *Assunto:* ${ticket.subject}
+
+⏳ Um admin irá responder em breve.
+
+💬 *Use:* /suporte para ver seus tickets`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📋 Ver Meus Tickets', callback_data: 'view_my_tickets' }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao criar ticket. Tente novamente.');
+    }
   });
 
   // Integrar controle de grupos
