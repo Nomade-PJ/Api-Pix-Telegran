@@ -1728,7 +1728,7 @@ Para ver nossos produtos em promoção e fazer sua compra agora!
       // Verificar se tem assinatura ativa
       let hasActiveSubscription = false;
       for (const group of activeGroups) {
-        const member = await db.getGroupMember(ctx.chat.id, group.id);
+        const member = await db.getGroupMember(ctx.from.id, group.id);
         if (member) {
           const expiresAt = new Date(member.expires_at);
           const now = new Date();
@@ -2731,7 +2731,7 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
       const subscriptionInfo = [];
       
       for (const group of activeGroups) {
-        const member = await db.getGroupMember(ctx.from.id, group.group_id);
+        const member = await db.getGroupMember(ctx.from.id, group.id);
         if (member && member.expires_at && new Date(member.expires_at) > new Date()) {
           hasActiveSubscription = true;
           const expiresAt = new Date(member.expires_at);
