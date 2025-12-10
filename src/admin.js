@@ -3117,13 +3117,38 @@ _Cancelar:_ /cancelar`;
         ticketId: ticketId
       };
       
-      return ctx.reply(`💬 *RESPONDER TICKET*
+      // Tentar editar a mensagem, se falhar, enviar nova mensagem
+      try {
+        return await ctx.editMessageText(`💬 *RESPONDER TICKET*
 
 Digite sua resposta:
 
-_Cancelar: /cancelar`, {
-        parse_mode: 'Markdown'
-      });
+_Cancelar: /cancelar_`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '❌ Cancelar', callback_data: 'admin_refresh' }
+            ]]
+          }
+        });
+      } catch (editErr) {
+        // Se falhar ao editar (mensagem muito antiga ou erro de parsing), enviar nova mensagem
+        if (editErr.message && (editErr.message.includes('can\'t parse entities') || editErr.message.includes('message is not modified') || editErr.message.includes('message to edit not found'))) {
+          return ctx.reply(`💬 *RESPONDER TICKET*
+
+Digite sua resposta:
+
+_Cancelar: /cancelar_`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'admin_refresh' }
+              ]]
+            }
+          });
+        }
+        throw editErr;
+      }
     } catch (err) {
       console.error('❌ [ADMIN-TICKET] Erro:', err);
       return ctx.reply('❌ Erro ao responder ticket.');
