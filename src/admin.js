@@ -1544,8 +1544,12 @@ O botão "🔞 Grupo Privado 🔞" aparecerá no menu principal!`, {
         }
       }
       
+      // 🆕 Se não processou nenhuma sessão, passar para próximo handler
+      console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Sessão não processada por este handler, passando para próximo: ${session ? session.type : 'nenhuma'}`);
+      return next();
+      
     } catch (err) {
-      console.error('Erro no handler de texto:', err);
+      console.error('❌ [ADMIN-TEXT-HANDLER-1] Erro no handler de texto:', err);
       // Passar para próximo handler em caso de erro
       return next();
     }
