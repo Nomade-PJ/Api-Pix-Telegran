@@ -3323,10 +3323,16 @@ _Cancelar: /cancelar`, {
     const session = global._SESSIONS?.[ctx.from.id];
     
     // 🆕 RESPOSTAS AUTOMÁTICAS/FAQ - Verificar antes de processar sessões
+    // Se for sessão admin (incluindo admin_reply_ticket), passar para próximo handler (admin.js)
     const isAdminSession = session && ['create_product', 'edit_product', 'admin_broadcast', 'admin_reply_ticket', 'add_auto_response'].includes(session.type);
     const isTicketSession = session && (session.type === 'create_ticket' || session.type === 'reply_ticket');
     
-    if (!isAdminSession && !isTicketSession && !ctx.message.text.startsWith('/')) {
+    // Se for sessão admin, passar para handler do admin.js
+    if (isAdminSession) {
+      return next();
+    }
+    
+    if (!isTicketSession && !ctx.message.text.startsWith('/')) {
       // Verificar se há resposta automática para a mensagem
       try {
         const autoResponse = await db.getAutoResponse(ctx.message.text);

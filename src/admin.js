@@ -4971,15 +4971,35 @@ A resposta será ativada automaticamente quando alguém usar essa palavra-chave.
         
         // Notificar usuário
         try {
+          // Escapar caracteres Markdown na mensagem do admin
+          const escapeMarkdown = (text) => {
+            if (!text) return '';
+            return String(text)
+              .replace(/\*/g, '\\*')
+              .replace(/_/g, '\\_')
+              .replace(/\[/g, '\\[')
+              .replace(/\]/g, '\\]')
+              .replace(/\(/g, '\\(')
+              .replace(/\)/g, '\\)')
+              .replace(/~/g, '\\~')
+              .replace(/`/g, '\\`');
+          };
+          
+          const ticketNumber = escapeMarkdown(ticket.ticket_number);
+          const adminMessage = escapeMarkdown(ctx.message.text);
+          
           await ctx.telegram.sendMessage(ticket.telegram_id, 
-            `💬 *Nova resposta no seu ticket*\n\n📋 Ticket: ${ticket.ticket_number}\n\n👨‍💼 *Admin:*\n${ctx.message.text}\n\n💬 Use /suporte para ver seus tickets.`, {
-            parse_mode: 'Markdown'
-          });
+            `💬 *Nova resposta no seu ticket*\n\n📋 Ticket: ${ticketNumber}\n\n👨\\u200d💼 *Admin:*\n${adminMessage}\n\n💬 Use /suporte para ver seus tickets.`, {
+              parse_mode: 'Markdown'
+            });
         } catch (err) {
           console.error('Erro ao notificar usuário:', err);
         }
         
-        return ctx.reply(`✅ Resposta enviada ao ticket ${ticket.ticket_number}!`, {
+        const ticketNumber = (ticket.ticket_number || '').replace(/\*/g, '\\*').replace(/_/g, '\\_');
+        
+        return ctx.reply(`✅ Resposta enviada ao ticket ${ticketNumber}!`, {
+          parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[
               { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticketId}` }
