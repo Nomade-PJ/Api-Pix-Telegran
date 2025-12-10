@@ -260,6 +260,10 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('🎫 Tickets de Suporte', 'admin_tickets')
         ],
         [
+          Markup.button.callback('⭐ Usuários Confiáveis', 'admin_trusted_users'),
+          Markup.button.callback('🤖 Respostas Automáticas', 'admin_auto_responses')
+        ],
+        [
           Markup.button.callback('👤 Usuários', 'admin_users'),
           Markup.button.callback('📢 Broadcast', 'admin_broadcast')
         ],
@@ -3154,6 +3158,137 @@ _Cancelar: /cancelar`, {
     }
   });
   
+  // ===== GERENCIAR USUÁRIOS CONFIÁVEIS =====
+  bot.action('admin_trusted_users', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('⭐ Carregando usuários confiáveis...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const { data: trustedUsers, error } = await db.supabase
+        .from('trusted_users')
+        .select(`
+          *,
+          users:user_id (first_name, username, telegram_id)
+        `)
+        .order('trust_score', { ascending: false })
+        .limit(50);
+      
+      if (error) throw error;
+      
+      let message = `⭐ *USUÁRIOS CONFIÁVEIS*\n\n`;
+      message += `📊 Total: ${trustedUsers?.length || 0} usuários\n\n`;
+      
+      if (!trustedUsers || trustedUsers.length === 0) {
+        message += `Nenhum usuário confiável cadastrado ainda.\n\n`;
+        message += `*Como funciona:*\n`;
+        message += `• Usuários ganham confiança ao ter comprovantes aprovados\n`;
+        message += `• Quanto maior a confiança, menor o threshold para aprovação automática\n`;
+        message += `• Você pode adicionar usuários manualmente à whitelist`;
+      } else {
+        for (const trusted of trustedUsers.slice(0, 10)) {
+          const user = trusted.users || {};
+          const score = parseFloat(trusted.trust_score) || 0;
+          const emoji = score >= 80 ? '🟢' : score >= 60 ? '🟡' : '🔴';
+          message += `${emoji} *${user.first_name || 'N/A'}* (@${user.username || 'N/A'})\n`;
+          message += `⭐ Score: ${score.toFixed(1)}/100\n`;
+          message += `✅ Aprovadas: ${trusted.approved_transactions || 0} | ❌ Rejeitadas: ${trusted.rejected_transactions || 0}\n`;
+          message += `🎯 Threshold: ${parseFloat(trusted.auto_approve_threshold || 60).toFixed(0)}%\n\n`;
+        }
+      }
+      
+      const buttons = [];
+      if (trustedUsers && trustedUsers.length > 0) {
+        buttons.push([Markup.button.callback('➕ Adicionar à Whitelist', 'admin_add_trusted')]);
+      }
+      buttons.push([
+        Markup.button.callback('🔄 Atualizar', 'admin_trusted_users'),
+        Markup.button.callback('🔙 Voltar', 'admin_refresh')
+      ]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ADMIN-TRUSTED] Erro:', err);
+      return ctx.reply('❌ Erro ao carregar usuários confiáveis.');
+    }
+  });
+  
+  // ===== GERENCIAR RESPOSTAS AUTOMÁTICAS =====
+  bot.action('admin_auto_responses', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🤖 Carregando respostas automáticas...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const responses = await db.getAllAutoResponses();
+      
+      let message = `🤖 *RESPOSTAS AUTOMÁTICAS (FAQ)*\n\n`;
+      message += `📊 Total: ${responses.length} respostas\n\n`;
+      
+      if (responses.length === 0) {
+        message += `Nenhuma resposta automática cadastrada.\n\n`;
+        message += `*Como funciona:*\n`;
+        message += `• O bot responde automaticamente a palavras-chave\n`;
+        message += `• Útil para perguntas frequentes\n`;
+        message += `• Reduz carga de suporte`;
+      } else {
+        for (const resp of responses.slice(0, 10)) {
+          const status = resp.is_active ? '🟢' : '🔴';
+          message += `${status} *${resp.keyword}*\n`;
+          message += `📝 ${resp.response.substring(0, 50)}${resp.response.length > 50 ? '...' : ''}\n`;
+          message += `📊 Uso: ${resp.usage_count || 0} vezes | Prioridade: ${resp.priority || 0}\n\n`;
+        }
+      }
+      
+      const buttons = [
+        [Markup.button.callback('➕ Nova Resposta', 'admin_add_auto_response')],
+        [
+          Markup.button.callback('🔄 Atualizar', 'admin_auto_responses'),
+          Markup.button.callback('🔙 Voltar', 'admin_refresh')
+        ]
+      ];
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ADMIN-AUTO-RESPONSES] Erro:', err);
+      return ctx.reply('❌ Erro ao carregar respostas automáticas.');
+    }
+  });
+  
+  // Adicionar resposta automática
+  bot.action('admin_add_auto_response', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'add_auto_response',
+        step: 'keyword'
+      };
+      
+      return ctx.reply(`🤖 *NOVA RESPOSTA AUTOMÁTICA*
+
+📝 *Passo 1/3: Palavra-chave*
+
+Digite a palavra-chave que deve ativar esta resposta (ex: "entrega", "pix", "produto"):
+
+_Cancelar: /cancelar`, {
+        parse_mode: 'Markdown'
+      });
+    } catch (err) {
+      console.error('❌ [ADMIN-AUTO-RESPONSES] Erro:', err);
+      return ctx.reply('❌ Erro ao criar resposta automática.');
+    }
+  });
+  
   bot.action('admin_support', async (ctx) => {
     await ctx.answerCbQuery('💬 Configurando suporte...');
     const isAdmin = await db.isUserAdmin(ctx.from.id);
@@ -3626,6 +3761,16 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
       
       // Validar transação
       await db.validateTransaction(txid, transaction.user_id);
+      
+      // 🆕 Atualizar trust score do usuário (aprovado)
+      if (transaction.user_id && transaction.telegram_id) {
+        try {
+          await db.updateTrustedUser(transaction.telegram_id, transaction.user_id, true);
+          console.log(`⭐ [TRUST] Trust score atualizado para usuário ${transaction.telegram_id}`);
+        } catch (err) {
+          console.error('Erro ao atualizar trust score:', err);
+        }
+      }
       
       // Verificar se é media pack (fotos/vídeos aleatórios)
       if (transaction.media_pack_id) {
@@ -4653,9 +4798,87 @@ _Cancelar:_ /cancelar`,
     });
   });
   
-  // Handler para responder tickets (admin) - ANTES do handler de bloqueio
+  // Handler para responder tickets e criar respostas automáticas (admin) - ANTES do handler de bloqueio
   bot.on('text', async (ctx, next) => {
     const session = global._SESSIONS?.[ctx.from.id];
+    
+    // Handler para criar resposta automática
+    if (session && session.type === 'add_auto_response') {
+      if (ctx.message.text.startsWith('/')) {
+        if (ctx.message.text === '/cancelar') {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Operação cancelada.');
+        }
+        return next();
+      }
+      
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) {
+        delete global._SESSIONS[ctx.from.id];
+        return ctx.reply('❌ Acesso negado.');
+      }
+      
+      if (session.step === 'keyword') {
+        session.data = { keyword: ctx.message.text };
+        session.step = 'response';
+        
+        return ctx.reply(`🤖 *NOVA RESPOSTA AUTOMÁTICA*
+
+📝 *Passo 2/3: Resposta*
+
+Digite a resposta que será enviada quando alguém usar a palavra-chave "${session.data.keyword}":
+
+_Cancelar: /cancelar`, {
+          parse_mode: 'Markdown'
+        });
+      } else if (session.step === 'response') {
+        session.data.response = ctx.message.text;
+        session.step = 'priority';
+        
+        return ctx.reply(`🤖 *NOVA RESPOSTA AUTOMÁTICA*
+
+📝 *Passo 3/3: Prioridade*
+
+Digite a prioridade (0-100, maior = mais importante):
+
+_Cancelar: /cancelar`, {
+          parse_mode: 'Markdown'
+        });
+      } else if (session.step === 'priority') {
+        try {
+          const priority = parseInt(ctx.message.text) || 0;
+          
+          await db.createAutoResponse(
+            session.data.keyword,
+            session.data.response,
+            priority
+          );
+          
+          delete global._SESSIONS[ctx.from.id];
+          
+          return ctx.reply(`✅ *Resposta automática criada!*
+
+📝 *Palavra-chave:* ${session.data.keyword}
+💬 *Resposta:* ${session.data.response.substring(0, 100)}${session.data.response.length > 100 ? '...' : ''}
+📊 *Prioridade:* ${priority}
+
+A resposta será ativada automaticamente quando alguém usar essa palavra-chave.`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🤖 Ver Respostas', callback_data: 'admin_auto_responses' }
+              ]]
+            }
+          });
+        } catch (err) {
+          console.error('❌ [ADMIN-AUTO-RESPONSES] Erro:', err);
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Erro ao criar resposta automática.');
+        }
+      }
+      return;
+    }
+    
     if (session && session.type === 'admin_reply_ticket') {
       if (ctx.message.text.startsWith('/')) {
         return next();

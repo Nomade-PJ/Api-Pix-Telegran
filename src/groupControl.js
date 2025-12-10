@@ -147,16 +147,88 @@ Não perca o acesso! 🚀`, {
         console.log(`🔄 [GROUP-CONTROL] Processando membro expirado: ${member.telegram_id}`);
         
         // 🆕 VERIFICAR SE JÁ TEM TRANSAÇÃO PENDENTE/APROVADA DE RENOVAÇÃO
-        const { data: pendingRenewals, error: renewalError } = await db.supabase
-          .from('transactions')
-          .select('*')
-          .eq('telegram_id', member.telegram_id)
-          .eq('group_id', member.group_id)
-          .in('status', ['pending', 'proof_sent', 'validated', 'delivered'])
-          .order('created_at', { ascending: false })
-          .limit(1);
+        let pendingRenewal = null;
+        let retries = 3;
         
-        const pendingRenewal = pendingRenewals && pendingRenewals.length > 0 ? pendingRenewals[0] : null;
+        while (retries > 0) {
+          try {
+            const { data: pendingRenewals, error: renewalError } = await db.supabase
+              .from('transactions')
+              .select('*')
+              .eq('telegram_id', member.telegram_id)
+              .eq('group_id', member.group_id)
+              .in('status', ['pending', 'proof_sent', 'validated', 'delivered'])
+              .order('created_at', { ascending: false })
+              .limit(1);
+            
+            if (renewalError) {
+              const errorMessage = renewalError.message || '';
+              const errorDetails = renewalError.details || '';
+              const errorString = JSON.stringify(renewalError);
+              
+              const isConnectionError = (
+                errorMessage.includes('fetch failed') ||
+                errorMessage.includes('SocketError') ||
+                errorMessage.includes('other side closed') ||
+                errorMessage.includes('ECONNRESET') ||
+                errorMessage.includes('ETIMEDOUT') ||
+                errorMessage.includes('UND_ERR_SOCKET') ||
+                errorDetails.includes('UND_ERR_SOCKET') ||
+                errorDetails.includes('other side closed') ||
+                errorDetails.includes('SocketError') ||
+                errorDetails.includes('ETIMEDOUT') ||
+                errorString.includes('UND_ERR_SOCKET') ||
+                errorString.includes('ETIMEDOUT')
+              );
+              
+              if (isConnectionError && retries > 1) {
+                retries--;
+                console.warn(`⚠️ [GROUP-CONTROL] Erro de conexão ao buscar transação de renovação: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+                console.warn(`⚠️ [GROUP-CONTROL] Tentando novamente... (${retries} tentativas restantes)`);
+                await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+                continue;
+              } else {
+                // Se não for erro de conexão ou última tentativa, tratar como sem renovação pendente
+                console.warn(`⚠️ [GROUP-CONTROL] Erro ao buscar transação de renovação: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+                break;
+              }
+            }
+            
+            pendingRenewal = pendingRenewals && pendingRenewals.length > 0 ? pendingRenewals[0] : null;
+            break; // Sucesso, sair do loop
+            
+          } catch (err) {
+            const errorMessage = err.message || '';
+            const errorDetails = err.details || '';
+            const errorString = JSON.stringify(err);
+            
+            const isConnectionError = (
+              errorMessage.includes('fetch failed') ||
+              errorMessage.includes('SocketError') ||
+              errorMessage.includes('other side closed') ||
+              errorMessage.includes('ECONNRESET') ||
+              errorMessage.includes('ETIMEDOUT') ||
+              errorMessage.includes('UND_ERR_SOCKET') ||
+              errorDetails.includes('UND_ERR_SOCKET') ||
+              errorDetails.includes('other side closed') ||
+              errorDetails.includes('SocketError') ||
+              errorDetails.includes('ETIMEDOUT') ||
+              errorString.includes('UND_ERR_SOCKET') ||
+              errorString.includes('ETIMEDOUT')
+            );
+            
+            if (isConnectionError && retries > 1) {
+              retries--;
+              console.warn(`⚠️ [GROUP-CONTROL] Erro de conexão ao buscar transação de renovação: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+              console.warn(`⚠️ [GROUP-CONTROL] Tentando novamente... (${retries} tentativas restantes)`);
+              await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+              continue;
+            } else {
+              console.warn(`⚠️ [GROUP-CONTROL] Erro ao buscar transação de renovação: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+              break;
+            }
+          }
+        }
         
         // Se tem transação aprovada/entregue, NÃO REMOVER (já foi renovado)
         if (pendingRenewal && (pendingRenewal.status === 'validated' || pendingRenewal.status === 'delivered')) {

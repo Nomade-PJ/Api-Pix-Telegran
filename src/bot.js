@@ -8,6 +8,7 @@ const creator = require('./creator');
 const proofAnalyzer = require('./proofAnalyzer');
 const { startExpirationJob } = require('./jobs/expireTransactions');
 const { startBotDescriptionJob } = require('./jobs/updateBotDescription');
+const { startBackupJob } = require('./jobs/backupDatabase');
 const { startReminderJob } = require('./jobs/sendPaymentReminders');
 
 function createBot(token) {
@@ -20,6 +21,10 @@ function createBot(token) {
   // Iniciar job de atualização automática da descrição do bot
   startBotDescriptionJob();
   console.log('✅ [BOT-INIT] Job de atualização de descrição do bot iniciado');
+  
+  // Iniciar job de backup automático
+  startBackupJob();
+  console.log('✅ [BOT-INIT] Job de backup automático iniciado');
   
   // Iniciar job de lembretes de pagamento (15 minutos)
   startReminderJob(bot);
@@ -521,8 +526,56 @@ Selecione uma opção abaixo:`;
       console.log(`💾 [HANDLER] Salvando comprovante no banco IMEDIATAMENTE...`);
       
       try {
-        const saveResult = await db.updateTransactionProof(transaction.txid, fileId);
-        console.log(`✅ [HANDLER] Comprovante salvo no banco: ${saveResult ? 'Sucesso' : 'Falha'}`);
+        const saveResult = await db.updateTransactionProof(
+          transaction.txid, 
+          fileId, 
+          transaction.amount, 
+          transaction.pix_key
+        );
+        
+        if (saveResult && saveResult.isDuplicate) {
+          console.warn(`⚠️ [HANDLER] COMPROVANTE DUPLICADO DETECTADO!`);
+          console.warn(`⚠️ [HANDLER] TXID anterior: ${saveResult.duplicateTxid}`);
+          
+          // Notificar usuário sobre duplicata
+          await ctx.reply(`⚠️ *COMPROVANTE DUPLICADO*
+
+❌ Este comprovante já foi usado anteriormente.
+
+🆔 TXID anterior: \`${saveResult.duplicateTxid}\`
+📅 Data: ${new Date(saveResult.duplicateDate).toLocaleString('pt-BR')}
+
+Por favor, envie um comprovante diferente ou entre em contato com o suporte.
+
+💬 Use /suporte para abrir um ticket.`, {
+            parse_mode: 'Markdown'
+          });
+          
+          // Notificar admins
+          const admins = await db.getAllAdmins();
+          for (const admin of admins) {
+            try {
+              await ctx.telegram.sendMessage(admin.telegram_id, 
+                `⚠️ *COMPROVANTE DUPLICADO DETECTADO*
+
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 ID: ${ctx.from.id}
+🆔 TXID atual: ${transaction.txid}
+🆔 TXID anterior: ${saveResult.duplicateTxid}
+📅 Data anterior: ${new Date(saveResult.duplicateDate).toLocaleString('pt-BR')}
+
+⚠️ O mesmo comprovante foi usado em duas transações diferentes.`, {
+                parse_mode: 'Markdown'
+              });
+            } catch (err) {
+              console.error('Erro ao notificar admin:', err);
+            }
+          }
+          
+          return; // Parar processamento
+        }
+        
+        console.log(`✅ [HANDLER] Comprovante salvo no banco: ${saveResult?.success ? 'Sucesso' : 'Falha'}`);
       } catch (saveErr) {
         console.error(`❌ [HANDLER] Erro ao salvar comprovante:`, saveErr.message);
         // Continuar mesmo com erro - notificar admin é mais importante
@@ -992,9 +1045,45 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
             }
           }
           
-          // ✅ APROVAÇÃO AUTOMÁTICA (confidence >= 70 e isValid = true)
-          if (analysis && analysis.isValid === true && analysis.confidence >= 70) {
-            console.log(`✅ [AUTO-ANALYSIS] APROVAÇÃO AUTOMÁTICA para TXID ${transactionData.txid}`);
+          // 🆕 APROVAÇÃO AUTOMÁTICA INTELIGENTE
+          // Verificar usuário confiável e ajustar threshold
+          const trustedUser = await db.getTrustedUser(chatId);
+          let approvalThreshold = 70; // Threshold padrão
+          let adjustedConfidence = analysis?.confidence || 0;
+          
+          if (trustedUser) {
+            // Usuários confiáveis têm threshold menor
+            approvalThreshold = trustedUser.auto_approve_threshold || 60;
+            console.log(`⭐ [SMART-APPROVAL] Usuário confiável detectado - Score: ${trustedUser.trust_score}, Threshold: ${approvalThreshold}`);
+            
+            // Aumentar confiança baseado no trust score
+            const trustBonus = Math.min(15, (trustedUser.trust_score - 50) / 5); // Máximo +15%
+            adjustedConfidence = Math.min(100, adjustedConfidence + trustBonus);
+            console.log(`⭐ [SMART-APPROVAL] Confiança ajustada: ${analysis?.confidence}% → ${adjustedConfidence}% (bonus: +${trustBonus}%)`);
+          }
+          
+          // Verificar padrões conhecidos
+          if (analysis?.details?.hasCorrectValue && analysis?.details?.hasPixKey) {
+            const amountPattern = await db.updateProofPattern('amount', transactionData.amount, true);
+            const pixKeyPattern = await db.updateProofPattern('pix_key', transactionData.pix_key, true);
+            
+            if (amountPattern && amountPattern.confidence_score > 80) {
+              adjustedConfidence = Math.min(100, adjustedConfidence + 5);
+              console.log(`📊 [SMART-APPROVAL] Padrão de valor conhecido - Bonus: +5%`);
+            }
+            if (pixKeyPattern && pixKeyPattern.confidence_score > 80) {
+              adjustedConfidence = Math.min(100, adjustedConfidence + 5);
+              console.log(`📊 [SMART-APPROVAL] Padrão de chave PIX conhecido - Bonus: +5%`);
+            }
+          }
+          
+          // ✅ APROVAÇÃO AUTOMÁTICA (com threshold ajustado)
+          const shouldAutoApprove = analysis && 
+                                   analysis.isValid === true && 
+                                   adjustedConfidence >= approvalThreshold;
+          
+          if (shouldAutoApprove) {
+            console.log(`✅ [SMART-APPROVAL] APROVAÇÃO AUTOMÁTICA para TXID ${transactionData.txid} (confiança: ${adjustedConfidence}% >= ${approvalThreshold}%)`);
             
             try {
               // 🆕 NOTIFICAÇÃO 2: PAGAMENTO APROVADO, ENTREGANDO
@@ -1010,6 +1099,11 @@ ${fileTypeEmoji} Tipo: *${fileTypeText}*
               // Aprovar transação no banco
               await db.validateTransaction(transactionData.txid, transactionData.user_id);
               console.log(`✅ [AUTO-ANALYSIS] Transação validada no banco`);
+              
+              // 🆕 Atualizar trust score do usuário (aprovado)
+              if (transactionData.user_id) {
+                await db.updateTrustedUser(chatId, transactionData.user_id, true);
+              }
               
               // Notificar ADMIN sobre aprovação automática
               const admins = await db.getAllAdmins();
@@ -2920,6 +3014,32 @@ _Cancelar: /cancelar`, {
   // Handler para texto - criar ticket e responder ticket
   bot.on('text', async (ctx, next) => {
     const session = global._SESSIONS?.[ctx.from.id];
+    
+    // 🆕 RESPOSTAS AUTOMÁTICAS/FAQ - Verificar antes de processar sessões
+    const isAdminSession = session && ['create_product', 'edit_product', 'admin_broadcast', 'admin_reply_ticket', 'add_auto_response'].includes(session.type);
+    const isTicketSession = session && (session.type === 'create_ticket' || session.type === 'reply_ticket');
+    
+    if (!isAdminSession && !isTicketSession && !ctx.message.text.startsWith('/')) {
+      // Verificar se há resposta automática para a mensagem
+      try {
+        const autoResponse = await db.getAutoResponse(ctx.message.text);
+        if (autoResponse) {
+          await db.updateAutoResponseUsage(autoResponse.id);
+          return ctx.reply(autoResponse.response, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '💬 Abrir Ticket', callback_data: 'create_ticket' },
+                { text: '🏠 Voltar', callback_data: 'back_to_start' }
+              ]]
+            }
+          });
+        }
+      } catch (err) {
+        console.error('Erro ao buscar resposta automática:', err);
+      }
+    }
+    
     if (session && (session.type === 'create_ticket' || session.type === 'reply_ticket')) {
       if (ctx.message.text.startsWith('/')) {
         if (ctx.message.text === '/cancelar') {

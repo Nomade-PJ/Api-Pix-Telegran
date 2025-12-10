@@ -186,7 +186,32 @@ async function expireOldTransactions() {
       if (diffMinutes > 30) {
         console.log(`⏰ [EXPIRE-JOB] Expirando transação ${transaction.txid} (${Math.floor(diffMinutes)} minutos)`);
         
-        const canceled = await db.cancelTransaction(transaction.txid);
+        // Cancelar transação com tratamento de erro silencioso para erros de conexão
+        try {
+          const canceled = await db.cancelTransaction(transaction.txid);
+          if (canceled) {
+            expiredCount++;
+            console.log(`✅ [EXPIRE-JOB] Transação ${transaction.txid} expirada com sucesso`);
+          } else {
+            // Se retornou false, pode ser erro de conexão - não logar como erro crítico
+            // A função já logou como warning
+            console.warn(`⚠️ [EXPIRE-JOB] Não foi possível expirar transação ${transaction.txid} - será tentado novamente no próximo ciclo`);
+          }
+        } catch (err) {
+          // Se houver exceção não tratada, verificar se é erro de conexão
+          const errorMessage = err.message || '';
+          const isConnectionError = (
+            errorMessage.includes('fetch failed') ||
+            errorMessage.includes('ETIMEDOUT') ||
+            errorMessage.includes('ECONNRESET')
+          );
+          
+          if (isConnectionError) {
+            console.warn(`⚠️ [EXPIRE-JOB] Erro de conexão ao cancelar transação ${transaction.txid} - será tentado novamente no próximo ciclo`);
+          } else {
+            console.error(`❌ [EXPIRE-JOB] Erro ao cancelar transação ${transaction.txid}:`, err.message);
+          }
+        }
         
         if (canceled) {
           expiredCount++;

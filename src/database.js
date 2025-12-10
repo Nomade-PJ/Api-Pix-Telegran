@@ -1,6 +1,7 @@
 // src/database.js
 const { createClient } = require('@supabase/supabase-js');
 const cache = require('./cache');
+const crypto = require('crypto');
 
 // Inicializar Supabase
 const supabase = createClient(
@@ -365,14 +366,66 @@ async function createTransaction({ txid, userId, telegramId, productId, mediaPac
 }
 
 async function getTransactionByTxid(txid) {
-  try {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('txid', txid)
-      .single();
-    
-    if (error) throw error;
+  // Adicionar retry logic para erros de conexão
+  let retries = 3;
+  let lastError;
+  
+  while (retries > 0) {
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('txid', txid)
+        .single();
+      
+      if (error) {
+        // Se for erro "not found" (PGRST116), não é erro de conexão - retornar null
+        if (error.code === 'PGRST116') {
+          return null;
+        }
+        
+        // Verificar se é erro de conexão
+        const errorMessage = error.message || '';
+        const errorDetails = error.details || '';
+        const errorString = JSON.stringify(error);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorDetails.includes('ETIMEDOUT') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorString.includes('ETIMEDOUT')
+        );
+        
+        if (isConnectionError) {
+          lastError = error;
+          retries--;
+          
+          if (retries > 0) {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar transação ${txid}: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+            console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+            continue;
+          } else {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar transação ${txid} após 3 tentativas - retornando null`);
+            return null;
+          }
+        } else {
+          throw error;
+        }
+      }
+      
+      // Se chegou aqui, a query foi bem-sucedida
+      if (!data) {
+        return null;
+      }
     
     // Buscar informações do usuário separadamente se necessário
     if (data.user_id) {
@@ -445,11 +498,53 @@ async function getTransactionByTxid(txid) {
       }
     }
     
-    return data;
-  } catch (err) {
-    console.error('Erro ao buscar transação:', err);
-    return null;
+      return data;
+      
+    } catch (err) {
+      const errorMessage = err.message || '';
+      const errorDetails = err.details || '';
+      const errorString = JSON.stringify(err);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorDetails.includes('ETIMEDOUT') ||
+        errorString.includes('UND_ERR_SOCKET') ||
+        errorString.includes('ETIMEDOUT')
+      );
+      
+      if (isConnectionError) {
+        lastError = err;
+        retries--;
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar transação ${txid}: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+          console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+          continue;
+        } else {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar transação ${txid} após 3 tentativas - retornando null`);
+          return null;
+        }
+      } else {
+        // Se for erro "not found", retornar null (não é erro crítico)
+        if (err.code === 'PGRST116') {
+          return null;
+        }
+        console.error('❌ [DB] Erro ao buscar transação:', err);
+        return null;
+      }
+    }
   }
+  
+  return null;
 }
 
 async function getLastPendingTransaction(telegramId) {
@@ -545,24 +640,78 @@ async function getUserTransactions(telegramId, limit = 20) {
   }
 }
 
-async function updateTransactionProof(txid, fileId) {
+/**
+ * Gera hash do comprovante para verificação de duplicatas
+ */
+function generateProofHash(fileId, amount, pixKey) {
+  const hashString = `${fileId}_${amount}_${pixKey}`;
+  return crypto.createHash('sha256').update(hashString).digest('hex');
+}
+
+/**
+ * Verifica se o comprovante já foi usado anteriormente
+ */
+async function checkDuplicateProof(proofHash) {
   try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('txid, telegram_id, created_at, status')
+      .eq('proof_hash', proofHash)
+      .in('status', ['delivered', 'validated', 'proof_sent'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  } catch (err) {
+    console.error('Erro ao verificar comprovante duplicado:', err);
+    return null;
+  }
+}
+
+async function updateTransactionProof(txid, fileId, amount = null, pixKey = null) {
+  try {
+    // Gerar hash do comprovante se tiver amount e pixKey
+    let proofHash = null;
+    if (amount && pixKey) {
+      proofHash = generateProofHash(fileId, amount, pixKey);
+      
+      // Verificar duplicata
+      const duplicate = await checkDuplicateProof(proofHash);
+      if (duplicate && duplicate.txid !== txid) {
+        console.warn(`⚠️ [DUPLICATE] Comprovante duplicado detectado! TXID anterior: ${duplicate.txid}`);
+        return {
+          success: false,
+          isDuplicate: true,
+          duplicateTxid: duplicate.txid,
+          duplicateDate: duplicate.created_at
+        };
+      }
+    }
+    
+    const updateData = {
+      proof_file_id: fileId,
+      proof_received_at: new Date().toISOString(),
+      status: 'proof_sent',
+      updated_at: new Date().toISOString()
+    };
+    
+    if (proofHash) {
+      updateData.proof_hash = proofHash;
+    }
+    
     const { error } = await supabase
       .from('transactions')
-      .update({
-        proof_file_id: fileId,
-        proof_received_at: new Date().toISOString(),
-        status: 'proof_sent',
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('txid', txid);
     
     if (error) throw error;
     console.log('Comprovante registrado:', txid);
-    return true;
+    return { success: true, isDuplicate: false };
   } catch (err) {
     console.error('Erro ao atualizar comprovante:', err);
-    return false;
+    return { success: false, isDuplicate: false, error: err.message };
   }
 }
 
@@ -618,23 +767,114 @@ async function markAsDelivered(txid) {
 }
 
 async function cancelTransaction(txid) {
-  try {
-    const { error } = await supabase
-      .from('transactions')
-      .update({
-        status: 'expired',
-        notes: 'Transação expirada - prazo de 30 minutos ultrapassado',
-        updated_at: new Date().toISOString()
-      })
-      .eq('txid', txid);
-    
-    if (error) throw error;
-    console.log('Transação cancelada por expiração:', txid);
-    return true;
-  } catch (err) {
-    console.error('Erro ao cancelar transação:', err);
-    return false;
+  // Adicionar retry logic para erros de conexão
+  let retries = 3;
+  let lastError;
+  
+  while (retries > 0) {
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .update({
+          status: 'expired',
+          notes: 'Transação expirada - prazo de 30 minutos ultrapassado',
+          updated_at: new Date().toISOString()
+        })
+        .eq('txid', txid);
+      
+      if (error) {
+        // Verificar se é erro de conexão
+        const errorMessage = error.message || '';
+        const errorDetails = error.details || '';
+        const errorString = JSON.stringify(error);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorDetails.includes('ETIMEDOUT') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorString.includes('ETIMEDOUT')
+        );
+        
+        if (isConnectionError) {
+          // É erro de conexão - tentar retry
+          lastError = error;
+          retries--;
+          
+          if (retries > 0) {
+            console.warn(`⚠️ [DB] Erro de conexão ao cancelar transação ${txid}: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+            console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+            // Aguardar 2 segundos antes de tentar novamente (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+            continue; // Tentar novamente
+          } else {
+            // Última tentativa falhou
+            console.warn(`⚠️ [DB] Erro de conexão ao cancelar transação ${txid} após 3 tentativas - será tentado novamente no próximo ciclo`);
+            return false; // Retornar false mas não logar como erro crítico
+          }
+        } else {
+          // Erro real do Supabase (não é conexão)
+          throw error;
+        }
+      }
+      
+      // Sucesso
+      console.log('✅ [DB] Transação cancelada por expiração:', txid);
+      return true;
+      
+    } catch (err) {
+      // Verificar se é erro de conexão no catch também
+      const errorMessage = err.message || '';
+      const errorDetails = err.details || '';
+      const errorString = JSON.stringify(err);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorDetails.includes('ETIMEDOUT') ||
+        errorString.includes('UND_ERR_SOCKET') ||
+        errorString.includes('ETIMEDOUT')
+      );
+      
+      if (isConnectionError) {
+        lastError = err;
+        retries--;
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [DB] Erro de conexão ao cancelar transação ${txid}: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+          console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+          // Aguardar 2 segundos antes de tentar novamente (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+          continue; // Tentar novamente
+        } else {
+          // Última tentativa falhou
+          console.warn(`⚠️ [DB] Erro de conexão ao cancelar transação ${txid} após 3 tentativas - será tentado novamente no próximo ciclo`);
+          return false; // Retornar false mas não logar como erro crítico
+        }
+      } else {
+        // Erro real (não é conexão) - logar e retornar
+        console.error('❌ [DB] Erro ao cancelar transação:', err);
+        return false;
+      }
+    }
   }
+  
+  // Se chegou aqui, todas as tentativas falharam por erro de conexão
+  return false;
 }
 
 // ===== ADMIN =====
@@ -1230,51 +1470,213 @@ async function addGroupMember({ telegramId, userId, groupId, days = 30 }) {
 }
 
 async function getExpiringMembers() {
-  try {
-    // Buscar membros que expiram em até 3 dias
-    const threeDaysFromNow = new Date();
-    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-    
-    const { data, error } = await supabase
-      .from('group_members')
-      .select(`
-        *,
-        user:user_id(first_name, telegram_id),
-        group:group_id(id, group_name, group_id, subscription_price, subscription_days)
-      `)
-      .eq('status', 'active')
-      .lte('expires_at', threeDaysFromNow.toISOString())
-      .gte('expires_at', new Date().toISOString()) // Ainda não expirou
-      .is('reminded_at', null);
-    
-    if (error) throw error;
-    return data || [];
-  } catch (err) {
-    console.error('Erro ao buscar membros expirando:', err.message);
-    return [];
+  // Adicionar retry logic para erros de conexão
+  let retries = 3;
+  let lastError;
+  
+  while (retries > 0) {
+    try {
+      // Buscar membros que expiram em até 3 dias
+      const threeDaysFromNow = new Date();
+      threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+      
+      const { data, error } = await supabase
+        .from('group_members')
+        .select(`
+          *,
+          user:user_id(first_name, telegram_id),
+          group:group_id(id, group_name, group_id, subscription_price, subscription_days)
+        `)
+        .eq('status', 'active')
+        .lte('expires_at', threeDaysFromNow.toISOString())
+        .gte('expires_at', new Date().toISOString()) // Ainda não expirou
+        .is('reminded_at', null);
+      
+      if (error) {
+        // Verificar se é erro de conexão
+        const errorMessage = error.message || '';
+        const errorDetails = error.details || '';
+        const errorString = JSON.stringify(error);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorDetails.includes('ETIMEDOUT') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorString.includes('ETIMEDOUT')
+        );
+        
+        if (isConnectionError) {
+          lastError = error;
+          retries--;
+          
+          if (retries > 0) {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirando: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+            console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+            continue;
+          } else {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirando após 3 tentativas - retornando array vazio`);
+            return [];
+          }
+        } else {
+          throw error;
+        }
+      }
+      
+      return data || [];
+      
+    } catch (err) {
+      const errorMessage = err.message || '';
+      const errorDetails = err.details || '';
+      const errorString = JSON.stringify(err);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorDetails.includes('ETIMEDOUT') ||
+        errorString.includes('UND_ERR_SOCKET') ||
+        errorString.includes('ETIMEDOUT')
+      );
+      
+      if (isConnectionError) {
+        lastError = err;
+        retries--;
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirando: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+          console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+          continue;
+        } else {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirando após 3 tentativas - retornando array vazio`);
+          return [];
+        }
+      } else {
+        console.error('❌ [DB] Erro ao buscar membros expirando:', err.message);
+        return [];
+      }
+    }
   }
+  
+  return [];
 }
 
 async function getExpiredMembers() {
-  try {
-    const now = new Date().toISOString();
-    
-    const { data, error } = await supabase
-      .from('group_members')
-      .select(`
-        *,
-        user:user_id(telegram_id),
-        group:group_id(group_id, group_name, subscription_price, subscription_days)
-      `)
-      .eq('status', 'active')
-      .lt('expires_at', now);
-    
-    if (error) throw error;
-    return data || [];
-  } catch (err) {
-    console.error('Erro ao buscar membros expirados:', err.message);
-    return [];
+  // Adicionar retry logic para erros de conexão
+  let retries = 3;
+  let lastError;
+  
+  while (retries > 0) {
+    try {
+      const now = new Date().toISOString();
+      
+      const { data, error } = await supabase
+        .from('group_members')
+        .select(`
+          *,
+          user:user_id(telegram_id),
+          group:group_id(group_id, group_name, subscription_price, subscription_days)
+        `)
+        .eq('status', 'active')
+        .lt('expires_at', now);
+      
+      if (error) {
+        // Verificar se é erro de conexão
+        const errorMessage = error.message || '';
+        const errorDetails = error.details || '';
+        const errorString = JSON.stringify(error);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorDetails.includes('ETIMEDOUT') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorString.includes('ETIMEDOUT')
+        );
+        
+        if (isConnectionError) {
+          lastError = error;
+          retries--;
+          
+          if (retries > 0) {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirados: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+            console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+            continue;
+          } else {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirados após 3 tentativas - retornando array vazio`);
+            return [];
+          }
+        } else {
+          throw error;
+        }
+      }
+      
+      return data || [];
+      
+    } catch (err) {
+      const errorMessage = err.message || '';
+      const errorDetails = err.details || '';
+      const errorString = JSON.stringify(err);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorDetails.includes('ETIMEDOUT') ||
+        errorString.includes('UND_ERR_SOCKET') ||
+        errorString.includes('ETIMEDOUT')
+      );
+      
+      if (isConnectionError) {
+        lastError = err;
+        retries--;
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirados: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+          console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+          continue;
+        } else {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirados após 3 tentativas - retornando array vazio`);
+          return [];
+        }
+      } else {
+        console.error('❌ [DB] Erro ao buscar membros expirados:', err.message);
+        return [];
+      }
+    }
   }
+  
+  return [];
 }
 
 async function markMemberReminded(memberId) {
@@ -2297,6 +2699,281 @@ async function assignTicket(ticketId, adminId) {
   }
 }
 
+// ===== SISTEMA DE CONFIANÇA E APRENDIZADO =====
+
+/**
+ * Busca informações de usuário confiável
+ */
+async function getTrustedUser(telegramId) {
+  try {
+    const { data, error } = await supabase
+      .from('trusted_users')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  } catch (err) {
+    console.error('Erro ao buscar usuário confiável:', err);
+    return null;
+  }
+}
+
+/**
+ * Atualiza ou cria registro de usuário confiável
+ */
+async function updateTrustedUser(telegramId, userId, isApproved = true) {
+  try {
+    const trusted = await getTrustedUser(telegramId);
+    
+    let trustScore = 50; // Score inicial
+    let approvedCount = 0;
+    let rejectedCount = 0;
+    
+    if (trusted) {
+      trustScore = parseFloat(trusted.trust_score) || 50;
+      approvedCount = trusted.approved_transactions || 0;
+      rejectedCount = trusted.rejected_transactions || 0;
+    }
+    
+    // Atualizar score baseado na aprovação/rejeição
+    if (isApproved) {
+      approvedCount++;
+      trustScore = Math.min(100, trustScore + 2); // Aumenta confiança
+    } else {
+      rejectedCount++;
+      trustScore = Math.max(0, trustScore - 5); // Diminui confiança
+    }
+    
+    // Calcular threshold automático (quanto maior a confiança, menor o threshold necessário)
+    const autoApproveThreshold = Math.max(40, 70 - (trustScore / 2));
+    
+    const { data, error } = await supabase
+      .from('trusted_users')
+      .upsert({
+        telegram_id: telegramId,
+        user_id: userId,
+        trust_score: trustScore,
+        approved_transactions: approvedCount,
+        rejected_transactions: rejectedCount,
+        auto_approve_threshold: autoApproveThreshold,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'telegram_id'
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao atualizar usuário confiável:', err);
+    throw err;
+  }
+}
+
+/**
+ * Adiciona usuário à whitelist manualmente
+ */
+async function addTrustedUser(telegramId, userId, initialScore = 80) {
+  try {
+    const { data, error } = await supabase
+      .from('trusted_users')
+      .upsert({
+        telegram_id: telegramId,
+        user_id: userId,
+        trust_score: initialScore,
+        auto_approve_threshold: Math.max(40, 70 - (initialScore / 2)),
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'telegram_id'
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao adicionar usuário confiável:', err);
+    throw err;
+  }
+}
+
+/**
+ * Busca padrões de comprovantes válidos
+ */
+async function getProofPatterns(patternType = null) {
+  try {
+    let query = supabase
+      .from('proof_patterns')
+      .select('*')
+      .order('confidence_score', { ascending: false });
+    
+    if (patternType) {
+      query = query.eq('pattern_type', patternType);
+    }
+    
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar padrões:', err);
+    return [];
+  }
+}
+
+/**
+ * Atualiza padrão de comprovante (aprendizado)
+ */
+async function updateProofPattern(patternType, patternValue, isValid) {
+  try {
+    // Buscar padrão existente
+    const { data: existing } = await supabase
+      .from('proof_patterns')
+      .select('*')
+      .eq('pattern_type', patternType)
+      .eq('pattern_value', patternValue)
+      .single();
+    
+    let successCount = isValid ? 1 : 0;
+    let failureCount = isValid ? 0 : 1;
+    let confidenceScore = isValid ? 60 : 40;
+    
+    if (existing) {
+      successCount = existing.success_count + (isValid ? 1 : 0);
+      failureCount = existing.failure_count + (isValid ? 0 : 1);
+      
+      // Calcular score de confiança (0-100)
+      const total = successCount + failureCount;
+      confidenceScore = total > 0 ? (successCount / total) * 100 : 50;
+    }
+    
+    const { data, error } = await supabase
+      .from('proof_patterns')
+      .upsert({
+        pattern_type: patternType,
+        pattern_value: patternValue,
+        confidence_score: confidenceScore,
+        success_count: successCount,
+        failure_count: failureCount,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'pattern_type,pattern_value'
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao atualizar padrão:', err);
+    throw err;
+  }
+}
+
+// ===== SISTEMA DE RESPOSTAS AUTOMÁTICAS =====
+
+/**
+ * Busca resposta automática para uma palavra-chave
+ */
+async function getAutoResponse(keyword) {
+  try {
+    const keywordLower = keyword.toLowerCase().trim();
+    
+    // Buscar respostas ativas ordenadas por prioridade
+    const { data, error } = await supabase
+      .from('auto_responses')
+      .select('*')
+      .eq('is_active', true)
+      .ilike('keyword', `%${keywordLower}%`)
+      .order('priority', { ascending: false })
+      .order('usage_count', { ascending: true })
+      .limit(1)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  } catch (err) {
+    console.error('Erro ao buscar resposta automática:', err);
+    return null;
+  }
+}
+
+/**
+ * Busca todas as respostas automáticas
+ */
+async function getAllAutoResponses() {
+  try {
+    const { data, error } = await supabase
+      .from('auto_responses')
+      .select('*')
+      .order('priority', { ascending: false })
+      .order('keyword', { ascending: true });
+    
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar respostas automáticas:', err);
+    return [];
+  }
+}
+
+/**
+ * Cria nova resposta automática
+ */
+async function createAutoResponse(keyword, response, priority = 0) {
+  try {
+    const { data, error } = await supabase
+      .from('auto_responses')
+      .insert({
+        keyword: keyword.toLowerCase().trim(),
+        response: response,
+        priority: priority,
+        is_active: true
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao criar resposta automática:', err);
+    throw err;
+  }
+}
+
+/**
+ * Atualiza contador de uso de resposta automática
+ */
+async function updateAutoResponseUsage(responseId) {
+  try {
+    const { data: current } = await supabase
+      .from('auto_responses')
+      .select('usage_count')
+      .eq('id', responseId)
+      .single();
+    
+    const usageCount = (current?.usage_count || 0) + 1;
+    
+    const { data, error } = await supabase
+      .from('auto_responses')
+      .update({
+        usage_count: usageCount,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', responseId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao atualizar uso de resposta:', err);
+    return null;
+  }
+}
+
 /**
  * Recalcula e atualiza o valor total de vendas baseado em todas as transações entregues
  * Útil para sincronizar valores após mudanças ou correções
@@ -2490,6 +3167,20 @@ module.exports = {
   addTicketMessage,
   getTicketMessages,
   updateTicketStatus,
-  assignTicket
+  assignTicket,
+  // Validação de duplicatas
+  generateProofHash,
+  checkDuplicateProof,
+  // Sistema de confiança e aprendizado
+  getTrustedUser,
+  updateTrustedUser,
+  addTrustedUser,
+  getProofPatterns,
+  updateProofPattern,
+  // Respostas automáticas
+  getAutoResponse,
+  getAllAutoResponses,
+  createAutoResponse,
+  updateAutoResponseUsage
 };
 
