@@ -4205,9 +4205,20 @@ Seu comprovante foi analisado e não foi aprovado.
         ]);
       }
       
+      // 🆕 Botão para reverter transação entregue
+      if (transaction.status === 'delivered') {
+        keyboard.push([
+          { text: '🔄 Reverter Transação', callback_data: `reverse_${txid}` }
+        ]);
+      }
+      
       message += `\n*Ações:*\n`;
-      message += `✅ /validar${txid} - Aprovar\n`;
-      message += `❌ /rejeitar${txid} - Rejeitar`;
+      if (transaction.status === 'proof_sent' || transaction.status === 'pending' || transaction.status === 'expired') {
+        message += `✅ /validar${txid} - Aprovar\n`;
+        message += `❌ /rejeitar${txid} - Rejeitar`;
+      } else if (transaction.status === 'delivered') {
+        message += `🔄 Reverter transação (cancela e remove acesso)`;
+      }
       
       return ctx.reply(message, { 
         parse_mode: 'Markdown',

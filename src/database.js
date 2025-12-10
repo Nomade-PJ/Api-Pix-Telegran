@@ -877,6 +877,71 @@ async function cancelTransaction(txid) {
   return false;
 }
 
+/**
+ * Reverte uma transação entregue (cancela e remove acesso)
+ * Remove usuário de grupos se necessário
+ */
+async function reverseTransaction(txid, reason = 'Transação revertida manualmente pelo admin') {
+  try {
+    // Buscar transação
+    const transaction = await getTransactionByTxid(txid);
+    if (!transaction) {
+      throw new Error('Transação não encontrada');
+    }
+    
+    if (transaction.status !== 'delivered') {
+      throw new Error(`Transação não pode ser revertida. Status atual: ${transaction.status}`);
+    }
+    
+    // 1. Atualizar status da transação para cancelled
+    const { error: updateError } = await supabase
+      .from('transactions')
+      .update({
+        status: 'cancelled',
+        notes: reason,
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+    
+    if (updateError) throw updateError;
+    
+    // 2. Se tiver grupo, remover membro do grupo
+    if (transaction.group_id) {
+      try {
+        // Buscar membro ativo do grupo
+        const member = await getGroupMember(transaction.telegram_id, transaction.group_id);
+        if (member) {
+          // Expirar membro (marca como expired)
+          await expireMember(member.id);
+          console.log(`✅ [REVERSE] Membro removido do grupo: ${transaction.telegram_id}`);
+        }
+      } catch (groupErr) {
+        console.error('⚠️ [REVERSE] Erro ao remover do grupo:', groupErr.message);
+        // Continuar mesmo se falhar remoção do grupo
+      }
+    }
+    
+    // 3. Invalidar cache de estatísticas
+    cache.delete('stats_admin');
+    cache.delete('stats_creator');
+    
+    console.log(`✅ [REVERSE] Transação ${txid} revertida com sucesso`);
+    return {
+      success: true,
+      transaction: {
+        ...transaction,
+        status: 'cancelled'
+      }
+    };
+  } catch (err) {
+    console.error('❌ [REVERSE] Erro ao reverter transação:', err);
+    return {
+      success: false,
+      error: err.message
+    };
+  }
+}
+
 // ===== ADMIN =====
 
 async function getPendingTransactions(limit = 10, offset = 0) {
@@ -3194,6 +3259,7 @@ module.exports = {
   validateTransaction,
   markAsDelivered,
   cancelTransaction,
+  reverseTransaction,
   getPendingTransactions,
   getStats,
   getCreatorStats,
