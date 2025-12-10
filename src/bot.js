@@ -3322,6 +3322,12 @@ _Cancelar: /cancelar`, {
   bot.on('text', async (ctx, next) => {
     const session = global._SESSIONS?.[ctx.from.id];
     
+    // 🆕 DEBUG: Log para verificar ordem de execução
+    if (session && session.type === 'admin_reply_ticket') {
+      console.log(`🔍 [BOT-TEXT-HANDLER] Handler do bot.js executado para sessão admin_reply_ticket`);
+      console.log(`🔍 [BOT-TEXT-HANDLER] Usuário: ${ctx.from.id}, Mensagem: ${ctx.message.text?.substring(0, 50)}`);
+    }
+    
     // 🆕 RESPOSTAS AUTOMÁTICAS/FAQ - Verificar antes de processar sessões
     // Se for sessão admin (incluindo admin_reply_ticket), passar para próximo handler (admin.js)
     const isAdminSession = session && ['create_product', 'edit_product', 'admin_broadcast', 'admin_reply_ticket', 'add_auto_response'].includes(session.type);
@@ -3329,6 +3335,7 @@ _Cancelar: /cancelar`, {
     
     // Se for sessão admin, passar para handler do admin.js
     if (isAdminSession) {
+      console.log(`🔍 [BOT-TEXT-HANDLER] Passando para próximo handler (admin.js) para sessão: ${session.type}`);
       return next();
     }
     
