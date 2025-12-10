@@ -325,6 +325,206 @@ Selecione uma opção abaixo:`;
   });
   
   // ===== VALIDAR TRANSAÇÃO =====
+  // ===== REVERTER TRANSAÇÃO POR USUÁRIO E VALOR =====
+  bot.hears(/^\/reverter[_\s]+(\d+)[_\s]+([\d,\.]+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
+      const telegramId = ctx.match[1];
+      const amountStr = ctx.match[2].replace(',', '.');
+      const amount = parseFloat(amountStr);
+      
+      if (isNaN(amount)) {
+        return ctx.reply('❌ Valor inválido. Use: /reverter <telegram_id> <valor>\n\nExemplo: /reverter 8385308498 21.90');
+      }
+      
+      // Buscar transações
+      const transactions = await db.getTransactionsByUserAndAmount(telegramId, amount);
+      
+      if (transactions.length === 0) {
+        return ctx.reply(`❌ Nenhuma transação encontrada para:\n\n👤 ID: ${telegramId}\n💰 Valor: R$ ${amount.toFixed(2)}\n\nVerifique se o ID e valor estão corretos.`);
+      }
+      
+      if (transactions.length > 1) {
+        // Múltiplas transações - mostrar lista
+        let message = `⚠️ *Múltiplas transações encontradas*\n\n`;
+        message += `👤 Usuário: ${telegramId}\n💰 Valor: R$ ${amount.toFixed(2)}\n\n`;
+        message += `*Transações encontradas:*\n\n`;
+        
+        transactions.forEach((t, index) => {
+          const date = t.created_at ? new Date(t.created_at).toLocaleString('pt-BR') : 'N/A';
+          message += `${index + 1}. 🆔 TXID: \`${t.txid}\`\n`;
+          message += `   📅 Data: ${date}\n`;
+          message += `   📊 Status: ${t.status}\n\n`;
+        });
+        
+        message += `Use: /reverter_txid <TXID> para reverter uma específica.`;
+        
+        return ctx.reply(message, { parse_mode: 'Markdown' });
+      }
+      
+      // Apenas uma transação - reverter diretamente
+      const transaction = transactions[0];
+      
+      // Confirmar reversão
+      const user = transaction.user_id ? await db.getUserByUUID(transaction.user_id) : null;
+      const userName = user ? `${user.first_name} (@${user?.username || 'N/A'})` : 'N/A';
+      
+      return ctx.reply(`⚠️ *CONFIRMAR REVERSÃO DE TRANSAÇÃO*
+
+🆔 TXID: \`${transaction.txid}\`
+👤 Usuário: ${userName}
+💰 Valor: R$ ${transaction.amount}
+📊 Status: ${transaction.status}
+📦 Produto: ${transaction.product_id || transaction.media_pack_id || transaction.group_id || 'N/A'}
+
+⚠️ *ATENÇÃO:*
+• A transação será cancelada
+• Entregas de mídia serão deletadas
+• O usuário perderá acesso ao produto/grupo
+• Esta ação não pode ser desfeita
+
+Para confirmar, responda: /confirmar_reverter_${transaction.txid}`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao buscar transação para reversão:', err);
+      return ctx.reply('❌ Erro ao buscar transação. Verifique os logs.');
+    }
+  });
+  
+  // Comando para confirmar reversão por TXID
+  bot.hears(/^\/confirmar_reverter_(.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
+      const txid = ctx.match[1].trim();
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      if (!['validated', 'delivered'].includes(transaction.status)) {
+        return ctx.reply(`⚠️ Esta transação não pode ser revertida.\n\nStatus atual: ${transaction.status}\n\nApenas transações validadas ou entregues podem ser revertidas.`);
+      }
+      
+      // Reverter transação
+      const result = await db.reverseTransaction(txid, 'Transação revertida - comprovante incorreto aprovado por engano');
+      
+      if (!result.success) {
+        return ctx.reply(`❌ Erro ao reverter transação:\n\n${result.error}`);
+      }
+      
+      const trans = result.transaction;
+      const user = trans.user_id ? await db.getUserByUUID(trans.user_id) : null;
+      
+      // Notificar usuário
+      try {
+        await ctx.telegram.sendMessage(trans.telegram_id, `⚠️ *TRANSAÇÃO CANCELADA*
+
+Sua transação foi cancelada pelo administrador.
+
+🆔 TXID: \`${txid}\`
+💰 Valor: R$ ${trans.amount}
+📅 Cancelada em: ${new Date().toLocaleString('pt-BR')}
+
+*Motivo:* Comprovante incorreto aprovado por engano.
+
+Se você acredita que isso foi um erro, entre em contato com o suporte: /suporte`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (notifyErr) {
+        console.error('Erro ao notificar usuário:', notifyErr);
+      }
+      
+      // Se for grupo, tentar remover do grupo via Telegram
+      if (trans.group_id) {
+        try {
+          const group = await db.getGroupById(trans.group_id);
+          if (group && group.group_id) {
+            try {
+              await ctx.telegram.banChatMember(group.group_id, trans.telegram_id);
+              await ctx.telegram.unbanChatMember(group.group_id, trans.telegram_id, { only_if_banned: true });
+              console.log(`✅ [REVERSE] Usuário removido do grupo via Telegram: ${trans.telegram_id}`);
+            } catch (groupErr) {
+              console.error('⚠️ [REVERSE] Erro ao remover do grupo via Telegram:', groupErr.message);
+            }
+          }
+        } catch (groupErr) {
+          console.error('⚠️ [REVERSE] Erro ao buscar grupo:', groupErr.message);
+        }
+      }
+      
+      return ctx.reply(`✅ *TRANSAÇÃO REVERTIDA COM SUCESSO*
+
+🆔 TXID: \`${txid}\`
+👤 Usuário: ${user ? `${user.first_name} (@${user?.username || 'N/A'})` : 'N/A'}
+💰 Valor: R$ ${trans.amount}
+
+✅ Transação cancelada
+✅ Entregas de mídia deletadas (se houver)
+✅ Acesso removido (se grupo)
+✅ Usuário notificado
+
+📋 A transação foi completamente revertida.`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao reverter transação:', err);
+      return ctx.reply(`❌ Erro ao reverter transação:\n\n${err.message}`);
+    }
+  });
+  
+  // Comando alternativo para reverter diretamente por TXID
+  bot.hears(/^\/reverter_txid[_\s](.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return ctx.reply('❌ Acesso negado.');
+      
+      const txid = ctx.match[1].trim();
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      if (!['validated', 'delivered'].includes(transaction.status)) {
+        return ctx.reply(`⚠️ Esta transação não pode ser revertida.\n\nStatus atual: ${transaction.status}\n\nApenas transações validadas ou entregues podem ser revertidas.`);
+      }
+      
+      // Mostrar confirmação
+      const user = transaction.user_id ? await db.getUserByUUID(transaction.user_id) : null;
+      const userName = user ? `${user.first_name} (@${user?.username || 'N/A'})` : 'N/A';
+      
+      return ctx.reply(`⚠️ *CONFIRMAR REVERSÃO DE TRANSAÇÃO*
+
+🆔 TXID: \`${txid}\`
+👤 Usuário: ${userName}
+💰 Valor: R$ ${transaction.amount}
+📊 Status: ${transaction.status}
+📦 Produto: ${transaction.product_id || transaction.media_pack_id || transaction.group_id || 'N/A'}
+
+⚠️ *ATENÇÃO:*
+• A transação será cancelada
+• Entregas de mídia serão deletadas
+• O usuário perderá acesso ao produto/grupo
+• Esta ação não pode ser desfeita
+
+Para confirmar, responda: /confirmar_reverter_${txid}`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao buscar transação:', err);
+      return ctx.reply('❌ Erro ao buscar transação. Verifique os logs.');
+    }
+  });
+
   bot.hears(/^\/validar[_\s](.+)$/, async (ctx) => {
     try {
       const isAdmin = await db.isUserAdmin(ctx.from.id);

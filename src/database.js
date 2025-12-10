@@ -641,6 +641,29 @@ async function getUserTransactions(telegramId, limit = 20) {
 }
 
 /**
+ * Busca transações por ID do Telegram e valor
+ * Útil para encontrar transações específicas para reversão
+ */
+async function getTransactionsByUserAndAmount(telegramId, amount) {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .eq('amount', amount)
+      .in('status', ['validated', 'delivered'])
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar transações por usuário e valor:', err);
+    return [];
+  }
+}
+
+/**
  * Gera hash do comprovante para verificação de duplicatas
  */
 function generateProofHash(fileId, amount, pixKey) {
@@ -880,6 +903,7 @@ async function cancelTransaction(txid) {
 /**
  * Reverte uma transação entregue (cancela e remove acesso)
  * Remove usuário de grupos se necessário
+ * Deleta entregas de mídia se houver
  */
 async function reverseTransaction(txid, reason = 'Transação revertida manualmente pelo admin') {
   try {
@@ -889,21 +913,29 @@ async function reverseTransaction(txid, reason = 'Transação revertida manualme
       throw new Error('Transação não encontrada');
     }
     
-    if (transaction.status !== 'delivered') {
+    // Permitir reverter transações validadas ou entregues
+    if (!['validated', 'delivered'].includes(transaction.status)) {
       throw new Error(`Transação não pode ser revertida. Status atual: ${transaction.status}`);
     }
     
-    // 1. Atualizar status da transação para cancelled
-    const { error: updateError } = await supabase
-      .from('transactions')
-      .update({
-        status: 'cancelled',
-        notes: reason,
-        updated_at: new Date().toISOString()
-      })
-      .eq('txid', txid);
-    
-    if (updateError) throw updateError;
+    // 1. Deletar entregas de mídia se houver
+    if (transaction.media_pack_id && transaction.id) {
+      try {
+        const { error: deleteMediaError } = await supabase
+          .from('media_deliveries')
+          .delete()
+          .eq('transaction_id', transaction.id);
+        
+        if (deleteMediaError) {
+          console.error('⚠️ [REVERSE] Erro ao deletar entregas de mídia:', deleteMediaError.message);
+        } else {
+          console.log(`✅ [REVERSE] Entregas de mídia deletadas para transação ${txid}`);
+        }
+      } catch (mediaErr) {
+        console.error('⚠️ [REVERSE] Erro ao deletar entregas de mídia:', mediaErr.message);
+        // Continuar mesmo se falhar
+      }
+    }
     
     // 2. Se tiver grupo, remover membro do grupo
     if (transaction.group_id) {
@@ -921,7 +953,19 @@ async function reverseTransaction(txid, reason = 'Transação revertida manualme
       }
     }
     
-    // 3. Invalidar cache de estatísticas
+    // 3. Atualizar status da transação para cancelled
+    const { error: updateError } = await supabase
+      .from('transactions')
+      .update({
+        status: 'cancelled',
+        notes: reason,
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+    
+    if (updateError) throw updateError;
+    
+    // 4. Invalidar cache de estatísticas
     cache.delete('stats_admin');
     cache.delete('stats_creator');
     
@@ -3255,6 +3299,7 @@ module.exports = {
   getTransactionByTxid,
   getLastPendingTransaction,
   getUserTransactions,
+  getTransactionsByUserAndAmount,
   updateTransactionProof,
   validateTransaction,
   markAsDelivered,
