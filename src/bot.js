@@ -2672,19 +2672,19 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
 
 📝 *Selecione o tipo de problema:*
 
-Escolha uma das opções abaixo ou digite seu próprio assunto:`;
+Clique em uma das opções abaixo:`;
 
       const keyboard = Markup.inlineKeyboard([
         [
-          Markup.button.callback('📦 Problemas com entrega', 'ticket_subject_entrega'),
-          Markup.button.callback('❓ Dúvidas sobre produto', 'ticket_subject_duvida')
+          Markup.button.callback('📦 P/Entrega', 'ticket_create_entrega'),
+          Markup.button.callback('❓ D/Produtos', 'ticket_create_produto')
         ],
         [
-          Markup.button.callback('💳 Problemas com pagamento', 'ticket_subject_pagamento'),
-          Markup.button.callback('🔐 Problemas de acesso', 'ticket_subject_acesso')
+          Markup.button.callback('💳 P/Pagamentos', 'ticket_create_pagamento'),
+          Markup.button.callback('🔐 P/Acesso', 'ticket_create_acesso')
         ],
         [
-          Markup.button.callback('📝 Outro assunto', 'ticket_subject_outro')
+          Markup.button.callback('📝 Outros', 'ticket_create_outro')
         ],
         [
           Markup.button.callback('❌ Cancelar', 'back_to_start')
@@ -2713,72 +2713,93 @@ Escolha uma das opções abaixo ou digite seu próprio assunto:`;
     }
   });
   
-  // Handlers para os assuntos pré-definidos
-  bot.action(/^ticket_subject_(.+)$/, async (ctx) => {
+  // Handlers para criar tickets diretamente
+  bot.action(/^ticket_create_(.+)$/, async (ctx) => {
     try {
       await ctx.answerCbQuery();
-      const subjectType = ctx.match[1];
+      const ticketType = ctx.match[1];
       
       const subjectMap = {
-        'entrega': 'Problemas com entrega',
-        'duvida': 'Dúvidas sobre produto',
-        'pagamento': 'Problemas com pagamento',
-        'acesso': 'Problemas de acesso',
-        'outro': 'Outro assunto'
+        'entrega': 'P/Entrega',
+        'produto': 'D/Produtos',
+        'pagamento': 'P/Pagamentos',
+        'acesso': 'P/Acesso',
+        'outro': 'Outros'
       };
       
-      const subject = subjectMap[subjectType] || 'Outro assunto';
+      const subject = subjectMap[ticketType] || 'Outros';
       
-      global._SESSIONS = global._SESSIONS || {};
-      global._SESSIONS[ctx.from.id] = {
-        type: 'create_ticket',
-        step: 'message',
-        subject: subject,
-        subjectType: subjectType
-      };
-      
-      // Se for "outro", pedir para digitar o assunto
-      if (subjectType === 'outro') {
-        global._SESSIONS[ctx.from.id].step = 'subject';
-        return ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
+      // Se for "outro", redirecionar para @suportedireto
+      if (ticketType === 'outro') {
+        return ctx.editMessageText(`💬 *SUPORTE DIRETO*
 
-📝 *Digite o assunto do seu ticket:*
+Para outros assuntos, entre em contato diretamente:
 
-Exemplos:
-• Problema com entrega
-• Dúvida sobre produto
-• Problema com pagamento
+👉 @suportedireto
 
-_Cancelar: /cancelar_`, {
+Envie sua mensagem para o suporte direto acima.`, {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[
-              { text: '❌ Cancelar', callback_data: 'back_to_start' }
+              { text: '🏠 Voltar', callback_data: 'back_to_start' }
             ]]
           }
         });
       }
       
-      // Para outros tipos, ir direto para o passo 2 (mensagem)
-      return ctx.editMessageText(`💬 *NOVO TICKET DE SUPORTE*
+      // Para os outros tipos, criar ticket direto
+      const user = await db.getOrCreateUser(ctx.from);
+      const ticket = await db.createSupportTicket(
+        ctx.from.id,
+        user.id,
+        subject,
+        `Ticket criado automaticamente - Tipo: ${subject}`
+      );
+      
+      // Notificar admins
+      const admins = await db.getAllAdmins();
+      for (const admin of admins) {
+        try {
+          await ctx.telegram.sendMessage(admin.telegram_id, `🆕 *NOVO TICKET DE SUPORTE*
 
-📝 *Assunto:* ${subject}
+📋 *Ticket:* ${ticket.ticket_number}
+👤 *Usuário:* ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 *ID:* ${ctx.from.id}
+📝 *Assunto:* ${ticket.subject}
 
-📝 *Passo 2/2: Mensagem*
+📅 ${new Date().toLocaleString('pt-BR')}`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticket.id}` },
+                { text: '✅ Atribuir a Mim', callback_data: `admin_assign_ticket_${ticket.id}` }
+              ]]
+            }
+          });
+        } catch (err) {
+          console.error('Erro ao notificar admin:', err);
+        }
+      }
+      
+      return ctx.editMessageText(`✅ *Ticket criado com sucesso!*
 
-Descreva seu problema ou dúvida em detalhes:
+📋 *Número:* ${ticket.ticket_number}
+📝 *Assunto:* ${ticket.subject}
 
-_Cancelar: /cancelar_`, {
+⏳ Um admin irá responder em breve.
+
+💬 *Use:* /suporte para ver seus tickets`, {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            { text: '❌ Cancelar', callback_data: 'back_to_start' }
+            { text: '📋 Ver Meus Tickets', callback_data: 'view_my_tickets' },
+            { text: '🏠 Voltar', callback_data: 'back_to_start' }
           ]]
         }
       });
     } catch (err) {
       console.error('❌ [TICKET] Erro:', err);
-      return ctx.reply('❌ Erro ao processar. Tente novamente.');
+      return ctx.reply('❌ Erro ao criar ticket. Tente novamente.');
     }
   });
   
@@ -3350,93 +3371,6 @@ ${autoHelpResponse}
     return next();
   });
   
-  // Handler para ticket resolvido
-  bot.action('ticket_resolved', async (ctx) => {
-    try {
-      await ctx.answerCbQuery('✅ Ótimo! Fico feliz em ajudar!');
-      return ctx.editMessageText(`✅ *Problema Resolvido!*
-
-Fico feliz que conseguimos ajudar! 😊
-
-Se precisar de mais alguma coisa, estou sempre aqui.
-
-💬 *Use:* /suporte para acessar o suporte novamente.`, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '🏠 Voltar ao Início', callback_data: 'back_to_start' }
-          ]]
-        }
-      });
-    } catch (err) {
-      console.error('❌ [TICKET] Erro:', err);
-      return ctx.reply('✅ Obrigado pelo feedback!');
-    }
-  });
-  
-  // Handler para quando precisa de ajuda (criar ticket)
-  bot.action(/^ticket_need_help_(.+)$/, async (ctx) => {
-    try {
-      await ctx.answerCbQuery('📝 Criando ticket...');
-      const data = ctx.match[1];
-      const parts = data.split('_');
-      const subject = decodeURIComponent(parts.slice(0, -1).join('_')).substring(0, 100);
-      const message = decodeURIComponent(parts[parts.length - 1]).substring(0, 500);
-      
-      const user = await db.getOrCreateUser(ctx.from);
-      const ticket = await db.createSupportTicket(
-        ctx.from.id,
-        user.id,
-        subject || 'Precisa de ajuda',
-        message || 'Preciso de ajuda de um administrador'
-      );
-      
-      // Notificar admins
-      const admins = await db.getAllAdmins();
-      for (const admin of admins) {
-        try {
-          await ctx.telegram.sendMessage(admin.telegram_id, `🆕 *NOVO TICKET DE SUPORTE*
-
-📋 *Ticket:* ${ticket.ticket_number}
-👤 *Usuário:* ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
-🆔 *ID:* ${ctx.from.id}
-📝 *Assunto:* ${ticket.subject}
-💬 *Mensagem:* ${ticket.message.substring(0, 200)}${ticket.message.length > 200 ? '...' : ''}
-
-📅 ${new Date().toLocaleString('pt-BR')}`, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticket.id}` },
-                { text: '✅ Atribuir a Mim', callback_data: `admin_assign_ticket_${ticket.id}` }
-              ]]
-            }
-          });
-        } catch (err) {
-          console.error('Erro ao notificar admin:', err);
-        }
-      }
-      
-      return ctx.editMessageText(`✅ *Ticket criado com sucesso!*
-
-📋 *Número:* ${ticket.ticket_number}
-📝 *Assunto:* ${ticket.subject}
-
-⏳ Um admin irá responder em breve.
-
-💬 *Use:* /suporte para ver seus tickets`, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '📋 Ver Meus Tickets', callback_data: 'view_my_tickets' }
-          ]]
-        }
-      });
-    } catch (err) {
-      console.error('❌ [TICKET] Erro:', err);
-      return ctx.reply('❌ Erro ao criar ticket. Tente novamente.');
-    }
-  });
 
   // Integrar controle de grupos
   const groupControl = require('./groupControl');
