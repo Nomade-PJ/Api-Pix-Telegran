@@ -277,12 +277,15 @@ Selecione uma opção abaixo:`;
         [
           Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
         ],
-        [
-          Markup.button.callback('📦 Reentregar Packs', 'admin_reentregar_packs')
-        ],
-        [
-          Markup.button.callback('🔄 Atualizar', 'admin_refresh')
-        ]
+      [
+        Markup.button.callback('📦 Reentregar Packs', 'admin_reentregar_packs')
+      ],
+      [
+        Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
+      ],
+      [
+        Markup.button.callback('🔄 Atualizar', 'admin_refresh')
+      ]
       ]);
       
       return ctx.reply(message, {
@@ -1087,6 +1090,35 @@ Digite o ID do produto:
       if (session.type === 'admin_reply_ticket') {
         console.log(`🔍 [ADMIN-TEXT-HANDLER-1] Sessão admin_reply_ticket detectada, passando para próximo handler`);
         return next();
+      }
+      
+      // Verificar se é entrega por TXID
+      if (session.type === 'entregar_txid' && session.step === 'waiting_txid') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        const txid = ctx.message.text.trim();
+        
+        // Validar TXID (não vazio)
+        if (!txid || txid.length < 3) {
+          return ctx.reply('❌ TXID inválido. Digite um TXID válido.\n\nExemplo: `M328716869U0Q`', {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
+              ]]
+            }
+          });
+        }
+        
+        // Limpar sessão
+        delete global._SESSIONS[ctx.from.id];
+        
+        // Processar entrega
+        return await processarEntregaPorTxid(ctx, txid);
       }
       
       // Verificar se é busca de usuário
@@ -1979,6 +2011,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('📦 Reentregar Packs', 'admin_reentregar_packs')
       ],
       [
+        Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
+      ],
+      [
         Markup.button.callback('🔄 Atualizar', 'admin_refresh')
       ]
     ]);
@@ -2393,6 +2428,54 @@ Selecione uma opção abaixo:`;
     }
   });
   
+  // ===== ENTREGAR POR TXID =====
+  bot.action('admin_entregar_txid', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Preparando entrega...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      // Criar sessão para pedir o TXID
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'entregar_txid',
+        step: 'waiting_txid'
+      };
+      
+      return ctx.reply('🔄 *ENTREGAR POR TXID*\n\nDigite o *TXID* da transação que deseja entregar:\n\nExemplo: `M328716869U0Q`\n\n⚠️ *Atenção:* Esta função entregará o conteúdo baseado no tipo de compra (Produto, Media Pack ou Grupo).', {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('Erro ao iniciar entrega por TXID:', err);
+      return ctx.reply('❌ Erro ao iniciar entrega. Verifique os logs.');
+    }
+  });
+  
+  // Cancelar entrega por TXID
+  bot.action('cancel_entregar_txid', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('❌ Cancelado');
+      global._SESSIONS = global._SESSIONS || {};
+      if (global._SESSIONS[ctx.from.id]) {
+        delete global._SESSIONS[ctx.from.id];
+      }
+      return ctx.reply('❌ Operação cancelada.', {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('Erro ao cancelar entrega:', err);
+    }
+  });
+
   // ===== VER TRANSAÇÕES ENTREGUES/VALIDADAS =====
   bot.action('admin_entregues', async (ctx) => {
     await ctx.answerCbQuery('📦 Carregando entregues...');
@@ -4149,6 +4232,232 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
       return ctx.reply('❌ Erro ao remover grupo.');
     }
   });
+
+  // ===== FUNÇÃO PARA PROCESSAR ENTREGA POR TXID =====
+  async function processarEntregaPorTxid(ctx, txid) {
+    try {
+      await ctx.reply('⏳ Buscando transação e preparando entrega...');
+      
+      // Buscar transação
+      const transaction = await db.getTransactionByTxid(txid);
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.\n\nVerifique se o TXID está correto.', {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+            ]]
+          }
+        });
+      }
+      
+      // Validar transação (deve estar validada para entregar)
+      if (!['validated', 'delivered'].includes(transaction.status)) {
+        // Se não está validada, validar primeiro
+        if (transaction.status !== 'validated') {
+          await db.validateTransaction(txid, transaction.user_id || ctx.from.id);
+        }
+      }
+      
+      const user = transaction.user_id ? await db.getUserByUUID(transaction.user_id) : null;
+      const userName = user ? `${user.first_name} (@${user?.username || 'N/A'})` : 'N/A';
+      
+      // Verificar tipo de entrega e processar
+      let entregaRealizada = false;
+      let mensagemEntrega = '';
+      
+      // 1. MEDIA PACK
+      if (transaction.media_pack_id) {
+        const packId = transaction.media_pack_id;
+        
+        try {
+          // Buscar o internal ID da transação
+          const { data: transData, error: transError } = await db.supabase
+            .from('transactions')
+            .select('id')
+            .eq('txid', txid)
+            .single();
+          
+          if (transError) throw transError;
+          
+          await ctx.reply('📸 Entregando media pack...');
+          
+          // Entregar media pack
+          await deliver.deliverMediaPack(
+            transaction.telegram_id,
+            packId,
+            transaction.user_id,
+            transData.id,
+            db
+          );
+          
+          await db.markAsDelivered(txid);
+          entregaRealizada = true;
+          mensagemEntrega = `📸 Media Pack entregue com sucesso!`;
+          
+        } catch (err) {
+          console.error('Erro ao entregar media pack:', err);
+          return ctx.reply(`❌ *Erro ao entregar Media Pack*\n\nErro: ${err.message}\n\nVerifique os logs para mais detalhes.`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+              ]]
+            }
+          });
+        }
+      }
+      // 2. PRODUTO
+      else if (transaction.product_id) {
+        try {
+          await ctx.reply('📦 Entregando produto...');
+          
+          const product = await db.getProduct(transaction.product_id, true);
+          if (!product) {
+            throw new Error(`Produto "${transaction.product_id}" não encontrado`);
+          }
+          
+          await deliver.deliverContent(transaction.telegram_id, product);
+          await db.markAsDelivered(txid);
+          entregaRealizada = true;
+          mensagemEntrega = `📦 Produto "${product.name}" entregue com sucesso!`;
+          
+        } catch (err) {
+          console.error('Erro ao entregar produto:', err);
+          return ctx.reply(`❌ *Erro ao entregar Produto*\n\nErro: ${err.message}\n\nVerifique os logs para mais detalhes.`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+              ]]
+            }
+          });
+        }
+      }
+      // 3. GRUPO
+      else if (transaction.group_id || (transaction.product_id && transaction.product_id.startsWith('group_'))) {
+        let group = null;
+        
+        // Método novo: usar group_id direto
+        if (transaction.group_id) {
+          const { data: groupData, error: groupError } = await db.supabase
+            .from('groups')
+            .select('*')
+            .eq('id', transaction.group_id)
+            .single();
+          
+          if (!groupError && groupData) {
+            group = groupData;
+          }
+        }
+        
+        // Método antigo: usar product_id (compatibilidade)
+        if (!group && transaction.product_id && transaction.product_id.startsWith('group_')) {
+          const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+          group = await db.getGroupById(groupTelegramId);
+        }
+        
+        if (group) {
+          try {
+            await ctx.reply('👥 Adicionando ao grupo...');
+            
+            // Adicionar ou renovar assinatura no banco
+            await db.addGroupMember({
+              telegramId: transaction.telegram_id,
+              userId: transaction.user_id,
+              groupId: group.id,
+              days: group.subscription_days
+            });
+            
+            // Tentar adicionar usuário diretamente ao grupo
+            await deliver.addUserToGroup(ctx.telegram, transaction.telegram_id, group);
+            
+            // Calcular data de expiração
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
+            
+            // Notificar usuário
+            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *ASSINATURA APROVADA!*
+
+👥 Grupo: ${group.group_name}
+📅 Acesso válido por: ${group.subscription_days} dias
+🕐 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+
+${group.group_link ? `🔗 Link: ${group.group_link}` : ''}
+
+Obrigado pela preferência! 💚`, {
+              parse_mode: 'Markdown'
+            });
+            
+            await db.markAsDelivered(txid);
+            entregaRealizada = true;
+            mensagemEntrega = `👥 Usuário adicionado ao grupo "${group.group_name}"!`;
+            
+          } catch (err) {
+            console.error('Erro ao adicionar ao grupo:', err);
+            return ctx.reply(`❌ *Erro ao adicionar ao grupo*\n\nErro: ${err.message}\n\nVerifique os logs para mais detalhes.`, {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+                ]]
+              }
+            });
+          }
+        } else {
+          return ctx.reply('❌ Grupo não encontrado para esta transação.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+              ]]
+            }
+          });
+        }
+      } else {
+        return ctx.reply('⚠️ *Tipo de transação não identificado*\n\nEsta transação não possui produto, media pack ou grupo associado.', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+            ]]
+          }
+        });
+      }
+      
+      // Mensagem de sucesso
+      if (entregaRealizada) {
+        return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
+
+🆔 TXID: \`${txid}\`
+👤 Usuário: ${userName}
+💰 Valor: R$ ${transaction.amount}
+📦 Tipo: ${transaction.media_pack_id ? 'Media Pack' : transaction.product_id ? 'Produto' : 'Grupo'}
+
+${mensagemEntrega}
+
+✅ Status: Entregue
+📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '📋 Ver Detalhes', callback_data: `details_${txid}` },
+              { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+            ]]
+          }
+        });
+      }
+      
+    } catch (err) {
+      console.error('Erro ao processar entrega por TXID:', err);
+      return ctx.reply(`❌ *Erro ao processar entrega*\n\nErro: ${err.message}\n\nVerifique os logs para mais detalhes.`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+    }
+  }
 
   // ===== APROVAR/REJEITAR TRANSAÇÕES VIA BOTÕES =====
   
