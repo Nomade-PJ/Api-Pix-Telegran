@@ -4275,7 +4275,72 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
         return ctx.reply('❌ Media pack não encontrado.');
       }
       
-      // Entregar media pack (criar transação temporária para tracking)
+      // Buscar a transação REAL do usuário para pegar o valor correto
+      const { data: userTransactions } = await db.supabase
+        .from('transactions')
+        .select('*')
+        .eq('telegram_id', targetUserId)
+        .eq('media_pack_id', packId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      let actualAmount = pack.price; // Valor padrão
+      let existingTransaction = null;
+      
+      if (userTransactions && userTransactions.length > 0) {
+        existingTransaction = userTransactions[0];
+        actualAmount = existingTransaction.amount;
+        
+        // Se a transação existe e está pendente/proof_sent, validar e entregar a original
+        if (['pending', 'proof_sent', 'validated'].includes(existingTransaction.status)) {
+          console.log(`✅ [MANUAL-DELIVERY] Usando transação existente ${existingTransaction.txid} com valor R$ ${actualAmount}`);
+          
+          // Validar se ainda não foi validada
+          if (existingTransaction.status !== 'validated') {
+            await db.validateTransaction(existingTransaction.txid, targetUser.id);
+          }
+          
+          // Entregar usando a transação original
+          await deliver.deliverMediaPack(
+            targetUserId,
+            packId,
+            targetUser.id,
+            existingTransaction.id,
+            db
+          );
+          
+          // Marcar como entregue
+          await db.markAsDelivered(existingTransaction.txid);
+          
+          // Mensagem de sucesso
+          return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
+
+👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
+🆔 ID: ${targetUserId}
+📸 Media Pack: ${pack.name}
+💰 Valor: R$ ${actualAmount}
+🆔 TXID: ${existingTransaction.txid}
+
+✅ Status: Entregue
+📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+              ]]
+            }
+          });
+        }
+      } else {
+        // Se não encontrou transação, usar o menor valor do variable_prices
+        if (pack.variable_prices && pack.variable_prices.length > 0) {
+          const prices = pack.variable_prices.map(p => parseFloat(p.price));
+          actualAmount = Math.min(...prices);
+          console.log(`ℹ️ [MANUAL-DELIVERY] Nenhuma transação encontrada, usando menor valor: R$ ${actualAmount}`);
+        }
+      }
+      
+      // Criar transação temporária apenas se não houver transação válida
       const tempTxid = `MANUAL_${Date.now()}_${targetUserId}`;
       const { data: tempTransaction, error: transError } = await db.supabase
         .from('transactions')
@@ -4284,7 +4349,7 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
           user_id: targetUser.id,
           telegram_id: targetUserId,
           media_pack_id: packId,
-          amount: pack.price,
+          amount: actualAmount,
           pix_key: 'MANUAL_DELIVERY',
           pix_payload: 'MANUAL_DELIVERY',
           status: 'delivered',
@@ -4314,7 +4379,8 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
 👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
 🆔 ID: ${targetUserId}
 📸 Media Pack: ${pack.name}
-💰 Valor: R$ ${pack.price}
+💰 Valor: R$ ${actualAmount}
+🆔 TXID: ${tempTxid}
 
 ✅ Status: Entregue
 📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
