@@ -278,9 +278,6 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
         ],
       [
-        Markup.button.callback('📦 Reentregar Packs', 'admin_reentregar_packs')
-      ],
-      [
         Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
       ],
       [
@@ -1092,19 +1089,19 @@ Digite o ID do produto:
         return next();
       }
       
-      // Verificar se é entrega por TXID
-      if (session.type === 'entregar_txid' && session.step === 'waiting_txid') {
+      // Verificar se é entrega manual - Step 1: Receber ID do usuário
+      if (session.type === 'entregar_txid' && session.step === 'waiting_user_id') {
         const isAdmin = await db.isUserAdmin(ctx.from.id);
         if (!isAdmin) {
           delete global._SESSIONS[ctx.from.id];
           return;
         }
         
-        const txid = ctx.message.text.trim();
+        const userId = ctx.message.text.trim();
         
-        // Validar TXID (não vazio)
-        if (!txid || txid.length < 3) {
-          return ctx.reply('❌ TXID inválido. Digite um TXID válido.\n\nExemplo: `M328716869U0Q`', {
+        // Validar ID (deve ser numérico)
+        if (!/^\d+$/.test(userId)) {
+          return ctx.reply('❌ ID inválido. Digite apenas números.\n\nExemplo: `6224210204`', {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [[
@@ -1114,11 +1111,72 @@ Digite o ID do produto:
           });
         }
         
-        // Limpar sessão
-        delete global._SESSIONS[ctx.from.id];
+        // Verificar se usuário existe
+        const user = await db.getUserByTelegramId(parseInt(userId));
+        if (!user) {
+          return ctx.reply('❌ Usuário não encontrado.\n\nVerifique se o ID está correto e se o usuário já usou o bot pelo menos uma vez.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
+              ]]
+            }
+          });
+        }
         
-        // Processar entrega
-        return await processarEntregaPorTxid(ctx, txid);
+        // Buscar produtos, grupos e media packs disponíveis
+        await ctx.reply('⏳ Buscando produtos disponíveis...');
+        
+        const [products, groups, mediaPacks] = await Promise.all([
+          db.getAllProducts(),
+          db.getAllGroups(),
+          db.getAllMediaPacks()
+        ]);
+        
+        if (products.length === 0 && groups.length === 0 && mediaPacks.length === 0) {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Nenhum produto, grupo ou media pack disponível no momento.');
+        }
+        
+        // Atualizar sessão com o ID do usuário
+        global._SESSIONS[ctx.from.id] = {
+          type: 'entregar_txid',
+          step: 'waiting_product_selection',
+          targetUserId: parseInt(userId),
+          targetUser: user
+        };
+        
+        // Gerar botões de produtos (igual ao /start)
+        const buttons = [];
+        
+        // Botões de produtos
+        for (const product of products) {
+          const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
+          const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+          buttons.push([{ text: buttonText, callback_data: `manual_deliver_product:${product.product_id}` }]);
+        }
+        
+        // Botões de media packs
+        const activeMediaPacks = mediaPacks.filter(p => p.is_active);
+        for (const pack of activeMediaPacks) {
+          buttons.push([{ text: pack.name, callback_data: `manual_deliver_mediapack:${pack.pack_id}` }]);
+        }
+        
+        // Botões de grupos
+        const activeGroups = groups.filter(g => g.is_active);
+        for (const group of activeGroups) {
+          const groupButtonText = group.group_name || `👥 Grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`;
+          buttons.push([{ text: groupButtonText, callback_data: `manual_deliver_group:${group.group_id}` }]);
+        }
+        
+        // Botão de cancelar
+        buttons.push([{ text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }]);
+        
+        return ctx.reply(`✅ *Usuário encontrado!*\n\n👤 Nome: ${user.first_name}${user.username ? ` (@${user.username})` : ''}\n🆔 ID: ${userId}\n\n📦 *Selecione o produto/grupo para entregar:*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: buttons
+          }
+        });
       }
       
       // Verificar se é busca de usuário
@@ -1151,7 +1209,7 @@ Digite o ID do produto:
       }
       
       // Verificar se é broadcast do admin
-      if (session.type === 'admin_broadcast' && session.step === 'waiting_message') {
+      if (session.type === 'admin_broadcast' && (session.step === 'waiting_message' || session.step === 'message')) {
         const isAdmin = await db.isUserAdmin(ctx.from.id);
         if (!isAdmin) {
           delete global._SESSIONS[ctx.from.id];
@@ -1164,17 +1222,32 @@ Digite o ID do produto:
         global._SESSIONS[ctx.from.id] = {
           type: 'admin_broadcast',
           step: 'confirm',
-          data: { message }
+          data: { message },
+          broadcastType: session.broadcastType || 'simple',
+          productId: session.productId,
+          productName: session.productName,
+          productPrice: session.productPrice,
+          mediaPackId: session.mediaPackId,
+          packName: session.packName,
+          packPrice: session.packPrice
         };
         
-        const previewMessage = `📢 *CONFIRMAR BROADCAST*
+        let previewMessage = `📢 *CONFIRMAR BROADCAST*
 
 *Mensagem:*
 ${message}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠️ *Esta mensagem será enviada para TODOS os usuários não bloqueados.*
+`;
+        
+        if (session.broadcastType === 'product' && session.productName) {
+          previewMessage += `📦 *Produto:* ${session.productName} (R$ ${session.productPrice})\n\n`;
+        } else if (session.broadcastType === 'media_pack' && session.packName) {
+          previewMessage += `📸 *Pack:* ${session.packName} (R$ ${session.packPrice})\n\n`;
+        }
+        
+        previewMessage += `⚠️ *Esta mensagem será enviada para TODOS os usuários não bloqueados.*
 
 Deseja continuar?`;
         
@@ -2008,9 +2081,6 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
       ],
       [
-        Markup.button.callback('📦 Reentregar Packs', 'admin_reentregar_packs')
-      ],
-      [
         Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
       ],
       [
@@ -2074,306 +2144,6 @@ Selecione uma opção abaixo:`;
     }
   });
 
-  // ===== REENTREGAR PACKS =====
-  bot.action('admin_reentregar_packs', async (ctx) => {
-    try {
-      await ctx.answerCbQuery('📦 Verificando...');
-      const isAdmin = await db.isUserAdmin(ctx.from.id);
-      if (!isAdmin) return;
-      
-      // Buscar transações dos produtos de Pack que foram entregues E têm comprovante
-      const { data: transactions, error } = await db.supabase
-        .from('transactions')
-        .select('txid, user_id, telegram_id, product_id, amount, status, delivered_at, created_at, proof_file_id, proof_received_at, validated_at')
-        .in('product_id', ['packsavulsos', 'packsexplicitos', 'packspicantes'])
-        .eq('status', 'delivered')
-        .not('delivered_at', 'is', null)
-        .not('proof_received_at', 'is', null) // Deve ter recebido comprovante
-        .not('validated_at', 'is', null) // Deve ter sido validado
-        .order('created_at', { ascending: false })
-        .limit(200);
-      
-      if (error) {
-        console.error('Erro ao buscar transações:', error);
-        return ctx.reply('❌ Erro ao buscar transações. Verifique os logs.');
-      }
-      
-      if (!transactions || transactions.length === 0) {
-        return ctx.reply('✅ Nenhuma transação de Pack encontrada para reentregar.\n\n⚠️ Apenas transações com comprovante enviado e validado são consideradas.');
-      }
-      
-      // Confirmar antes de reentregar
-      return ctx.reply(`📦 *REENTREGAR PACKS*\n\nEncontradas *${transactions.length}* transações de Pack que podem ser reentregues.\n\n✅ *Verificação:*\n• Comprovante enviado: ✅\n• Transação validada: ✅\n• Status entregue: ✅\n\n⚠️ *ATENÇÃO:* Esta ação irá reenviar o produto para todos os usuários que enviaram comprovante e foram aprovados.\n\nDeseja continuar?`, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '✅ Sim, Reentregar Todos', callback_data: 'confirm_reentregar_packs' },
-              { text: '❌ Cancelar', callback_data: 'cancel_reentregar_packs' }
-            ]
-          ]
-        }
-      });
-      
-    } catch (err) {
-      console.error('Erro ao verificar packs:', err);
-      return ctx.reply('❌ Erro ao verificar packs. Verifique os logs.');
-    }
-  });
-
-  // ===== CONFIRMAR REENTREGA DE PACKS =====
-  bot.action('confirm_reentregar_packs', async (ctx) => {
-    try {
-      try {
-        await ctx.answerCbQuery('📦 Reentregando...');
-      } catch (cbErr) {
-        // Ignorar erro de callback query expirado
-        if (cbErr.message && !cbErr.message.includes('query is too old')) {
-          console.error('Erro ao responder callback query:', cbErr.message);
-        }
-      }
-      const isAdmin = await db.isUserAdmin(ctx.from.id);
-      if (!isAdmin) return;
-      
-      await ctx.editMessageText('📦 *REENTREGANDO PACKS...*\n\n⏳ Processando transações...\n\nIsso pode levar alguns minutos.', {
-        parse_mode: 'Markdown'
-      });
-      
-      // Buscar transações com comprovante e validação
-      const { data: transactions, error } = await db.supabase
-        .from('transactions')
-        .select('txid, user_id, telegram_id, product_id, amount, status, delivered_at, created_at, proof_file_id, proof_received_at, validated_at')
-        .in('product_id', ['packsavulsos', 'packsexplicitos', 'packspicantes'])
-        .eq('status', 'delivered')
-        .not('delivered_at', 'is', null)
-        .not('proof_received_at', 'is', null) // Deve ter recebido comprovante
-        .not('validated_at', 'is', null) // Deve ter sido validado
-        .order('created_at', { ascending: false })
-        .limit(200);
-      
-      if (error) throw error;
-      
-      if (!transactions || transactions.length === 0) {
-        return ctx.editMessageText('✅ Nenhuma transação de Pack encontrada para reentregar.\n\n⚠️ Apenas transações com comprovante enviado e validado são consideradas.', {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
-            ]]
-          }
-        });
-      }
-      
-      let successCount = 0;
-      let errorCount = 0;
-      let skippedCount = 0;
-      const errors = [];
-      
-      // Processar em lotes para não sobrecarregar
-      for (let i = 0; i < transactions.length; i++) {
-        const tx = transactions[i];
-        
-        try {
-          // Verificar se tem comprovante (dupla verificação)
-          if (!tx.proof_received_at || !tx.validated_at) {
-            console.log(`⚠️ [REENTREGA] TXID ${tx.txid} não tem comprovante ou validação - pulando`);
-            skippedCount++;
-            continue;
-          }
-          
-          // Buscar produto
-          const product = await db.getProduct(tx.product_id, true);
-          if (!product || !product.delivery_url) {
-            console.log(`⚠️ [REENTREGA] Produto não encontrado ou sem URL para TXID ${tx.txid}`);
-            skippedCount++;
-            continue;
-          }
-          
-          // Buscar usuário
-          const user = tx.user_id ? await db.getUserByUUID(tx.user_id) : null;
-          if (!user || !user.telegram_id) {
-            console.log(`⚠️ [REENTREGA] Usuário não encontrado para TXID ${tx.txid}`);
-            skippedCount++;
-            continue;
-          }
-          
-          // 🆕 VERIFICAR SE O USUÁRIO REALMENTE NÃO RECEBEU O PRODUTO
-          // 1. Verificar se o bot foi bloqueado (usuário não pode receber)
-          // 2. Verificar se a entrega foi muito recente (pode ter sido recebido)
-          
-          let shouldReDeliver = true;
-          let skipReason = '';
-          
-          // Verificar data de entrega - se foi entregue há menos de 1 hora, pode ter sido recebido
-          const deliveredAt = new Date(tx.delivered_at);
-          const now = new Date();
-          const hoursSinceDelivery = (now - deliveredAt) / (1000 * 60 * 60);
-          
-          if (hoursSinceDelivery < 1) {
-            console.log(`⏭️ [REENTREGA] TXID ${tx.txid} foi entregue há ${hoursSinceDelivery.toFixed(1)} horas - muito recente, pode ter sido recebido`);
-            skipReason = `Entregue há ${hoursSinceDelivery.toFixed(1)} horas (muito recente)`;
-            shouldReDeliver = false;
-          }
-          
-          // Verificar se o usuário pode receber mensagens (bot não bloqueado)
-          if (shouldReDeliver) {
-            try {
-              console.log(`🔍 [REENTREGA] Verificando se usuário ${user.telegram_id} pode receber mensagens...`);
-              // Tentar enviar uma mensagem de teste (será deletada depois)
-              const testMessage = await ctx.telegram.sendMessage(
-                user.telegram_id, 
-                '🔍 Verificando entrega...',
-                { parse_mode: 'Markdown' }
-              );
-              
-              // Se conseguiu enviar, o usuário pode receber mensagens
-              console.log(`✅ [REENTREGA] Usuário ${user.telegram_id} pode receber mensagens`);
-              
-              // Deletar mensagem de teste
-              try {
-                await ctx.telegram.deleteMessage(user.telegram_id, testMessage.message_id);
-              } catch (deleteErr) {
-                // Ignorar erro ao deletar
-              }
-              
-            } catch (testErr) {
-              const errorMsg = testErr.message || '';
-              // Se o bot foi bloqueado, o usuário não pode receber
-              if (errorMsg.includes('bot was blocked') || errorMsg.includes('403') || errorMsg.includes('Forbidden')) {
-                console.log(`⚠️ [REENTREGA] Bot bloqueado pelo usuário ${user.telegram_id} - produto não foi recebido`);
-                skipReason = 'Bot bloqueado pelo usuário';
-                shouldReDeliver = false;
-              } else {
-                // Outro erro - tentar mesmo assim
-                console.log(`⚠️ [REENTREGA] Erro ao verificar usuário ${user.telegram_id}: ${errorMsg} - tentando reentregar mesmo assim`);
-                shouldReDeliver = true; // Tentar mesmo assim
-              }
-            }
-          }
-          
-          // Se não deve reentregar, pular
-          if (!shouldReDeliver) {
-            console.log(`⏭️ [REENTREGA] Pulando TXID ${tx.txid} - ${skipReason}`);
-            skippedCount++;
-            continue;
-          }
-          
-          // 🆕 VERIFICAR SE O PRODUTO FOI REALMENTE ENTREGUE
-          // Comparar data de entrega com data atual - se foi entregue há muito tempo, pode ter sido recebido
-          // Mas vamos reentregar mesmo assim se o usuário pode receber (pode ter sido perdido)
-          
-          console.log(`📤 [REENTREGA] Reentregando ${product.name} para ${user.first_name} (${user.telegram_id}) - TXID: ${tx.txid}`);
-          console.log(`✅ [REENTREGA] Comprovante verificado: ${tx.proof_received_at ? 'Sim' : 'Não'}`);
-          console.log(`✅ [REENTREGA] Validação verificada: ${tx.validated_at ? 'Sim' : 'Não'}`);
-          console.log(`✅ [REENTREGA] Usuário pode receber mensagens: Sim`);
-          
-          // Reentregar usando deliverContent
-          await deliver.deliverContent(
-            user.telegram_id,
-            product,
-            `✅ *REENTREGA DE PRODUTO*\n\n📦 ${product.name}\n💰 Valor: R$ ${tx.amount}\n🆔 TXID: ${tx.txid}\n📸 Comprovante: ✅ Validado\n\n✅ Produto reentregue com sucesso!`
-          );
-          
-          successCount++;
-          
-          // Delay entre envios para evitar flood
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-        } catch (err) {
-          errorCount++;
-          const errorMsg = err.message || 'Erro desconhecido';
-          let userName = 'N/A';
-          try {
-            const userForError = tx.user_id ? await db.getUserByUUID(tx.user_id) : null;
-            userName = userForError?.first_name || 'N/A';
-          } catch (userErr) {
-            // Ignorar erro ao buscar usuário
-          }
-          errors.push({
-            txid: tx.txid,
-            user: userName,
-            error: errorMsg
-          });
-          
-          // Se for erro de bot bloqueado, não logar como erro crítico
-          if (errorMsg.includes('bot was blocked') || errorMsg.includes('403')) {
-            console.log(`⚠️ [REENTREGA] Bot bloqueado pelo usuário ${tx.telegram_id} - ignorando`);
-            errorCount--; // Não contar como erro
-          } else {
-            console.error(`❌ [REENTREGA] Erro ao reentregar TXID ${tx.txid}:`, errorMsg);
-          }
-        }
-        
-        // Atualizar progresso a cada 10 entregas
-        if ((i + 1) % 10 === 0) {
-          try {
-            await ctx.editMessageText(`📦 *REENTREGANDO PACKS...*\n\n⏳ Processando: ${i + 1}/${transactions.length}\n✅ Entregues: ${successCount}\n⏭️ Puladas: ${skippedCount}\n❌ Erros: ${errorCount}`, {
-              parse_mode: 'Markdown'
-            });
-          } catch (editErr) {
-            // Ignorar erro de edição
-          }
-        }
-      }
-      
-      // Mensagem final
-      let finalMessage = `✅ *REENTREGA CONCLUÍDA!*\n\n`;
-      finalMessage += `📊 *Resultado:*\n`;
-      finalMessage += `✅ Entregues com sucesso: ${successCount}\n`;
-      finalMessage += `⏭️ Puladas: ${skippedCount}\n`;
-      finalMessage += `   └─ Bot bloqueado ou sem comprovante/produto\n`;
-      finalMessage += `❌ Erros: ${errorCount}\n`;
-      finalMessage += `📦 Total processado: ${transactions.length}\n\n`;
-      finalMessage += `✅ *Verificações realizadas:*\n`;
-      finalMessage += `• Comprovante enviado: ✅\n`;
-      finalMessage += `• Transação validada: ✅\n`;
-      finalMessage += `• Usuário pode receber mensagens: ✅\n`;
-      finalMessage += `• Produto reentregue: ✅\n\n`;
-      
-      if (errors.length > 0 && errors.length <= 10) {
-        finalMessage += `⚠️ *Erros encontrados:*\n`;
-        errors.slice(0, 10).forEach(err => {
-          finalMessage += `• ${err.user} (${err.txid}): ${err.error.substring(0, 50)}\n`;
-        });
-      }
-      
-      return ctx.editMessageText(finalMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
-          ]]
-        }
-      });
-      
-    } catch (err) {
-      console.error('Erro ao reentregar packs:', err);
-      return ctx.editMessageText(`❌ *Erro ao reentregar packs*\n\nErro: ${err.message}\n\nVerifique os logs para mais detalhes.`, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
-          ]]
-        }
-      });
-    }
-  });
-
-  // ===== CANCELAR REENTREGA =====
-  bot.action('cancel_reentregar_packs', async (ctx) => {
-    try {
-      await ctx.answerCbQuery('❌ Cancelado');
-      return ctx.editMessageText('❌ Reentrega cancelada.', {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
-          ]]
-        }
-      });
-    } catch (err) {
-      console.error('Erro ao cancelar reentrega:', err);
-    }
-  });
-
   // ===== ACTIONS DO PAINEL ADMIN =====
   
   bot.action('admin_pendentes', async (ctx) => {
@@ -2428,21 +2198,21 @@ Selecione uma opção abaixo:`;
     }
   });
   
-  // ===== ENTREGAR POR TXID =====
+  // ===== ENTREGAR POR ID DO USUÁRIO =====
   bot.action('admin_entregar_txid', async (ctx) => {
     try {
       await ctx.answerCbQuery('🔄 Preparando entrega...');
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return;
       
-      // Criar sessão para pedir o TXID
+      // Criar sessão para pedir o ID do usuário
       global._SESSIONS = global._SESSIONS || {};
       global._SESSIONS[ctx.from.id] = {
         type: 'entregar_txid',
-        step: 'waiting_txid'
+        step: 'waiting_user_id'
       };
       
-      return ctx.reply('🔄 *ENTREGAR POR TXID*\n\nDigite o *TXID* da transação que deseja entregar:\n\nExemplo: `M328716869U0Q`\n\n⚠️ *Atenção:* Esta função entregará o conteúdo baseado no tipo de compra (Produto, Media Pack ou Grupo).', {
+      return ctx.reply('🔄 *ENTREGA MANUAL*\n\nDigite o *ID do usuário* (Telegram ID) para quem deseja entregar:\n\nExemplo: `6224210204`\n\n⚠️ *Atenção:* Após informar o ID, você selecionará o produto/grupo a ser entregue.', {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
@@ -2451,7 +2221,7 @@ Selecione uma opção abaixo:`;
         }
       });
     } catch (err) {
-      console.error('Erro ao iniciar entrega por TXID:', err);
+      console.error('Erro ao iniciar entrega manual:', err);
       return ctx.reply('❌ Erro ao iniciar entrega. Verifique os logs.');
     }
   });
@@ -3105,55 +2875,211 @@ Digite /setpix seguido da nova chave
     }
   });
 
+  // ===== BROADCAST MELHORADO COM PRODUTOS (ADMIN) =====
   bot.action('admin_broadcast', async (ctx) => {
-    await ctx.answerCbQuery('📢 Modo broadcast...');
+    await ctx.answerCbQuery('📢 Preparando broadcast...');
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) return;
     
     try {
-      const message = `📢 *BROADCAST*
-
-Digite a mensagem que deseja enviar para todos os usuários:
-
-💡 *Dica:* Você pode usar formatação Markdown:
-• \`*negrito*\` para **negrito**
-• \`_itálico_\` para _itálico_
-• \`\`\`código\`\`\` para \`código\`
-
-_Cancelar:_ /cancelar`;
-
-      // Criar sessão para capturar mensagem
-      global._SESSIONS = global._SESSIONS || {};
-      global._SESSIONS[ctx.from.id] = {
-        type: 'admin_broadcast',
-        step: 'waiting_message'
-      };
+      // Buscar produtos ativos
+      const products = await db.getAllProducts();
+      const mediaPacks = await db.getAllMediaPacks();
       
-      try {
-        return await ctx.editMessageText(message, {
-          parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
-          ])
-        });
-      } catch (editErr) {
-        if (editErr.message && editErr.message.includes('message is not modified')) {
-          console.log('ℹ️ [BROADCAST] Mensagem já está atualizada');
-          return;
-        }
-        // Se falhou ao editar, tentar enviar nova mensagem
-        console.log('⚠️ [BROADCAST] Erro ao editar, enviando nova mensagem');
-        return await ctx.reply(message, {
-          parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
-          ])
-        });
-      }
+      const message = `📢 *NOVO BROADCAST*
+
+Escolha o tipo de broadcast:
+
+1️⃣ *Broadcast Simples* - Mensagem para todos os usuários
+2️⃣ *Broadcast com Produto* - Associar a um produto específico
+
+Selecione uma opção:`;
+
+      const buttons = [
+        [Markup.button.callback('📣 Broadcast Simples', 'admin_broadcast_simple')],
+        [Markup.button.callback('🛍️ Broadcast + Produto', 'admin_broadcast_product')],
+        [Markup.button.callback('🔙 Voltar', 'admin_refresh')]
+      ];
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
     } catch (err) {
       console.error('Erro no broadcast:', err);
       return ctx.reply('❌ Erro ao carregar opções de broadcast.');
     }
+  });
+  
+  // Broadcast Simples (Admin)
+  bot.action('admin_broadcast_simple', async (ctx) => {
+    await ctx.answerCbQuery('📣 Iniciando broadcast simples...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'admin_broadcast',
+      step: 'message',
+      broadcastType: 'simple'
+    };
+    
+    return ctx.editMessageText(`📢 *BROADCAST SIMPLES*
+
+Envie a mensagem que deseja enviar para todos os usuários:
+
+💡 *Dicas:*
+• Use Markdown para formatação
+• *Negrito* = \`*texto*\`
+• _Itálico_ = \`_texto_\`
+
+_Cancelar: /cancelar_`, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
+      ])
+    });
+  });
+  
+  // Broadcast com Produto (Admin)
+  bot.action('admin_broadcast_product', async (ctx) => {
+    await ctx.answerCbQuery('🛍️ Carregando produtos...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      const products = await db.getAllProducts();
+      const mediaPacks = await db.getAllMediaPacks();
+      
+      if (products.length === 0 && mediaPacks.length === 0) {
+        return ctx.editMessageText('📦 Nenhum produto disponível para broadcast.\n\nCrie produtos primeiro no painel admin.', {
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Voltar', 'admin_broadcast')]
+          ])
+        });
+      }
+      
+      let message = `🛍️ *BROADCAST COM PRODUTO*
+
+Selecione o produto que deseja divulgar:
+
+`;
+      
+      const buttons = [];
+      
+      // Adicionar produtos
+      for (const product of products) {
+        message += `• ${product.name} - R$ ${parseFloat(product.price).toFixed(2)}\n`;
+        buttons.push([Markup.button.callback(
+          `📦 ${product.name}`, 
+          `admin_broadcast_select_product:${product.product_id}`
+        )]);
+      }
+      
+      // Adicionar media packs
+      for (const pack of mediaPacks) {
+        if (pack.is_active) {
+          message += `• ${pack.name} - R$ ${parseFloat(pack.price).toFixed(2)}\n`;
+          buttons.push([Markup.button.callback(
+            `📸 ${pack.name}`, 
+            `admin_broadcast_select_pack:${pack.pack_id}`
+          )]);
+        }
+      }
+      
+      buttons.push([Markup.button.callback('🔙 Voltar', 'admin_broadcast')]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+    } catch (err) {
+      console.error('Erro ao listar produtos:', err);
+      return ctx.reply('❌ Erro ao listar produtos.');
+    }
+  });
+  
+  // Selecionar produto para broadcast (Admin)
+  bot.action(/^admin_broadcast_select_product:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('✅ Produto selecionado');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    const productId = ctx.match[1];
+    const product = await db.getProduct(productId);
+    
+    if (!product) {
+      return ctx.reply('❌ Produto não encontrado.');
+    }
+    
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'admin_broadcast',
+      step: 'message',
+      broadcastType: 'product',
+      productId: productId,
+      productName: product.name,
+      productPrice: product.price
+    };
+    
+    return ctx.editMessageText(`🛍️ *BROADCAST: ${product.name}*
+
+💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}
+
+📝 Agora envie a mensagem promocional:
+
+💡 *Exemplo:*
+"🔥 *BLACK FRIDAY 90% OFF!*
+
+${product.name} por apenas R$ ${parseFloat(product.price).toFixed(2)}!
+
+Promoção válida apenas hoje! 🎉
+
+Compre agora: /start"
+
+_Cancelar: /cancelar_`, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
+      ])
+    });
+  });
+  
+  // Selecionar media pack para broadcast (Admin)
+  bot.action(/^admin_broadcast_select_pack:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('✅ Pack selecionado');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    const packId = ctx.match[1];
+    const pack = await db.getMediaPackById(packId);
+    
+    if (!pack) {
+      return ctx.reply('❌ Pack não encontrado.');
+    }
+    
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'admin_broadcast',
+      step: 'message',
+      broadcastType: 'media_pack',
+      mediaPackId: packId,
+      packName: pack.name,
+      packPrice: pack.price
+    };
+    
+    return ctx.editMessageText(`📸 *BROADCAST: ${pack.name}*
+
+💰 Preço: R$ ${parseFloat(pack.price).toFixed(2)}
+
+📝 Agora envie a mensagem promocional:
+
+_Cancelar: /cancelar_`, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_admin_broadcast')]
+      ])
+    });
   });
   
   // Confirmar broadcast do admin
@@ -3184,9 +3110,28 @@ _Cancelar:_ /cancelar`;
       
       await ctx.reply(`📤 Enviando broadcast para ${users.length} usuários...\n\n⏳ Aguarde...`);
       
+      // Adicionar botão com link para o produto (se houver)
+      let replyMarkup = undefined;
+      if (session.broadcastType === 'product' && session.productId) {
+        replyMarkup = {
+          inline_keyboard: [
+            [{ text: `🛍️ Comprar ${session.productName}`, callback_data: `buy:${session.productId}` }]
+          ]
+        };
+      } else if (session.broadcastType === 'media_pack' && session.mediaPackId) {
+        replyMarkup = {
+          inline_keyboard: [
+            [{ text: `📸 Comprar ${session.packName}`, callback_data: `buy_media:${session.mediaPackId}` }]
+          ]
+        };
+      }
+      
       for (const user of users) {
         try {
-          await ctx.telegram.sendMessage(user.telegram_id, message, { parse_mode: 'Markdown' });
+          await ctx.telegram.sendMessage(user.telegram_id, message, { 
+            parse_mode: 'Markdown',
+            reply_markup: replyMarkup
+          });
           sent++;
           // Rate limit para evitar bloqueio do Telegram
           await new Promise(resolve => setTimeout(resolve, 50));
@@ -3205,12 +3150,20 @@ _Cancelar:_ /cancelar`;
       // Limpar sessão
       delete global._SESSIONS[ctx.from.id];
       
-      return ctx.reply(`✅ *BROADCAST CONCLUÍDO!*
+      let resultMessage = `✅ *BROADCAST CONCLUÍDO!*
 
 📊 *Estatísticas:*
 ✔️ Enviados: ${sent}
 ❌ Falharam: ${failed}
-📝 Total: ${users.length}`, {
+📝 Total: ${users.length}`;
+
+      if (session.broadcastType === 'product' && session.productName) {
+        resultMessage += `\n\n📦 *Produto divulgado:* ${session.productName}`;
+      } else if (session.broadcastType === 'media_pack' && session.packName) {
+        resultMessage += `\n\n📸 *Pack divulgado:* ${session.packName}`;
+      }
+      
+      return ctx.reply(resultMessage, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
           [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
@@ -4230,6 +4183,237 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
     } catch (err) {
       console.error('Erro ao deletar grupo:', err);
       return ctx.reply('❌ Erro ao remover grupo.');
+    }
+  });
+
+  // ===== HANDLERS PARA ENTREGA MANUAL (POR ID DO USUÁRIO) =====
+  
+  // Handler para entregar PRODUTO
+  bot.action(/^manual_deliver_product:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('📦 Entregando produto...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      // Verificar sessão
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      
+      if (!session || session.type !== 'entregar_txid' || !session.targetUserId) {
+        return ctx.reply('❌ Sessão expirada. Tente novamente.');
+      }
+      
+      const productId = ctx.match[1];
+      const targetUserId = session.targetUserId;
+      const targetUser = session.targetUser;
+      
+      // Limpar sessão
+      delete global._SESSIONS[ctx.from.id];
+      
+      await ctx.reply('⏳ Buscando transação e preparando entrega...');
+      
+      // Buscar produto
+      const product = await db.getProduct(productId, true);
+      if (!product) {
+        return ctx.reply('❌ Produto não encontrado.');
+      }
+      
+      // Entregar produto diretamente
+      await deliver.deliverContent(targetUserId, product);
+      
+      // Mensagem de sucesso
+      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
+
+👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
+🆔 ID: ${targetUserId}
+📦 Produto: ${product.name}
+💰 Valor: R$ ${product.price}
+
+✅ Status: Entregue
+📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+      
+    } catch (err) {
+      console.error('Erro ao entregar produto manualmente:', err);
+      return ctx.reply(`❌ Erro ao entregar produto: ${err.message}`);
+    }
+  });
+  
+  // Handler para entregar MEDIA PACK
+  bot.action(/^manual_deliver_mediapack:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('📸 Entregando media pack...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      // Verificar sessão
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      
+      if (!session || session.type !== 'entregar_txid' || !session.targetUserId) {
+        return ctx.reply('❌ Sessão expirada. Tente novamente.');
+      }
+      
+      const packId = ctx.match[1];
+      const targetUserId = session.targetUserId;
+      const targetUser = session.targetUser;
+      
+      // Limpar sessão
+      delete global._SESSIONS[ctx.from.id];
+      
+      await ctx.reply('⏳ Buscando transação e preparando entrega...');
+      
+      // Buscar pack
+      const pack = await db.getMediaPackById(packId);
+      if (!pack) {
+        return ctx.reply('❌ Media pack não encontrado.');
+      }
+      
+      // Entregar media pack (criar transação temporária para tracking)
+      const tempTxid = `MANUAL_${Date.now()}_${targetUserId}`;
+      const { data: tempTransaction } = await db.supabase
+        .from('transactions')
+        .insert({
+          txid: tempTxid,
+          user_id: targetUser.id,
+          telegram_id: targetUserId,
+          media_pack_id: packId,
+          amount: pack.price,
+          status: 'delivered',
+          validated_at: new Date().toISOString(),
+          delivered_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      
+      if (!tempTransaction) {
+        throw new Error('Erro ao criar transação temporária');
+      }
+      
+      // Entregar media pack
+      await deliver.deliverMediaPack(
+        targetUserId,
+        packId,
+        targetUser.id,
+        tempTransaction.id,
+        db
+      );
+      
+      // Mensagem de sucesso
+      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
+
+👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
+🆔 ID: ${targetUserId}
+📸 Media Pack: ${pack.name}
+💰 Valor: R$ ${pack.price}
+
+✅ Status: Entregue
+📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+      
+    } catch (err) {
+      console.error('Erro ao entregar media pack manualmente:', err);
+      return ctx.reply(`❌ Erro ao entregar media pack: ${err.message}`);
+    }
+  });
+  
+  // Handler para entregar GRUPO
+  bot.action(/^manual_deliver_group:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('👥 Adicionando ao grupo...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+    
+    try {
+      // Verificar sessão
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      
+      if (!session || session.type !== 'entregar_txid' || !session.targetUserId) {
+        return ctx.reply('❌ Sessão expirada. Tente novamente.');
+      }
+      
+      const groupIdFromCallback = ctx.match[1];
+      const targetUserId = session.targetUserId;
+      const targetUser = session.targetUser;
+      
+      // Limpar sessão
+      delete global._SESSIONS[ctx.from.id];
+      
+      await ctx.reply('⏳ Buscando transação e preparando entrega...');
+      
+      // Buscar grupo
+      const { data: group, error: groupError } = await db.supabase
+        .from('groups')
+        .select('*')
+        .eq('group_id', groupIdFromCallback)
+        .single();
+      
+      if (groupError || !group) {
+        return ctx.reply('❌ Grupo não encontrado.');
+      }
+      
+      // Adicionar ou renovar assinatura no banco
+      await db.addGroupMember({
+        telegramId: targetUserId,
+        userId: targetUser.id,
+        groupId: group.id,
+        days: group.subscription_days
+      });
+      
+      // Tentar adicionar usuário diretamente ao grupo
+      await deliver.addUserToGroup(ctx.telegram, targetUserId, group);
+      
+      // Calcular data de expiração
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
+      
+      // Notificar usuário
+      await ctx.telegram.sendMessage(targetUserId, `✅ *ASSINATURA APROVADA!*
+
+👥 Grupo: ${group.group_name}
+📅 Acesso válido por: ${group.subscription_days} dias
+🕐 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+
+${group.group_link ? `🔗 Link: ${group.group_link}` : ''}
+
+Obrigado pela preferência! 💚`, {
+        parse_mode: 'Markdown'
+      });
+      
+      // Mensagem de sucesso para admin
+      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
+
+👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
+🆔 ID: ${targetUserId}
+👥 Grupo: ${group.group_name}
+💰 Valor: R$ ${group.subscription_price}
+📅 Dias de acesso: ${group.subscription_days}
+
+✅ Status: Entregue
+📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }
+          ]]
+        }
+      });
+      
+    } catch (err) {
+      console.error('Erro ao adicionar ao grupo manualmente:', err);
+      return ctx.reply(`❌ Erro ao adicionar ao grupo: ${err.message}`);
     }
   });
 
