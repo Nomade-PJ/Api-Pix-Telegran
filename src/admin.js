@@ -4277,7 +4277,7 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
       
       // Entregar media pack (criar transação temporária para tracking)
       const tempTxid = `MANUAL_${Date.now()}_${targetUserId}`;
-      const { data: tempTransaction } = await db.supabase
+      const { data: tempTransaction, error: transError } = await db.supabase
         .from('transactions')
         .insert({
           txid: tempTxid,
@@ -4285,6 +4285,8 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
           telegram_id: targetUserId,
           media_pack_id: packId,
           amount: pack.price,
+          pix_key: 'MANUAL_DELIVERY',
+          pix_payload: 'MANUAL_DELIVERY',
           status: 'delivered',
           validated_at: new Date().toISOString(),
           delivered_at: new Date().toISOString()
@@ -4292,8 +4294,9 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
         .select()
         .single();
       
-      if (!tempTransaction) {
-        throw new Error('Erro ao criar transação temporária');
+      if (transError || !tempTransaction) {
+        console.error('❌ [MANUAL-DELIVERY] Erro ao criar transação:', transError);
+        throw new Error(`Erro ao criar transação temporária: ${transError?.message || 'Desconhecido'}`);
       }
       
       // Entregar media pack
