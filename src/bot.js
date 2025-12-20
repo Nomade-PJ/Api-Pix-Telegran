@@ -1859,27 +1859,48 @@ Clique no botão abaixo para renovar:`, {
         }
         
         // Se não aplicou desconto automático, verificar cupons manuais disponíveis
+        // IMPORTANTE: Só perguntar se o cupom está associado a uma campanha ATIVA
         if (!appliedCoupon) {
           const { data: manualCoupons, error: manualCouponsError } = await db.supabase
             .from('coupons')
-            .select('code')
+            .select('code, id')
             .eq('product_id', productId)
             .eq('is_active', true)
             .eq('is_broadcast_coupon', false)
-            .limit(1);
+            .limit(10);
           
-          // Só perguntar sobre cupom se houver cupons manuais disponíveis
+          // Verificar se há cupons manuais E se estão associados a campanhas ativas
           if (!manualCouponsError && manualCoupons && manualCoupons.length > 0) {
-            // Criar sessão para aguardar cupom
-            global._SESSIONS = global._SESSIONS || {};
-            global._SESSIONS[ctx.from.id] = {
-              type: 'awaiting_coupon',
-              productId: productId,
-              productName: product.name,
-              productPrice: product.price
-            };
+            // Verificar quais cupons têm campanhas ativas
+            const validCoupons = [];
             
-            return ctx.reply(`🎟️ *TEM UM CUPOM DE DESCONTO?*
+            for (const coupon of manualCoupons) {
+              // Verificar se há uma campanha ativa com este código de cupom
+              const { data: activeCampaign, error: campaignError } = await db.supabase
+                .from('broadcast_campaigns')
+                .select('id')
+                .eq('coupon_code', coupon.code)
+                .limit(1)
+                .single();
+              
+              // Se encontrou campanha ativa, o cupom é válido
+              if (!campaignError && activeCampaign) {
+                validCoupons.push(coupon);
+              }
+            }
+            
+            // Só perguntar se houver cupons válidos (com campanhas ativas)
+            if (validCoupons.length > 0) {
+              // Criar sessão para aguardar cupom
+              global._SESSIONS = global._SESSIONS || {};
+              global._SESSIONS[ctx.from.id] = {
+                type: 'awaiting_coupon',
+                productId: productId,
+                productName: product.name,
+                productPrice: product.price
+              };
+              
+              return ctx.reply(`🎟️ *TEM UM CUPOM DE DESCONTO?*
 
 📦 Produto: ${product.name}
 💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}
@@ -1888,11 +1909,12 @@ Se você tem um cupom, digite o código agora.
 Se não tem, digite *NÃO* para continuar sem desconto.
 
 _Cancelar: /cancelar_`, { 
-              parse_mode: 'Markdown',
-              ...Markup.inlineKeyboard([
-                [Markup.button.callback('❌ Não tenho cupom', 'skip_coupon')]
-              ])
-            });
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                  [Markup.button.callback('❌ Não tenho cupom', 'skip_coupon')]
+                ])
+              });
+            }
           }
         }
       } catch (err) {

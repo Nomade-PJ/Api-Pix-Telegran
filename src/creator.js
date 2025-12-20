@@ -1577,55 +1577,69 @@ Os cupons relacionados a este broadcast foram desativados e não poderão mais s
       }
       
       // 1. Desativar TODOS os cupons relacionados ao broadcast
-      // Buscar por código do cupom OU por produto/pack relacionado OU por tipo broadcast
-      let couponConditions = [];
+      // IMPORTANTE: Desativar por código (todos os cupons com mesmo código, independente da data)
+      // E também cupons automáticos do mesmo produto/pack criados no mesmo dia
       
+      let deactivatedCount = 0;
+      
+      // Primeiro: Desativar TODOS os cupons com o mesmo código (manuais e automáticos)
       if (campaign.coupon_code) {
-        couponConditions.push(`code.eq.${campaign.coupon_code}`);
-      }
-      if (campaign.product_id) {
-        couponConditions.push(`product_id.eq.${campaign.product_id}`);
-      }
-      if (campaign.media_pack_id) {
-        couponConditions.push(`media_pack_id.eq.${campaign.media_pack_id}`);
-      }
-      
-      // Buscar cupons relacionados (por código, produto, pack ou tipo broadcast)
-      const { data: relatedCoupons, error: couponsError } = await db.supabase
-        .from('coupons')
-        .select('id, code, product_id, media_pack_id, is_broadcast_coupon')
-        .or(couponConditions.length > 0 ? couponConditions.join(',') : 'is_broadcast_coupon.eq.true');
-      
-      if (!couponsError && relatedCoupons && relatedCoupons.length > 0) {
-        // Filtrar apenas cupons que realmente pertencem a este broadcast
-        const campaignDate = new Date(campaign.created_at);
-        const startDate = new Date(campaignDate);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(campaignDate);
-        endDate.setHours(23, 59, 59, 999);
-        
-        // Buscar cupons criados no mesmo dia e que correspondem ao broadcast
-        const { data: allRelatedCoupons } = await db.supabase
+        const { data: sameCodeCoupons, error: codeError } = await db.supabase
           .from('coupons')
           .select('id')
-          .or(couponConditions.length > 0 ? couponConditions.join(',') : 'is_broadcast_coupon.eq.true')
-          .gte('created_at', startDate.toISOString())
-          .lte('created_at', endDate.toISOString());
+          .eq('code', campaign.coupon_code)
+          .eq('is_active', true);
         
-        if (allRelatedCoupons && allRelatedCoupons.length > 0) {
-          const couponIds = allRelatedCoupons.map(c => c.id);
+        if (!codeError && sameCodeCoupons && sameCodeCoupons.length > 0) {
+          const codeCouponIds = sameCodeCoupons.map(c => c.id);
           
-          // Desativar todos os cupons relacionados
-          const { error: updateError } = await db.supabase
+          const { error: updateCodeError } = await db.supabase
             .from('coupons')
             .update({ is_active: false })
-            .in('id', couponIds);
+            .in('id', codeCouponIds);
           
-          if (updateError) {
-            console.error('Erro ao desativar cupons:', updateError);
-          } else {
-            console.log(`✅ ${couponIds.length} cupom(ns) desativado(s) ao deletar broadcast ${campaignId}`);
+          if (!updateCodeError) {
+            deactivatedCount += codeCouponIds.length;
+            console.log(`✅ ${codeCouponIds.length} cupom(ns) com código ${campaign.coupon_code} desativado(s)`);
           }
+        }
+      }
+      
+      // Segundo: Desativar cupons automáticos do mesmo produto/pack criados no mesmo dia
+      const campaignDate = new Date(campaign.created_at);
+      const startDate = new Date(campaignDate);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(campaignDate);
+      endDate.setHours(23, 59, 59, 999);
+      
+      let autoCouponConditions = ['is_broadcast_coupon.eq.true'];
+      
+      if (campaign.product_id) {
+        autoCouponConditions.push(`product_id.eq.${campaign.product_id}`);
+      }
+      if (campaign.media_pack_id) {
+        autoCouponConditions.push(`media_pack_id.eq.${campaign.media_pack_id}`);
+      }
+      
+      const { data: autoCoupons, error: autoError } = await db.supabase
+        .from('coupons')
+        .select('id')
+        .or(autoCouponConditions.join(','))
+        .eq('is_active', true)
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString());
+      
+      if (!autoError && autoCoupons && autoCoupons.length > 0) {
+        const autoCouponIds = autoCoupons.map(c => c.id);
+        
+        const { error: updateAutoError } = await db.supabase
+          .from('coupons')
+          .update({ is_active: false })
+          .in('id', autoCouponIds);
+        
+        if (!updateAutoError) {
+          deactivatedCount += autoCouponIds.length;
+          console.log(`✅ ${autoCouponIds.length} cupom(ns) automático(s) desativado(s)`);
         }
       }
       
@@ -1652,7 +1666,7 @@ Os cupons relacionados a este broadcast foram desativados e não poderão mais s
 
 🗑️ Campanha deletada
 🗑️ Destinatários removidos
-❌ Cupons desativados
+❌ ${deactivatedCount} cupom(ns) desativado(s)
 
 A promoção foi completamente removida do sistema.`, {
         parse_mode: 'Markdown',
