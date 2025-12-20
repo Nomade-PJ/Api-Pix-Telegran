@@ -2391,8 +2391,6 @@ Esta transação foi cancelada automaticamente.
         );
       } else {
         return await ctx.reply(packPaymentMessage, { parse_mode: 'Markdown' });
-
-🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
       }
     } catch (err) {
       console.error('Erro na compra de media pack:', err.message);
