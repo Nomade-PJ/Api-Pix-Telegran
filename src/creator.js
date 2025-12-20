@@ -152,7 +152,10 @@ Selecione uma opção:`;
         buttons.push([Markup.button.callback('🎁 Broadcast + Produto + Cupom', 'creator_broadcast_product_coupon')]);
       }
       
-      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_refresh')]);
+      buttons.push(
+        [Markup.button.callback('📋 Gerenciar Broadcasts Enviados', 'creator_manage_broadcasts')],
+        [Markup.button.callback('🔙 Voltar', 'creator_refresh')]
+      );
       
       return ctx.editMessageText(message, {
         parse_mode: 'Markdown',
@@ -1068,6 +1071,422 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
         [Markup.button.callback('🔙 Voltar ao Painel', 'creator_refresh')]
       ])
     });
+  });
+  
+  // ===== GERENCIAR BROADCASTS ENVIADOS =====
+  bot.action('creator_manage_broadcasts', async (ctx) => {
+    await ctx.answerCbQuery('📋 Carregando broadcasts...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    try {
+      const user = await db.getOrCreateUser(ctx.from);
+      
+      // Buscar broadcasts do criador (últimos 20)
+      const { data: campaigns, error } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('*')
+        .eq('created_by', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      
+      if (error) throw error;
+      
+      if (!campaigns || campaigns.length === 0) {
+        return ctx.editMessageText(`📋 *GERENCIAR BROADCASTS*
+
+Nenhum broadcast encontrado.
+
+Você ainda não enviou nenhum broadcast.`, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
+          ])
+        });
+      }
+      
+      let message = `📋 *GERENCIAR BROADCASTS ENVIADOS*
+
+*Total:* ${campaigns.length} broadcast(s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+`;
+      
+      const buttons = [];
+      
+      for (let i = 0; i < campaigns.length; i++) {
+        const campaign = campaigns[i];
+        const date = new Date(campaign.created_at);
+        const dateStr = date.toLocaleDateString('pt-BR', { 
+          day: '2-digit', 
+          month: '2-digit', 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+        
+        const statusIcon = campaign.status === 'sent' ? '✅' : campaign.status === 'sending' ? '⏳' : '📝';
+        
+        message += `${statusIcon} *${campaign.name || 'Sem nome'}*\n`;
+        message += `📅 ${dateStr} | 📊 ${campaign.sent_count || 0} enviados\n`;
+        message += `\n`;
+        
+        buttons.push([
+          Markup.button.callback(
+            `${statusIcon} ${campaign.name?.substring(0, 30) || 'Broadcast'}...`, 
+            `manage_broadcast:${campaign.id}`
+          )
+        ]);
+      }
+      
+      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_broadcast')]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+      
+    } catch (err) {
+      console.error('Erro ao listar broadcasts:', err);
+      return ctx.reply('❌ Erro ao carregar broadcasts.');
+    }
+  });
+  
+  // Detalhes e ações de um broadcast específico
+  bot.action(/^manage_broadcast:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const campaignId = ctx.match[1];
+    
+    try {
+      // Buscar campanha
+      const { data: campaign, error: campaignError } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
+      
+      if (campaignError || !campaign) {
+        return ctx.reply('❌ Broadcast não encontrado.');
+      }
+      
+      // Verificar se é do criador
+      const user = await db.getOrCreateUser(ctx.from);
+      if (campaign.created_by !== user.id) {
+        return ctx.reply('❌ Você não tem permissão para gerenciar este broadcast.');
+      }
+      
+      // Buscar cupons relacionados (se houver)
+      const { data: coupons, error: couponsError } = await db.supabase
+        .from('coupons')
+        .select('*')
+        .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
+        .eq('is_active', true);
+      
+      const activeCoupons = coupons?.filter(c => c.is_active) || [];
+      
+      // Buscar destinatários
+      const { data: recipients, error: recipientsError } = await db.supabase
+        .from('broadcast_recipients')
+        .select('telegram_id')
+        .eq('broadcast_campaign_id', campaignId);
+      
+      const recipientsCount = recipients?.length || 0;
+      
+      const date = new Date(campaign.created_at);
+      const dateStr = date.toLocaleDateString('pt-BR', { 
+        day: '2-digit', 
+        month: '2-digit', 
+        year: 'numeric',
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+      
+      let message = `📋 *DETALHES DO BROADCAST*
+
+*Nome:* ${campaign.name || 'Sem nome'}
+*Status:* ${campaign.status === 'sent' ? '✅ Enviado' : campaign.status === 'sending' ? '⏳ Enviando' : '📝 Rascunho'}
+*Data:* ${dateStr}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 *Estatísticas:*
+✅ Enviados: ${campaign.sent_count || 0}
+❌ Falhas: ${campaign.failed_count || 0}
+👥 Destinatários: ${recipientsCount}
+🎟️ Cupons ativos: ${activeCoupons.length}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+*Mensagem:*
+${campaign.message?.substring(0, 200) || 'Sem mensagem'}${campaign.message?.length > 200 ? '...' : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+*Ações disponíveis:*`;
+      
+      const buttons = [];
+      
+      // Se tiver cupons ativos, mostrar opção de desativar
+      if (activeCoupons.length > 0) {
+        buttons.push([
+          Markup.button.callback('❌ Desativar Cupons da Promoção', `deactivate_broadcast_coupons:${campaignId}`)
+        ]);
+      }
+      
+      // Opção de deletar
+      buttons.push([
+        Markup.button.callback('🗑️ Deletar Broadcast Completamente', `delete_broadcast:${campaignId}`)
+      ]);
+      
+      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_manage_broadcasts')]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+      
+    } catch (err) {
+      console.error('Erro ao carregar detalhes do broadcast:', err);
+      return ctx.reply('❌ Erro ao carregar detalhes.');
+    }
+  });
+  
+  // Desativar cupons de um broadcast
+  bot.action(/^deactivate_broadcast_coupons:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('❌ Desativando cupons...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const campaignId = ctx.match[1];
+    
+    try {
+      // Buscar campanha
+      const { data: campaign, error: campaignError } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
+      
+      if (campaignError || !campaign) {
+        return ctx.reply('❌ Broadcast não encontrado.');
+      }
+      
+      // Verificar permissão
+      const user = await db.getOrCreateUser(ctx.from);
+      if (campaign.created_by !== user.id) {
+        return ctx.reply('❌ Você não tem permissão.');
+      }
+      
+      // Buscar todos os cupons relacionados ao broadcast
+      // Cupons automáticos (is_broadcast_coupon = true) criados na mesma data
+      const campaignDate = new Date(campaign.created_at);
+      const startDate = new Date(campaignDate);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(campaignDate);
+      endDate.setHours(23, 59, 59, 999);
+      
+      // Buscar cupons do código do broadcast ou cupons automáticos criados no mesmo dia
+      const { data: allCoupons, error: couponsError } = await db.supabase
+        .from('coupons')
+        .select('*')
+        .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString());
+      
+      if (couponsError) {
+        console.error('Erro ao buscar cupons:', couponsError);
+      }
+      
+      let deactivatedCount = 0;
+      
+      if (allCoupons && allCoupons.length > 0) {
+        // Desativar todos os cupons relacionados
+        const couponIds = allCoupons.map(c => c.id);
+        
+        const { error: updateError } = await db.supabase
+          .from('coupons')
+          .update({ is_active: false })
+          .in('id', couponIds);
+        
+        if (updateError) {
+          console.error('Erro ao desativar cupons:', updateError);
+        } else {
+          deactivatedCount = allCoupons.length;
+        }
+      }
+      
+      return ctx.editMessageText(`✅ *CUPONS DESATIVADOS!*
+
+❌ ${deactivatedCount} cupom(ns) desativado(s) com sucesso.
+
+Os cupons relacionados a este broadcast foram desativados e não poderão mais ser usados.
+
+*Nota:* O broadcast e os destinatários permanecem no banco de dados. Use "Deletar Broadcast" para remover completamente.`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar', `manage_broadcast:${campaignId}`)]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao desativar cupons:', err);
+      return ctx.reply('❌ Erro ao desativar cupons.');
+    }
+  });
+  
+  // Deletar broadcast completamente
+  bot.action(/^delete_broadcast:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('🗑️ Deletando...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const campaignId = ctx.match[1];
+    
+    try {
+      // Buscar campanha
+      const { data: campaign, error: campaignError } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
+      
+      if (campaignError || !campaign) {
+        return ctx.reply('❌ Broadcast não encontrado.');
+      }
+      
+      // Verificar permissão
+      const user = await db.getOrCreateUser(ctx.from);
+      if (campaign.created_by !== user.id) {
+        return ctx.reply('❌ Você não tem permissão.');
+      }
+      
+      // Confirmar antes de deletar
+      const session = global._SESSIONS?.[ctx.from.id];
+      if (!session || session.type !== 'confirm_delete_broadcast' || session.campaignId !== campaignId) {
+        global._SESSIONS = global._SESSIONS || {};
+        global._SESSIONS[ctx.from.id] = {
+          type: 'confirm_delete_broadcast',
+          campaignId: campaignId
+        };
+        
+        return ctx.editMessageText(`⚠️ *CONFIRMAR EXCLUSÃO*
+
+Você está prestes a deletar permanentemente:
+
+*Broadcast:* ${campaign.name || 'Sem nome'}
+*Enviados:* ${campaign.sent_count || 0}
+*Data:* ${new Date(campaign.created_at).toLocaleDateString('pt-BR')}
+
+*O que será deletado:*
+🗑️ Campanha de broadcast
+🗑️ Registros de destinatários
+❌ Cupons relacionados serão DESATIVADOS (não deletados)
+
+*Esta ação NÃO pode ser desfeita!*
+
+Deseja continuar?`, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Sim, Deletar Tudo', `confirm_delete_broadcast:${campaignId}`)],
+            [Markup.button.callback('❌ Cancelar', `manage_broadcast:${campaignId}`)]
+          ])
+        });
+      }
+      
+    } catch (err) {
+      console.error('Erro ao preparar exclusão:', err);
+      return ctx.reply('❌ Erro ao preparar exclusão.');
+    }
+  });
+  
+  // Confirmar e executar exclusão
+  bot.action(/^confirm_delete_broadcast:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('🗑️ Deletando...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const campaignId = ctx.match[1];
+    
+    try {
+      // Buscar campanha
+      const { data: campaign, error: campaignError } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
+      
+      if (campaignError || !campaign) {
+        return ctx.reply('❌ Broadcast não encontrado.');
+      }
+      
+      // Verificar permissão
+      const user = await db.getOrCreateUser(ctx.from);
+      if (campaign.created_by !== user.id) {
+        return ctx.reply('❌ Você não tem permissão.');
+      }
+      
+      // 1. Desativar cupons relacionados
+      const campaignDate = new Date(campaign.created_at);
+      const startDate = new Date(campaignDate);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(campaignDate);
+      endDate.setHours(23, 59, 59, 999);
+      
+      const { data: relatedCoupons } = await db.supabase
+        .from('coupons')
+        .select('id')
+        .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString());
+      
+      if (relatedCoupons && relatedCoupons.length > 0) {
+        const couponIds = relatedCoupons.map(c => c.id);
+        await db.supabase
+          .from('coupons')
+          .update({ is_active: false })
+          .in('id', couponIds);
+      }
+      
+      // 2. Deletar destinatários (cascade já faz isso, mas vamos garantir)
+      await db.supabase
+        .from('broadcast_recipients')
+        .delete()
+        .eq('broadcast_campaign_id', campaignId);
+      
+      // 3. Deletar campanha
+      const { error: deleteError } = await db.supabase
+        .from('broadcast_campaigns')
+        .delete()
+        .eq('id', campaignId);
+      
+      if (deleteError) {
+        throw deleteError;
+      }
+      
+      // Limpar sessão
+      delete global._SESSIONS[ctx.from.id];
+      
+      return ctx.editMessageText(`✅ *BROADCAST DELETADO!*
+
+🗑️ Campanha deletada
+🗑️ Destinatários removidos
+❌ Cupons desativados
+
+O broadcast foi completamente removido do sistema.`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar para Lista', 'creator_manage_broadcasts')]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao deletar broadcast:', err);
+      delete global._SESSIONS[ctx.from.id];
+      return ctx.reply('❌ Erro ao deletar broadcast.');
+    }
   });
   
   // Confirmar e enviar broadcast + produto + cupom
