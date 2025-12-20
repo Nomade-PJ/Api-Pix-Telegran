@@ -799,11 +799,19 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
           await new Promise(resolve => setTimeout(resolve, 50)); // Rate limit
         } catch (err) {
           failed++;
-          // Não logar como erro se o bot foi bloqueado pelo usuário (comportamento esperado)
-          if (err.message && err.message.includes('bot was blocked by the user')) {
-            // Silencioso - apenas contar como falha
+          // Não logar como erro se for um caso esperado (comportamento normal)
+          const errorMessage = err.message || '';
+          const isExpectedError = 
+            errorMessage.includes('bot was blocked by the user') ||
+            errorMessage.includes('user is deactivated') ||
+            errorMessage.includes('chat not found') ||
+            errorMessage.includes('user not found') ||
+            errorMessage.includes('chat_id is empty');
+          
+          if (isExpectedError) {
+            // Silencioso - apenas contar como falha (comportamento esperado)
           } else {
-            // Logar apenas erros reais (não relacionados a bloqueio)
+            // Logar apenas erros reais (não relacionados a usuários inativos)
             console.error(`❌ [BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
           }
         }

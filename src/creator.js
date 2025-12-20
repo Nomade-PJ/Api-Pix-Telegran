@@ -1004,11 +1004,19 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
           
         } catch (err) {
           failed++;
-          // Não logar como erro se o bot foi bloqueado pelo usuário (comportamento esperado)
-          if (err.message && err.message.includes('bot was blocked by the user')) {
-            // Silencioso - apenas contar como falha
+          // Não logar como erro se for um caso esperado (comportamento normal)
+          const errorMessage = err.message || '';
+          const isExpectedError = 
+            errorMessage.includes('bot was blocked by the user') ||
+            errorMessage.includes('user is deactivated') ||
+            errorMessage.includes('chat not found') ||
+            errorMessage.includes('user not found') ||
+            errorMessage.includes('chat_id is empty');
+          
+          if (isExpectedError) {
+            // Silencioso - apenas contar como falha (comportamento esperado)
           } else {
-            // Logar apenas erros reais (não relacionados a bloqueio)
+            // Logar apenas erros reais (não relacionados a usuários inativos)
             console.error(`❌ [CREATOR-BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
           }
         }
@@ -1830,7 +1838,17 @@ _(Toque para copiar)_`;
           
         } catch (err) {
           failed++;
-          if (!err.message || !err.message.includes('bot was blocked by the user')) {
+          // Não logar como erro se for um caso esperado (comportamento normal)
+          const errorMessage = err.message || '';
+          const isExpectedError = 
+            errorMessage.includes('bot was blocked by the user') ||
+            errorMessage.includes('user is deactivated') ||
+            errorMessage.includes('chat not found') ||
+            errorMessage.includes('user not found') ||
+            errorMessage.includes('chat_id is empty');
+          
+          if (!isExpectedError) {
+            // Logar apenas erros reais (não relacionados a usuários inativos)
             console.error(`❌ [BPC-BROADCAST] Erro ao enviar para ${recipient.telegram_id}:`, err.message);
           }
         }
