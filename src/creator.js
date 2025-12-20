@@ -125,35 +125,37 @@ Selecione uma opção abaixo:`;
       const broadcastCouponEnabled = await db.getSetting('broadcast_coupon_enabled');
       const showBroadcastCoupon = broadcastCouponEnabled === 'true' || broadcastCouponEnabled === true;
       
-      let message = `📢 *NOVO BROADCAST*
+      let message = `📢 *BROADCAST*
 
-Escolha o tipo de broadcast:
+*Criar novo broadcast:*
 
-1️⃣ *Broadcast Simples* - Mensagem para todos os usuários
-2️⃣ *Broadcast com Produto* - Associar a um produto específico
-3️⃣ *Broadcast com Cupom* - Criar cupom e divulgar`;
+1️⃣ *Simples* - Mensagem para todos
+2️⃣ *Com Produto* - Associar produto
+3️⃣ *Com Cupom* - Criar e divulgar cupom`;
 
       if (showBroadcastCoupon) {
         message += `
-4️⃣ *Broadcast + Produto + Cupom* - Desconto automático em produtos selecionados`;
+4️⃣ *Produto + Cupom* - Desconto automático`;
       }
 
       message += `
 
-Selecione uma opção:`;
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+*Gerenciar promoções ativas:*`;
 
       const buttons = [
-        [Markup.button.callback('📣 Broadcast Simples', 'creator_broadcast_simple')],
-        [Markup.button.callback('🛍️ Broadcast + Produto', 'creator_broadcast_product')],
-        [Markup.button.callback('🎟️ Broadcast + Cupom', 'creator_broadcast_coupon')]
+        [Markup.button.callback('📣 Simples', 'creator_broadcast_simple')],
+        [Markup.button.callback('🛍️ Com Produto', 'creator_broadcast_product')],
+        [Markup.button.callback('🎟️ Com Cupom', 'creator_broadcast_coupon')]
       ];
       
       if (showBroadcastCoupon) {
-        buttons.push([Markup.button.callback('🎁 Broadcast + Produto + Cupom', 'creator_broadcast_product_coupon')]);
+        buttons.push([Markup.button.callback('🎁 Produto + Cupom', 'creator_broadcast_product_coupon')]);
       }
       
       buttons.push(
-        [Markup.button.callback('📋 Gerenciar Broadcasts Enviados', 'creator_manage_broadcasts')],
+        [Markup.button.callback('🗑️ Deletar Promoções', 'creator_delete_promotions')],
         [Markup.button.callback('🔙 Voltar', 'creator_refresh')]
       );
       
@@ -1073,31 +1075,32 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
     });
   });
   
-  // ===== GERENCIAR BROADCASTS ENVIADOS =====
-  bot.action('creator_manage_broadcasts', async (ctx) => {
-    await ctx.answerCbQuery('📋 Carregando broadcasts...');
+  // ===== DELETAR PROMOÇÕES =====
+  bot.action('creator_delete_promotions', async (ctx) => {
+    await ctx.answerCbQuery('🗑️ Carregando promoções...');
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
     
     try {
       const user = await db.getOrCreateUser(ctx.from);
       
-      // Buscar broadcasts do criador (últimos 20)
+      // Buscar broadcasts com cupons (promoções) do criador
       const { data: campaigns, error } = await db.supabase
         .from('broadcast_campaigns')
         .select('*')
         .eq('created_by', user.id)
+        .not('coupon_code', 'is', null)
         .order('created_at', { ascending: false })
         .limit(20);
       
       if (error) throw error;
       
       if (!campaigns || campaigns.length === 0) {
-        return ctx.editMessageText(`📋 *GERENCIAR BROADCASTS*
+        return ctx.editMessageText(`🗑️ *DELETAR PROMOÇÕES*
 
-Nenhum broadcast encontrado.
+Nenhuma promoção encontrada.
 
-Você ainda não enviou nenhum broadcast.`, {
+Você ainda não criou nenhuma promoção com cupom.`, {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([
             [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
@@ -1105,9 +1108,10 @@ Você ainda não enviou nenhum broadcast.`, {
         });
       }
       
-      let message = `📋 *GERENCIAR BROADCASTS ENVIADOS*
+      // Buscar cupons relacionados para cada campanha
+      let message = `🗑️ *DELETAR PROMOÇÕES*
 
-*Total:* ${campaigns.length} broadcast(s)
+*Total:* ${campaigns.length} promoção(ões) ativa(s)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1125,16 +1129,28 @@ Você ainda não enviou nenhum broadcast.`, {
           minute: '2-digit' 
         });
         
-        const statusIcon = campaign.status === 'sent' ? '✅' : campaign.status === 'sending' ? '⏳' : '📝';
+        // Buscar cupons ativos desta promoção
+        const { data: activeCoupons } = await db.supabase
+          .from('coupons')
+          .select('code, discount_percentage, is_active')
+          .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
+          .eq('is_active', true)
+          .limit(5);
         
-        message += `${statusIcon} *${campaign.name || 'Sem nome'}*\n`;
-        message += `📅 ${dateStr} | 📊 ${campaign.sent_count || 0} enviados\n`;
+        const couponsCount = activeCoupons?.length || 0;
+        const couponStatus = couponsCount > 0 ? '✅ Ativa' : '❌ Inativa';
+        
+        message += `${i + 1}. *${campaign.name || 'Sem nome'}*\n`;
+        message += `   📅 ${dateStr}\n`;
+        message += `   🎟️ Cupom: \`${campaign.coupon_code || 'N/A'}\`\n`;
+        message += `   📊 Status: ${couponStatus} (${couponsCount} cupom${couponsCount !== 1 ? 's' : ''} ativo${couponsCount !== 1 ? 's' : ''})\n`;
         message += `\n`;
         
+        const displayName = campaign.name?.substring(0, 25) || campaign.coupon_code?.substring(0, 25) || 'Promoção';
         buttons.push([
           Markup.button.callback(
-            `${statusIcon} ${campaign.name?.substring(0, 30) || 'Broadcast'}...`, 
-            `manage_broadcast:${campaign.id}`
+            `${couponsCount > 0 ? '✅' : '❌'} ${displayName}...`, 
+            `select_promotion:${campaign.id}`
           )
         ]);
       }
@@ -1147,13 +1163,13 @@ Você ainda não enviou nenhum broadcast.`, {
       });
       
     } catch (err) {
-      console.error('Erro ao listar broadcasts:', err);
-      return ctx.reply('❌ Erro ao carregar broadcasts.');
+      console.error('Erro ao listar promoções:', err);
+      return ctx.reply('❌ Erro ao carregar promoções.');
     }
   });
   
-  // Detalhes e ações de um broadcast específico
-  bot.action(/^manage_broadcast:(.+)$/, async (ctx) => {
+  // Selecionar promoção para gerenciar
+  bot.action(/^select_promotion:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
@@ -1169,31 +1185,32 @@ Você ainda não enviou nenhum broadcast.`, {
         .single();
       
       if (campaignError || !campaign) {
-        return ctx.reply('❌ Broadcast não encontrado.');
+        return ctx.reply('❌ Promoção não encontrada.');
       }
       
       // Verificar se é do criador
       const user = await db.getOrCreateUser(ctx.from);
       if (campaign.created_by !== user.id) {
-        return ctx.reply('❌ Você não tem permissão para gerenciar este broadcast.');
+        return ctx.reply('❌ Você não tem permissão.');
       }
       
-      // Buscar cupons relacionados (se houver)
-      const { data: coupons, error: couponsError } = await db.supabase
+      // Buscar TODOS os cupons relacionados (ativos e inativos)
+      const campaignDate = new Date(campaign.created_at);
+      const startDate = new Date(campaignDate);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(campaignDate);
+      endDate.setHours(23, 59, 59, 999);
+      
+      const { data: allCoupons, error: couponsError } = await db.supabase
         .from('coupons')
-        .select('*')
+        .select('code, discount_percentage, is_active, product_id, media_pack_id, created_at')
         .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
-        .eq('is_active', true);
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
+        .order('created_at', { ascending: false });
       
-      const activeCoupons = coupons?.filter(c => c.is_active) || [];
-      
-      // Buscar destinatários
-      const { data: recipients, error: recipientsError } = await db.supabase
-        .from('broadcast_recipients')
-        .select('telegram_id')
-        .eq('broadcast_campaign_id', campaignId);
-      
-      const recipientsCount = recipients?.length || 0;
+      const activeCoupons = allCoupons?.filter(c => c.is_active) || [];
+      const inactiveCoupons = allCoupons?.filter(c => !c.is_active) || [];
       
       const date = new Date(campaign.created_at);
       const dateStr = date.toLocaleDateString('pt-BR', { 
@@ -1204,44 +1221,58 @@ Você ainda não enviou nenhum broadcast.`, {
         minute: '2-digit' 
       });
       
-      let message = `📋 *DETALHES DO BROADCAST*
+      let message = `🎟️ *PROMOÇÃO: ${campaign.name || campaign.coupon_code || 'Sem nome'}*
 
-*Nome:* ${campaign.name || 'Sem nome'}
-*Status:* ${campaign.status === 'sent' ? '✅ Enviado' : campaign.status === 'sending' ? '⏳ Enviando' : '📝 Rascunho'}
-*Data:* ${dateStr}
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-📊 *Estatísticas:*
-✅ Enviados: ${campaign.sent_count || 0}
-❌ Falhas: ${campaign.failed_count || 0}
-👥 Destinatários: ${recipientsCount}
-🎟️ Cupons ativos: ${activeCoupons.length}
+📅 *Criada em:* ${dateStr}
+🎟️ *Cupom:* \`${campaign.coupon_code || 'N/A'}\`
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-*Mensagem:*
-${campaign.message?.substring(0, 200) || 'Sem mensagem'}${campaign.message?.length > 200 ? '...' : ''}
+📊 *Cupons Criados:*
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+      
+      if (activeCoupons.length > 0) {
+        message += `✅ *Ativos (${activeCoupons.length}):*\n`;
+        activeCoupons.forEach((coupon, index) => {
+          message += `   ${index + 1}. \`${coupon.code}\` - ${coupon.discount_percentage}% OFF\n`;
+        });
+        message += `\n`;
+      }
+      
+      if (inactiveCoupons.length > 0) {
+        message += `❌ *Inativos (${inactiveCoupons.length}):*\n`;
+        inactiveCoupons.slice(0, 3).forEach((coupon, index) => {
+          message += `   ${index + 1}. \`${coupon.code}\` - ${coupon.discount_percentage}% OFF\n`;
+        });
+        if (inactiveCoupons.length > 3) {
+          message += `   ... e mais ${inactiveCoupons.length - 3} cupom(ns)\n`;
+        }
+        message += `\n`;
+      }
+      
+      if (allCoupons?.length === 0) {
+        message += `⚠️ Nenhum cupom encontrado para esta promoção.\n\n`;
+      }
+      
+      message += `━━━━━━━━━━━━━━━━━━━━━━━━
 
-*Ações disponíveis:*`;
+*O que deseja fazer?*`;
       
       const buttons = [];
       
-      // Se tiver cupons ativos, mostrar opção de desativar
+      // Sempre mostrar opções de desativar e excluir
       if (activeCoupons.length > 0) {
         buttons.push([
-          Markup.button.callback('❌ Desativar Cupons da Promoção', `deactivate_broadcast_coupons:${campaignId}`)
+          Markup.button.callback('❌ Desativar Promoção', `ask_deactivate:${campaignId}`)
         ]);
       }
       
-      // Opção de deletar
       buttons.push([
-        Markup.button.callback('🗑️ Deletar Broadcast Completamente', `delete_broadcast:${campaignId}`)
+        Markup.button.callback('🗑️ Excluir Promoção', `ask_delete:${campaignId}`)
       ]);
       
-      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_manage_broadcasts')]);
+      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_delete_promotions')]);
       
       return ctx.editMessageText(message, {
         parse_mode: 'Markdown',
@@ -1249,12 +1280,194 @@ ${campaign.message?.substring(0, 200) || 'Sem mensagem'}${campaign.message?.leng
       });
       
     } catch (err) {
-      console.error('Erro ao carregar detalhes do broadcast:', err);
-      return ctx.reply('❌ Erro ao carregar detalhes.');
+      console.error('Erro ao carregar promoção:', err);
+      return ctx.reply('❌ Erro ao carregar promoção.');
     }
   });
   
-  // Desativar cupons de um broadcast
+  // Perguntar confirmação para desativar
+  bot.action(/^ask_deactivate:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const campaignId = ctx.match[1];
+    
+    try {
+      const { data: campaign } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('name, coupon_code')
+        .eq('id', campaignId)
+        .single();
+      
+      if (!campaign) {
+        return ctx.reply('❌ Promoção não encontrada.');
+      }
+      
+      return ctx.editMessageText(`⚠️ *CONFIRMAR DESATIVAÇÃO*
+
+Você está prestes a *desativar* a promoção:
+
+*Nome:* ${campaign.name || campaign.coupon_code || 'Sem nome'}
+*Cupom:* \`${campaign.coupon_code || 'N/A'}\`
+
+*O que será feito:*
+❌ Todos os cupons serão desativados
+📋 A promoção permanecerá no histórico
+👥 Destinatários serão mantidos
+
+*Os cupons não poderão mais ser usados.*
+
+Deseja continuar?`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Sim, Desativar', `confirm_deactivate:${campaignId}`)],
+          [Markup.button.callback('❌ Cancelar', `select_promotion:${campaignId}`)]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao preparar desativação:', err);
+      return ctx.reply('❌ Erro ao preparar desativação.');
+    }
+  });
+  
+  // Confirmar e desativar cupons
+  bot.action(/^confirm_deactivate:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('❌ Desativando...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const campaignId = ctx.match[1];
+    
+    try {
+      // Buscar campanha
+      const { data: campaign, error: campaignError } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
+      
+      if (campaignError || !campaign) {
+        return ctx.reply('❌ Promoção não encontrada.');
+      }
+      
+      // Verificar permissão
+      const user = await db.getOrCreateUser(ctx.from);
+      if (campaign.created_by !== user.id) {
+        return ctx.reply('❌ Você não tem permissão.');
+      }
+      
+      // Buscar e desativar todos os cupons relacionados
+      const campaignDate = new Date(campaign.created_at);
+      const startDate = new Date(campaignDate);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(campaignDate);
+      endDate.setHours(23, 59, 59, 999);
+      
+      let couponConditions = [];
+      if (campaign.coupon_code) {
+        couponConditions.push(`code.eq.${campaign.coupon_code}`);
+      }
+      if (campaign.product_id) {
+        couponConditions.push(`product_id.eq.${campaign.product_id}`);
+      }
+      if (campaign.media_pack_id) {
+        couponConditions.push(`media_pack_id.eq.${campaign.media_pack_id}`);
+      }
+      
+      const { data: relatedCoupons } = await db.supabase
+        .from('coupons')
+        .select('id')
+        .or(couponConditions.length > 0 ? couponConditions.join(',') : 'is_broadcast_coupon.eq.true')
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString());
+      
+      let deactivatedCount = 0;
+      
+      if (relatedCoupons && relatedCoupons.length > 0) {
+        const couponIds = relatedCoupons.map(c => c.id);
+        
+        const { error: updateError } = await db.supabase
+          .from('coupons')
+          .update({ is_active: false })
+          .in('id', couponIds);
+        
+        if (updateError) {
+          console.error('Erro ao desativar cupons:', updateError);
+        } else {
+          deactivatedCount = relatedCoupons.length;
+        }
+      }
+      
+      return ctx.editMessageText(`✅ *PROMOÇÃO DESATIVADA!*
+
+❌ ${deactivatedCount} cupom(ns) desativado(s)
+
+A promoção foi desativada com sucesso. Os cupons não poderão mais ser usados.
+
+*Nota:* A promoção permanece no histórico. Use "Excluir" para remover completamente.`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar para Lista', 'creator_delete_promotions')]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao desativar promoção:', err);
+      return ctx.reply('❌ Erro ao desativar promoção.');
+    }
+  });
+  
+  // Perguntar confirmação para excluir
+  bot.action(/^ask_delete:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const campaignId = ctx.match[1];
+    
+    try {
+      const { data: campaign } = await db.supabase
+        .from('broadcast_campaigns')
+        .select('name, coupon_code, sent_count')
+        .eq('id', campaignId)
+        .single();
+      
+      if (!campaign) {
+        return ctx.reply('❌ Promoção não encontrada.');
+      }
+      
+      return ctx.editMessageText(`⚠️ *CONFIRMAR EXCLUSÃO*
+
+Você está prestes a *excluir permanentemente* a promoção:
+
+*Nome:* ${campaign.name || campaign.coupon_code || 'Sem nome'}
+*Cupom:* \`${campaign.coupon_code || 'N/A'}\`
+*Enviados:* ${campaign.sent_count || 0}
+
+*O que será deletado:*
+🗑️ Campanha de broadcast
+🗑️ Registros de destinatários
+❌ Cupons serão desativados
+
+*Esta ação NÃO pode ser desfeita!*
+
+Deseja continuar?`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Sim, Excluir', `confirm_delete:${campaignId}`)],
+          [Markup.button.callback('❌ Cancelar', `select_promotion:${campaignId}`)]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao preparar exclusão:', err);
+      return ctx.reply('❌ Erro ao preparar exclusão.');
+    }
+  });
+  
+  // Desativar cupons de um broadcast (mantido para compatibilidade)
   bot.action(/^deactivate_broadcast_coupons:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery('❌ Desativando cupons...');
     const isCreator = await db.isUserCreator(ctx.from.id);
@@ -1324,10 +1537,10 @@ ${campaign.message?.substring(0, 200) || 'Sem mensagem'}${campaign.message?.leng
 
 Os cupons relacionados a este broadcast foram desativados e não poderão mais ser usados.
 
-*Nota:* O broadcast e os destinatários permanecem no banco de dados. Use "Deletar Broadcast" para remover completamente.`, {
+*Nota:* O broadcast e os destinatários permanecem no banco de dados. Use "Excluir" para remover completamente.`, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback('🔙 Voltar', `manage_broadcast:${campaignId}`)]
+          [Markup.button.callback('🔙 Voltar', `select_promotion:${campaignId}`)]
         ])
       });
       
@@ -1337,73 +1550,8 @@ Os cupons relacionados a este broadcast foram desativados e não poderão mais s
     }
   });
   
-  // Deletar broadcast completamente
-  bot.action(/^delete_broadcast:(.+)$/, async (ctx) => {
-    await ctx.answerCbQuery('🗑️ Deletando...');
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    
-    const campaignId = ctx.match[1];
-    
-    try {
-      // Buscar campanha
-      const { data: campaign, error: campaignError } = await db.supabase
-        .from('broadcast_campaigns')
-        .select('*')
-        .eq('id', campaignId)
-        .single();
-      
-      if (campaignError || !campaign) {
-        return ctx.reply('❌ Broadcast não encontrado.');
-      }
-      
-      // Verificar permissão
-      const user = await db.getOrCreateUser(ctx.from);
-      if (campaign.created_by !== user.id) {
-        return ctx.reply('❌ Você não tem permissão.');
-      }
-      
-      // Confirmar antes de deletar
-      const session = global._SESSIONS?.[ctx.from.id];
-      if (!session || session.type !== 'confirm_delete_broadcast' || session.campaignId !== campaignId) {
-        global._SESSIONS = global._SESSIONS || {};
-        global._SESSIONS[ctx.from.id] = {
-          type: 'confirm_delete_broadcast',
-          campaignId: campaignId
-        };
-        
-        return ctx.editMessageText(`⚠️ *CONFIRMAR EXCLUSÃO*
-
-Você está prestes a deletar permanentemente:
-
-*Broadcast:* ${campaign.name || 'Sem nome'}
-*Enviados:* ${campaign.sent_count || 0}
-*Data:* ${new Date(campaign.created_at).toLocaleDateString('pt-BR')}
-
-*O que será deletado:*
-🗑️ Campanha de broadcast
-🗑️ Registros de destinatários
-❌ Cupons relacionados serão DESATIVADOS (não deletados)
-
-*Esta ação NÃO pode ser desfeita!*
-
-Deseja continuar?`, {
-          parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Sim, Deletar Tudo', `confirm_delete_broadcast:${campaignId}`)],
-            [Markup.button.callback('❌ Cancelar', `manage_broadcast:${campaignId}`)]
-          ])
-        });
-      }
-      
-    } catch (err) {
-      console.error('Erro ao preparar exclusão:', err);
-      return ctx.reply('❌ Erro ao preparar exclusão.');
-    }
-  });
-  
   // Confirmar e executar exclusão
-  bot.action(/^confirm_delete_broadcast:(.+)$/, async (ctx) => {
+  bot.action(/^confirm_delete:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery('🗑️ Deletando...');
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
@@ -1428,26 +1576,57 @@ Deseja continuar?`, {
         return ctx.reply('❌ Você não tem permissão.');
       }
       
-      // 1. Desativar cupons relacionados
-      const campaignDate = new Date(campaign.created_at);
-      const startDate = new Date(campaignDate);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(campaignDate);
-      endDate.setHours(23, 59, 59, 999);
+      // 1. Desativar TODOS os cupons relacionados ao broadcast
+      // Buscar por código do cupom OU por produto/pack relacionado OU por tipo broadcast
+      let couponConditions = [];
       
-      const { data: relatedCoupons } = await db.supabase
+      if (campaign.coupon_code) {
+        couponConditions.push(`code.eq.${campaign.coupon_code}`);
+      }
+      if (campaign.product_id) {
+        couponConditions.push(`product_id.eq.${campaign.product_id}`);
+      }
+      if (campaign.media_pack_id) {
+        couponConditions.push(`media_pack_id.eq.${campaign.media_pack_id}`);
+      }
+      
+      // Buscar cupons relacionados (por código, produto, pack ou tipo broadcast)
+      const { data: relatedCoupons, error: couponsError } = await db.supabase
         .from('coupons')
-        .select('id')
-        .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString());
+        .select('id, code, product_id, media_pack_id, is_broadcast_coupon')
+        .or(couponConditions.length > 0 ? couponConditions.join(',') : 'is_broadcast_coupon.eq.true');
       
-      if (relatedCoupons && relatedCoupons.length > 0) {
-        const couponIds = relatedCoupons.map(c => c.id);
-        await db.supabase
+      if (!couponsError && relatedCoupons && relatedCoupons.length > 0) {
+        // Filtrar apenas cupons que realmente pertencem a este broadcast
+        const campaignDate = new Date(campaign.created_at);
+        const startDate = new Date(campaignDate);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(campaignDate);
+        endDate.setHours(23, 59, 59, 999);
+        
+        // Buscar cupons criados no mesmo dia e que correspondem ao broadcast
+        const { data: allRelatedCoupons } = await db.supabase
           .from('coupons')
-          .update({ is_active: false })
-          .in('id', couponIds);
+          .select('id')
+          .or(couponConditions.length > 0 ? couponConditions.join(',') : 'is_broadcast_coupon.eq.true')
+          .gte('created_at', startDate.toISOString())
+          .lte('created_at', endDate.toISOString());
+        
+        if (allRelatedCoupons && allRelatedCoupons.length > 0) {
+          const couponIds = allRelatedCoupons.map(c => c.id);
+          
+          // Desativar todos os cupons relacionados
+          const { error: updateError } = await db.supabase
+            .from('coupons')
+            .update({ is_active: false })
+            .in('id', couponIds);
+          
+          if (updateError) {
+            console.error('Erro ao desativar cupons:', updateError);
+          } else {
+            console.log(`✅ ${couponIds.length} cupom(ns) desativado(s) ao deletar broadcast ${campaignId}`);
+          }
+        }
       }
       
       // 2. Deletar destinatários (cascade já faz isso, mas vamos garantir)
@@ -1469,16 +1648,16 @@ Deseja continuar?`, {
       // Limpar sessão
       delete global._SESSIONS[ctx.from.id];
       
-      return ctx.editMessageText(`✅ *BROADCAST DELETADO!*
+      return ctx.editMessageText(`✅ *PROMOÇÃO EXCLUÍDA!*
 
 🗑️ Campanha deletada
 🗑️ Destinatários removidos
 ❌ Cupons desativados
 
-O broadcast foi completamente removido do sistema.`, {
+A promoção foi completamente removida do sistema.`, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback('🔙 Voltar para Lista', 'creator_manage_broadcasts')]
+          [Markup.button.callback('🔙 Voltar para Lista', 'creator_delete_promotions')]
         ])
       });
       

@@ -1807,70 +1807,79 @@ Clique no botão abaixo para renovar:`, {
         return ctx.reply('❌ Produto não encontrado.');
       }
       
-      // Verificar se usuário recebeu broadcast com desconto automático
+      // Verificar se há cupom automático ativo (broadcast) para este produto
       let finalPrice = product.price;
       let appliedCoupon = null;
-      let receivedBroadcast = false;
       
       try {
-        // Buscar se usuário recebeu broadcast com cupom para este produto
-        const { data: broadcastCoupon, error: couponError } = await db.supabase
-          .from('broadcast_recipients')
-          .select('broadcast_campaign_id')
-          .eq('telegram_id', ctx.from.id)
+        // Buscar cupom automático ativo para este produto (prioridade)
+        const { data: autoCoupon, error: autoCouponError } = await db.supabase
+          .from('coupons')
+          .select('*')
+          .eq('product_id', productId)
+          .eq('is_active', true)
+          .eq('is_broadcast_coupon', true)
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
         
-        if (!couponError && broadcastCoupon) {
-          receivedBroadcast = true;
-          
-          // Buscar cupom automático ativo para este produto
-          const { data: autoCoupon, error: autoCouponError } = await db.supabase
-            .from('coupons')
-            .select('*')
-            .eq('product_id', productId)
-            .eq('is_active', true)
-            .eq('is_broadcast_coupon', true)
+        if (!autoCouponError && autoCoupon) {
+          // Verificar se há uma campanha ativa relacionada a este cupom
+          // Buscar campanha que ainda existe (não foi deletada) e está relacionada ao cupom
+          const { data: campaign, error: campaignError } = await db.supabase
+            .from('broadcast_campaigns')
+            .select('id')
+            .or(`coupon_code.eq.${autoCoupon.code},product_id.eq.${productId}`)
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
           
-          if (!autoCouponError && autoCoupon) {
-            // Aplicar desconto automático
-            finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
-            appliedCoupon = autoCoupon;
+          // Só aplicar desconto se a campanha ainda existir (não foi deletada)
+          if (!campaignError && campaign) {
+            // Verificar se usuário recebeu este broadcast
+            const { data: recipient, error: recipientError } = await db.supabase
+              .from('broadcast_recipients')
+              .select('telegram_id')
+              .eq('telegram_id', ctx.from.id)
+              .eq('broadcast_campaign_id', campaign.id)
+              .single();
             
-            console.log(`🎁 [BUY] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
+            // Só aplicar desconto se o usuário recebeu o broadcast
+            if (!recipientError && recipient) {
+              // Aplicar desconto automático
+              finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
+              appliedCoupon = autoCoupon;
+              
+              console.log(`🎁 [BUY] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
+            }
+          } else {
+            // Se a campanha foi deletada, o cupom não deve ser usado
+            console.log(`⚠️ [BUY] Cupom automático encontrado mas campanha não existe mais - ignorando desconto`);
           }
         }
-      } catch (err) {
-        console.error('Erro ao verificar desconto automático:', err);
-        // Continuar sem desconto em caso de erro
-      }
-      
-      // Se não recebeu broadcast, perguntar se tem cupom
-      if (!receivedBroadcast) {
-        // Verificar se há cupons ativos para este produto
-        const { data: availableCoupons, error: couponsError } = await db.supabase
-          .from('coupons')
-          .select('code')
-          .eq('product_id', productId)
-          .eq('is_active', true)
-          .eq('is_broadcast_coupon', false)
-          .limit(1);
         
-        if (!couponsError && availableCoupons && availableCoupons.length > 0) {
-          // Criar sessão para aguardar cupom
-          global._SESSIONS = global._SESSIONS || {};
-          global._SESSIONS[ctx.from.id] = {
-            type: 'awaiting_coupon',
-            productId: productId,
-            productName: product.name,
-            productPrice: product.price
-          };
+        // Se não aplicou desconto automático, verificar cupons manuais disponíveis
+        if (!appliedCoupon) {
+          const { data: manualCoupons, error: manualCouponsError } = await db.supabase
+            .from('coupons')
+            .select('code')
+            .eq('product_id', productId)
+            .eq('is_active', true)
+            .eq('is_broadcast_coupon', false)
+            .limit(1);
           
-          return ctx.reply(`🎟️ *TEM UM CUPOM DE DESCONTO?*
+          // Só perguntar sobre cupom se houver cupons manuais disponíveis
+          if (!manualCouponsError && manualCoupons && manualCoupons.length > 0) {
+            // Criar sessão para aguardar cupom
+            global._SESSIONS = global._SESSIONS || {};
+            global._SESSIONS[ctx.from.id] = {
+              type: 'awaiting_coupon',
+              productId: productId,
+              productName: product.name,
+              productPrice: product.price
+            };
+            
+            return ctx.reply(`🎟️ *TEM UM CUPOM DE DESCONTO?*
 
 📦 Produto: ${product.name}
 💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}
@@ -1879,12 +1888,16 @@ Se você tem um cupom, digite o código agora.
 Se não tem, digite *NÃO* para continuar sem desconto.
 
 _Cancelar: /cancelar_`, { 
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-              [Markup.button.callback('❌ Não tenho cupom', 'skip_coupon')]
-            ])
-          });
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('❌ Não tenho cupom', 'skip_coupon')]
+              ])
+            });
+          }
         }
+      } catch (err) {
+        console.error('Erro ao verificar cupons:', err);
+        // Continuar sem desconto em caso de erro
       }
       
       const amount = finalPrice.toString();
@@ -2201,38 +2214,54 @@ Esta transação foi cancelada automaticamente.
         baseAmount = parseFloat(pack.price);
       }
       
-      // Verificar se usuário recebeu broadcast com desconto automático
+      // Verificar se há cupom automático ativo (broadcast) para este pack
       let finalPackPrice = baseAmount;
       let appliedPackCoupon = null;
       
       try {
-        // Buscar se usuário recebeu broadcast com cupom para este pack
-        const { data: broadcastCoupon, error: couponError } = await db.supabase
-          .from('broadcast_recipients')
-          .select('broadcast_campaign_id')
-          .eq('telegram_id', ctx.from.id)
+        // Buscar cupom automático ativo para este pack (prioridade)
+        const { data: autoCoupon, error: autoCouponError } = await db.supabase
+          .from('coupons')
+          .select('*')
+          .eq('media_pack_id', packId)
+          .eq('is_active', true)
+          .eq('is_broadcast_coupon', true)
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
         
-        if (!couponError && broadcastCoupon) {
-          // Buscar cupom automático ativo para este pack
-          const { data: autoCoupon, error: autoCouponError } = await db.supabase
-            .from('coupons')
-            .select('*')
-            .eq('media_pack_id', packId)
-            .eq('is_active', true)
-            .eq('is_broadcast_coupon', true)
+        if (!autoCouponError && autoCoupon) {
+          // Verificar se há uma campanha ativa relacionada a este cupom
+          // Buscar campanha que ainda existe (não foi deletada) e está relacionada ao cupom
+          const { data: campaign, error: campaignError } = await db.supabase
+            .from('broadcast_campaigns')
+            .select('id')
+            .or(`coupon_code.eq.${autoCoupon.code},media_pack_id.eq.${packId}`)
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
           
-          if (!autoCouponError && autoCoupon) {
-            // Aplicar desconto automático
-            finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
-            appliedPackCoupon = autoCoupon;
+          // Só aplicar desconto se a campanha ainda existir (não foi deletada)
+          if (!campaignError && campaign) {
+            // Verificar se usuário recebeu este broadcast
+            const { data: recipient, error: recipientError } = await db.supabase
+              .from('broadcast_recipients')
+              .select('telegram_id')
+              .eq('telegram_id', ctx.from.id)
+              .eq('broadcast_campaign_id', campaign.id)
+              .single();
             
-            console.log(`🎁 [BUY-MEDIA] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
+            // Só aplicar desconto se o usuário recebeu o broadcast
+            if (!recipientError && recipient) {
+              // Aplicar desconto automático
+              finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
+              appliedPackCoupon = autoCoupon;
+              
+              console.log(`🎁 [BUY-MEDIA] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
+            }
+          } else {
+            // Se a campanha foi deletada, o cupom não deve ser usado
+            console.log(`⚠️ [BUY-MEDIA] Cupom automático encontrado mas campanha não existe mais - ignorando desconto`);
           }
         }
       } catch (err) {
