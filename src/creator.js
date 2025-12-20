@@ -49,8 +49,7 @@ Selecione uma opção abaixo:`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Estatísticas', 'creator_stats')],
-        [Markup.button.callback('📢 Broadcast', 'creator_broadcast')],
-        [Markup.button.callback('🎟️ Cupons', 'creator_coupons')],
+        [Markup.button.callback('📢 CastCupom', 'creator_broadcast')],
         [Markup.button.callback('🔄 Atualizar', 'creator_refresh')]
       ]);
       
@@ -110,9 +109,9 @@ Selecione uma opção abaixo:`;
   // ===== LISTAR USUÁRIOS (REMOVIDO DO PAINEL - APENAS ADMIN) =====
   // Esta função foi removida do painel do criador por segurança
   
-  // ===== BROADCAST MELHORADO COM PRODUTOS =====
+  // ===== CASTCUPOM (Broadcast + Cupom Unificado) =====
   bot.action('creator_broadcast', async (ctx) => {
-    await ctx.answerCbQuery('📢 Preparando broadcast...');
+    await ctx.answerCbQuery('📢 Preparando CastCupom...');
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
     
@@ -121,24 +120,13 @@ Selecione uma opção abaixo:`;
       const products = await db.getAllProducts();
       const mediaPacks = await db.getAllMediaPacks();
       
-      // Verificar se broadcast com cupom está ativado
-      const broadcastCouponEnabled = await db.getSetting('broadcast_coupon_enabled');
-      const showBroadcastCoupon = broadcastCouponEnabled === 'true' || broadcastCouponEnabled === true;
-      
-      let message = `📢 *BROADCAST*
+      let message = `📢 *CASTCUPOM*
 
-*Criar novo broadcast:*
+*Criar nova promoção:*
 
 1️⃣ *Simples* - Mensagem para todos
 2️⃣ *Com Produto* - Associar produto
-3️⃣ *Com Cupom* - Criar e divulgar cupom`;
-
-      if (showBroadcastCoupon) {
-        message += `
-4️⃣ *Produto + Cupom* - Desconto automático`;
-      }
-
-      message += `
+3️⃣ *Produto + Cupom* - Desconto automático
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -147,17 +135,10 @@ Selecione uma opção abaixo:`;
       const buttons = [
         [Markup.button.callback('📣 Simples', 'creator_broadcast_simple')],
         [Markup.button.callback('🛍️ Com Produto', 'creator_broadcast_product')],
-        [Markup.button.callback('🎟️ Com Cupom', 'creator_broadcast_coupon')]
-      ];
-      
-      if (showBroadcastCoupon) {
-        buttons.push([Markup.button.callback('🎁 Produto + Cupom', 'creator_broadcast_product_coupon')]);
-      }
-      
-      buttons.push(
+        [Markup.button.callback('🎁 Produto + Cupom', 'creator_broadcast_product_coupon')],
         [Markup.button.callback('🗑️ Deletar Promoções', 'creator_delete_promotions')],
         [Markup.button.callback('🔙 Voltar', 'creator_refresh')]
-      );
+      ];
       
       return ctx.editMessageText(message, {
         parse_mode: 'Markdown',
@@ -647,263 +628,6 @@ _Cancelar: /cancelar_`, {
         [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
       ])
     });
-  });
-  
-  // ===== CUPONS =====
-  bot.action('creator_coupons', async (ctx) => {
-    await ctx.answerCbQuery('🎟️ Carregando cupons...');
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    
-    try {
-      // Buscar cupons criados pelo usuário
-      const user = await db.getOrCreateUser(ctx.from);
-      const { data: coupons, error } = await db.supabase
-        .from('coupons')
-        .select('*, products:product_id(name), media_packs:media_pack_id(name)')
-        .eq('created_by', user.id)
-        .order('created_at', { ascending: false })
-        .limit(10);
-      
-      if (error) throw error;
-      
-      let message = `🎟️ *GERENCIAR CUPONS*\n\n`;
-      
-      if (!coupons || coupons.length === 0) {
-        message += `Nenhum cupom criado ainda.\n\n`;
-      } else {
-        message += `📋 *Seus cupons:*\n\n`;
-        
-        for (const coupon of coupons) {
-          const status = coupon.is_active ? '✅' : '❌';
-          const productName = coupon.products?.name || coupon.media_packs?.name || 'Produto removido';
-          const uses = coupon.max_uses ? `${coupon.current_uses}/${coupon.max_uses}` : `${coupon.current_uses}/∞`;
-          
-          message += `${status} \`${coupon.code}\`\n`;
-          message += `   💰 ${coupon.discount_percentage}% de desconto\n`;
-          message += `   📦 ${productName}\n`;
-          message += `   📊 Usos: ${uses}\n`;
-          if (coupon.expires_at) {
-            const expiresAt = new Date(coupon.expires_at);
-            message += `   ⏰ Expira: ${expiresAt.toLocaleDateString('pt-BR')}\n`;
-          }
-          message += `\n`;
-        }
-      }
-      
-      message += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-      message += `Selecione uma opção:`;
-      
-      const buttons = [
-        [Markup.button.callback('➕ Novo Cupom', 'creator_new_coupon')],
-        [Markup.button.callback('📊 Ver Estatísticas', 'creator_coupon_stats')],
-        [Markup.button.callback('🔙 Voltar', 'creator_refresh')]
-      ];
-      
-      return ctx.editMessageText(message, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard(buttons)
-      });
-    } catch (err) {
-      console.error('Erro ao listar cupons:', err);
-      return ctx.reply('❌ Erro ao carregar cupons.');
-    }
-  });
-  
-  // Criar novo cupom
-  bot.action('creator_new_coupon', async (ctx) => {
-    await ctx.answerCbQuery('➕ Iniciando criação de cupom...');
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    
-    try {
-      const products = await db.getAllProducts();
-      const mediaPacks = await db.getAllMediaPacks();
-      
-      if (products.length === 0 && mediaPacks.length === 0) {
-        return ctx.editMessageText('📦 Nenhum produto disponível para criar cupom.\n\nCrie produtos primeiro no painel admin.', {
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback('🔙 Voltar', 'creator_coupons')]
-          ])
-        });
-      }
-      
-      let message = `➕ *CRIAR NOVO CUPOM*
-
-Selecione o produto para o cupom:
-
-`;
-      
-      const buttons = [];
-      
-      // Adicionar produtos
-      for (const product of products) {
-        message += `• ${product.name} - R$ ${parseFloat(product.price).toFixed(2)}\n`;
-        buttons.push([Markup.button.callback(
-          `📦 ${product.name}`, 
-          `creator_coupon_select_product:${product.product_id}`
-        )]);
-      }
-      
-      // Adicionar media packs
-      for (const pack of mediaPacks) {
-        if (pack.is_active) {
-          message += `• ${pack.name} - R$ ${parseFloat(pack.price).toFixed(2)}\n`;
-          buttons.push([Markup.button.callback(
-            `📸 ${pack.name}`, 
-            `creator_coupon_select_pack:${pack.pack_id}`
-          )]);
-        }
-      }
-      
-      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_coupons')]);
-      
-      return ctx.editMessageText(message, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard(buttons)
-      });
-    } catch (err) {
-      console.error('Erro ao iniciar criação de cupom:', err);
-      return ctx.reply('❌ Erro ao iniciar criação de cupom.');
-    }
-  });
-  
-  // Selecionar produto para cupom
-  bot.action(/^creator_coupon_select_product:(.+)$/, async (ctx) => {
-    await ctx.answerCbQuery('✅ Produto selecionado');
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    
-    const productId = ctx.match[1];
-    const product = await db.getProduct(productId);
-    
-    if (!product) {
-      return ctx.reply('❌ Produto não encontrado.');
-    }
-    
-    global._SESSIONS = global._SESSIONS || {};
-    global._SESSIONS[ctx.from.id] = {
-      type: 'create_coupon',
-      step: 'code',
-      productId: productId,
-      productName: product.name,
-      productPrice: product.price
-    };
-    
-    return ctx.editMessageText(`🎟️ *CRIAR CUPOM: ${product.name}*
-
-💰 Preço original: R$ ${parseFloat(product.price).toFixed(2)}
-
-*Passo 1/4:* Digite o *código do cupom* (ex: BLACKFRIDAY, NATAL20, etc):
-
-_Cancelar: /cancelar_`, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('❌ Cancelar', 'cancel_create_coupon')]
-      ])
-    });
-  });
-  
-  // Selecionar media pack para cupom
-  bot.action(/^creator_coupon_select_pack:(.+)$/, async (ctx) => {
-    await ctx.answerCbQuery('✅ Pack selecionado');
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    
-    const packId = ctx.match[1];
-    const pack = await db.getMediaPackById(packId);
-    
-    if (!pack) {
-      return ctx.reply('❌ Pack não encontrado.');
-    }
-    
-    global._SESSIONS = global._SESSIONS || {};
-    global._SESSIONS[ctx.from.id] = {
-      type: 'create_coupon',
-      step: 'code',
-      mediaPackId: packId,
-      packName: pack.name,
-      packPrice: pack.price
-    };
-    
-    return ctx.editMessageText(`🎟️ *CRIAR CUPOM: ${pack.name}*
-
-💰 Preço original: R$ ${parseFloat(pack.price).toFixed(2)}
-
-*Passo 1/4:* Digite o *código do cupom* (ex: BLACKFRIDAY, NATAL20, etc):
-
-_Cancelar: /cancelar_`, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('❌ Cancelar', 'cancel_create_coupon')]
-      ])
-    });
-  });
-  
-  // Cancelar criação de cupom
-  bot.action('cancel_create_coupon', async (ctx) => {
-    await ctx.answerCbQuery('❌ Cancelado');
-    delete global._SESSIONS[ctx.from.id];
-    return ctx.editMessageText('❌ Criação de cupom cancelada.', {
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Voltar', 'creator_coupons')]
-      ])
-    });
-  });
-  
-  // Estatísticas de cupons
-  bot.action('creator_coupon_stats', async (ctx) => {
-    await ctx.answerCbQuery('📊 Carregando estatísticas...');
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    
-    try {
-      const user = await db.getOrCreateUser(ctx.from);
-      
-      // Buscar estatísticas de cupons
-      const { data: coupons, error: couponsError } = await db.supabase
-        .from('coupons')
-        .select('id, code, discount_percentage, current_uses, max_uses')
-        .eq('created_by', user.id);
-      
-      if (couponsError) throw couponsError;
-      
-      // Buscar uso total
-      const { data: usage, error: usageError } = await db.supabase
-        .from('coupon_usage')
-        .select('discount_amount, coupon_id')
-        .in('coupon_id', coupons.map(c => c.id));
-      
-      if (usageError) throw usageError;
-      
-      const totalCoupons = coupons.length;
-      const totalUses = usage?.length || 0;
-      const totalDiscount = usage?.reduce((sum, u) => sum + parseFloat(u.discount_amount), 0) || 0;
-      const activeCoupons = coupons.filter(c => c.current_uses < (c.max_uses || Infinity)).length;
-      
-      const message = `📊 *ESTATÍSTICAS DE CUPONS*
-
-🎟️ *Total de cupons:* ${totalCoupons}
-✅ *Cupons ativos:* ${activeCoupons}
-📈 *Total de usos:* ${totalUses}
-💰 *Desconto total gerado:* R$ ${totalDiscount.toFixed(2)}
-
-${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
-  .sort((a, b) => b.current_uses - a.current_uses)
-  .slice(0, 5)
-  .map((c, i) => `${i + 1}. \`${c.code}\` - ${c.current_uses} usos (${c.discount_percentage}% off)`)
-  .join('\n') : ''}`;
-      
-      return ctx.editMessageText(message, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('🔙 Voltar', 'creator_coupons')]
-        ])
-      });
-    } catch (err) {
-      console.error('Erro ao buscar estatísticas:', err);
-      return ctx.reply('❌ Erro ao buscar estatísticas.');
-    }
   });
   
   // ===== PENDENTES (REMOVIDO DO PAINEL - APENAS ADMIN) =====
