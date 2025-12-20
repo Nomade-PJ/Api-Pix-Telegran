@@ -1807,59 +1807,45 @@ Clique no botão abaixo para renovar:`, {
         return ctx.reply('❌ Produto não encontrado.');
       }
       
-      // Verificar se há cupom automático ativo (broadcast) para este produto
+      // Verificar se há promoção ativa (broadcast com cupom) para este produto
       let finalPrice = product.price;
       let appliedCoupon = null;
       
       try {
-        // Buscar cupom automático ativo para este produto (prioridade)
-        const { data: autoCoupon, error: autoCouponError } = await db.supabase
-          .from('coupons')
-          .select('*')
+        // PRIORIDADE 1: Verificar se há campanha ativa com cupom para este produto
+        // Se houver, aplicar desconto automaticamente para TODOS (sem perguntar)
+        const { data: activeCampaign, error: campaignError } = await db.supabase
+          .from('broadcast_campaigns')
+          .select('id, coupon_code, product_id')
           .eq('product_id', productId)
-          .eq('is_active', true)
-          .eq('is_broadcast_coupon', true)
+          .not('coupon_code', 'is', null)
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
         
-        if (!autoCouponError && autoCoupon) {
-          // Verificar se há uma campanha ativa relacionada a este cupom
-          // Buscar campanha que ainda existe (não foi deletada) e está relacionada ao cupom
-          const { data: campaign, error: campaignError } = await db.supabase
-            .from('broadcast_campaigns')
-            .select('id')
-            .or(`coupon_code.eq.${autoCoupon.code},product_id.eq.${productId}`)
+        if (!campaignError && activeCampaign) {
+          // Encontrou campanha ativa! Buscar cupom automático relacionado
+          const { data: autoCoupon, error: autoCouponError } = await db.supabase
+            .from('coupons')
+            .select('*')
+            .eq('product_id', productId)
+            .eq('is_active', true)
+            .eq('is_broadcast_coupon', true)
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
           
-          // Só aplicar desconto se a campanha ainda existir (não foi deletada)
-          if (!campaignError && campaign) {
-            // Verificar se usuário recebeu este broadcast
-            const { data: recipient, error: recipientError } = await db.supabase
-              .from('broadcast_recipients')
-              .select('telegram_id')
-              .eq('telegram_id', ctx.from.id)
-              .eq('broadcast_campaign_id', campaign.id)
-              .single();
+          if (!autoCouponError && autoCoupon) {
+            // Aplicar desconto automático para TODOS (promoção ativa)
+            finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
+            appliedCoupon = autoCoupon;
             
-            // Só aplicar desconto se o usuário recebeu o broadcast
-            if (!recipientError && recipient) {
-              // Aplicar desconto automático
-              finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
-              appliedCoupon = autoCoupon;
-              
-              console.log(`🎁 [BUY] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
-            }
-          } else {
-            // Se a campanha foi deletada, o cupom não deve ser usado
-            console.log(`⚠️ [BUY] Cupom automático encontrado mas campanha não existe mais - ignorando desconto`);
+            console.log(`🎁 [BUY] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado automaticamente para ${ctx.from.id}`);
           }
         }
         
-        // Se não aplicou desconto automático, verificar cupons manuais disponíveis
-        // IMPORTANTE: Só perguntar se o cupom está associado a uma campanha ATIVA
+        // PRIORIDADE 2: Se não há promoção ativa, verificar cupons manuais
+        // Só perguntar sobre cupom manual se não houver promoção ativa
         if (!appliedCoupon) {
           const { data: manualCoupons, error: manualCouponsError } = await db.supabase
             .from('coupons')
@@ -1876,7 +1862,7 @@ Clique no botão abaixo para renovar:`, {
             
             for (const coupon of manualCoupons) {
               // Verificar se há uma campanha ativa com este código de cupom
-              const { data: activeCampaign, error: campaignError } = await db.supabase
+              const { data: activeCampaignManual, error: campaignErrorManual } = await db.supabase
                 .from('broadcast_campaigns')
                 .select('id')
                 .eq('coupon_code', coupon.code)
@@ -1884,7 +1870,7 @@ Clique no botão abaixo para renovar:`, {
                 .single();
               
               // Se encontrou campanha ativa, o cupom é válido
-              if (!campaignError && activeCampaign) {
+              if (!campaignErrorManual && activeCampaignManual) {
                 validCoupons.push(coupon);
               }
             }
@@ -2035,22 +2021,33 @@ Esta transação foi cancelada automaticamente.
       }, 30 * 60 * 1000); // 30 minutos
       
       // Montar mensagem com informação de desconto se aplicado
-      let paymentMessage = `💰 Pague R$ ${amount} usando PIX
+      let paymentMessage = '';
+      
+      if (appliedCoupon) {
+        const originalPrice = product.price;
+        const discount = appliedCoupon.discount_percentage;
+        paymentMessage = `🎁 *PROMOÇÃO ATIVA!*
+
+📦 Produto: ${product.name}
+💵 Preço original: R$ ${originalPrice.toFixed(2)}
+🎉 Desconto: ${discount}% OFF
+💰 *Você paga: R$ ${finalPrice.toFixed(2)}*
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 Pague R$ ${amount} usando PIX
 
 🔑 Chave: ${charge.key}
 
 📋 Cópia & Cola:
 \`${charge.copiaCola}\``;
+      } else {
+        paymentMessage = `💰 Pague R$ ${amount} usando PIX
 
-      if (appliedCoupon) {
-        const originalPrice = product.price;
-        const discount = appliedCoupon.discount_percentage;
-        paymentMessage += `
+🔑 Chave: ${charge.key}
 
-🎁 *DESCONTO APLICADO!*
-💵 Preço original: R$ ${originalPrice.toFixed(2)}
-🎉 Desconto: ${discount}% OFF
-💰 Você paga: R$ ${finalPrice.toFixed(2)}`;
+📋 Cópia & Cola:
+\`${charge.copiaCola}\``;
       }
 
       paymentMessage += `
@@ -2236,54 +2233,40 @@ Esta transação foi cancelada automaticamente.
         baseAmount = parseFloat(pack.price);
       }
       
-      // Verificar se há cupom automático ativo (broadcast) para este pack
+      // Verificar se há promoção ativa (broadcast com cupom) para este pack
       let finalPackPrice = baseAmount;
       let appliedPackCoupon = null;
       
       try {
-        // Buscar cupom automático ativo para este pack (prioridade)
-        const { data: autoCoupon, error: autoCouponError } = await db.supabase
-          .from('coupons')
-          .select('*')
+        // PRIORIDADE 1: Verificar se há campanha ativa com cupom para este pack
+        // Se houver, aplicar desconto automaticamente para TODOS (sem perguntar)
+        const { data: activeCampaign, error: campaignError } = await db.supabase
+          .from('broadcast_campaigns')
+          .select('id, coupon_code, media_pack_id')
           .eq('media_pack_id', packId)
-          .eq('is_active', true)
-          .eq('is_broadcast_coupon', true)
+          .not('coupon_code', 'is', null)
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
         
-        if (!autoCouponError && autoCoupon) {
-          // Verificar se há uma campanha ativa relacionada a este cupom
-          // Buscar campanha que ainda existe (não foi deletada) e está relacionada ao cupom
-          const { data: campaign, error: campaignError } = await db.supabase
-            .from('broadcast_campaigns')
-            .select('id')
-            .or(`coupon_code.eq.${autoCoupon.code},media_pack_id.eq.${packId}`)
+        if (!campaignError && activeCampaign) {
+          // Encontrou campanha ativa! Buscar cupom automático relacionado
+          const { data: autoCoupon, error: autoCouponError } = await db.supabase
+            .from('coupons')
+            .select('*')
+            .eq('media_pack_id', packId)
+            .eq('is_active', true)
+            .eq('is_broadcast_coupon', true)
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
           
-          // Só aplicar desconto se a campanha ainda existir (não foi deletada)
-          if (!campaignError && campaign) {
-            // Verificar se usuário recebeu este broadcast
-            const { data: recipient, error: recipientError } = await db.supabase
-              .from('broadcast_recipients')
-              .select('telegram_id')
-              .eq('telegram_id', ctx.from.id)
-              .eq('broadcast_campaign_id', campaign.id)
-              .single();
+          if (!autoCouponError && autoCoupon) {
+            // Aplicar desconto automático para TODOS (promoção ativa)
+            finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
+            appliedPackCoupon = autoCoupon;
             
-            // Só aplicar desconto se o usuário recebeu o broadcast
-            if (!recipientError && recipient) {
-              // Aplicar desconto automático
-              finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
-              appliedPackCoupon = autoCoupon;
-              
-              console.log(`🎁 [BUY-MEDIA] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
-            }
-          } else {
-            // Se a campanha foi deletada, o cupom não deve ser usado
-            console.log(`⚠️ [BUY-MEDIA] Cupom automático encontrado mas campanha não existe mais - ignorando desconto`);
+            console.log(`🎁 [BUY-MEDIA] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado automaticamente para ${ctx.from.id}`);
           }
         }
       } catch (err) {
@@ -2401,7 +2384,19 @@ Esta transação foi cancelada automaticamente.
       }, 30 * 60 * 1000);
       
       // Montar mensagem com informação de desconto se aplicado
-      let packPaymentMessage = `📸 *${pack.name}*
+      let packPaymentMessage = '';
+      
+      if (appliedPackCoupon) {
+        const originalPrice = baseAmount;
+        const discount = appliedPackCoupon.discount_percentage;
+        packPaymentMessage = `🎁 *PROMOÇÃO ATIVA!*
+
+📸 Pack: ${pack.name}
+💵 Preço original: R$ ${originalPrice.toFixed(2)}
+🎉 Desconto: ${discount}% OFF
+💰 *Você paga: R$ ${finalPackPrice.toFixed(2)}*
+
+━━━━━━━━━━━━━━━━━━━━━━━━
 
 💰 Pague R$ ${amount} usando PIX
 
@@ -2409,16 +2404,15 @@ Esta transação foi cancelada automaticamente.
 
 📋 Cópia & Cola:
 \`${charge.copiaCola}\``;
+      } else {
+        packPaymentMessage = `📸 *${pack.name}*
 
-      if (appliedPackCoupon) {
-        const originalPrice = baseAmount;
-        const discount = appliedPackCoupon.discount_percentage;
-        packPaymentMessage += `
+💰 Pague R$ ${amount} usando PIX
 
-🎁 *DESCONTO APLICADO!*
-💵 Preço original: R$ ${originalPrice.toFixed(2)}
-🎉 Desconto: ${discount}% OFF
-💰 Você paga: R$ ${finalPackPrice.toFixed(2)}`;
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\``;
       }
 
       packPaymentMessage += `
