@@ -219,6 +219,166 @@ Verifique os logs do servidor para mais detalhes.`, { parse_mode: 'Markdown' });
     }
   });
   
+  // ===== GERENCIAR BROADCAST COM CUPOM =====
+  bot.command('broadcast_config', async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) {
+        return ctx.reply('❌ Acesso negado.');
+      }
+      
+      // Buscar configuração atual
+      const config = await db.getSetting('broadcast_coupon_enabled');
+      const isEnabled = config === 'true' || config === true;
+      
+      const message = `⚙️ *CONFIGURAÇÃO: BROADCAST + CUPOM*
+
+📊 *Status atual:* ${isEnabled ? '✅ Ativado' : '❌ Desativado'}
+
+*Como funciona:*
+• Criadores podem enviar broadcasts com descontos automáticos
+• Usuários que recebem o broadcast veem preço com desconto
+• Novos usuários podem usar cupom manualmente
+• Sistema rastreia quem recebeu broadcast
+
+*Ações disponíveis:*`;
+      
+      const buttons = [
+        [Markup.button.callback(
+          isEnabled ? '❌ Desativar' : '✅ Ativar', 
+          isEnabled ? 'toggle_broadcast_coupon:disable' : 'toggle_broadcast_coupon:enable'
+        )],
+        [Markup.button.callback('📋 Ver Cupons Ativos', 'view_active_coupons')],
+        [Markup.button.callback('🗑️ Limpar Destinatários Antigos', 'clean_old_recipients')],
+        [Markup.button.callback('🔙 Voltar', 'admin_menu')]
+      ];
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+      
+    } catch (err) {
+      console.error('Erro ao exibir configuração de broadcast:', err);
+      return ctx.reply('❌ Erro ao carregar configurações.');
+    }
+  });
+  
+  // Toggle broadcast com cupom
+  bot.action(/toggle_broadcast_coupon:(enable|disable)/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const action = ctx.match[1];
+      const newValue = action === 'enable' ? 'true' : 'false';
+      
+      // Atualizar configuração
+      await db.setSetting('broadcast_coupon_enabled', newValue);
+      
+      const message = action === 'enable' 
+        ? '✅ *Broadcast + Cupom ATIVADO!*\n\nCriadores agora podem usar essa funcionalidade.'
+        : '❌ *Broadcast + Cupom DESATIVADO!*\n\nA opção não aparecerá mais no menu de broadcast.';
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar', 'admin_menu')]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao alternar broadcast com cupom:', err);
+      return ctx.reply('❌ Erro ao atualizar configuração.');
+    }
+  });
+  
+  // Ver cupons ativos
+  bot.action('view_active_coupons', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const { data: coupons, error } = await db.supabase
+        .from('coupons')
+        .select('*, products:product_id(name), media_packs:media_pack_id(name)')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      
+      if (error) throw error;
+      
+      let message = `🎟️ *CUPONS ATIVOS*\n\n`;
+      
+      if (!coupons || coupons.length === 0) {
+        message += `Nenhum cupom ativo no momento.\n\n`;
+      } else {
+        for (const coupon of coupons) {
+          const productName = coupon.products?.name || coupon.media_packs?.name || 'Produto removido';
+          const type = coupon.is_broadcast_coupon ? '🎁 Broadcast' : '🎟️ Manual';
+          const uses = coupon.max_uses ? `${coupon.current_uses}/${coupon.max_uses}` : `${coupon.current_uses}/∞`;
+          
+          message += `${type} \`${coupon.code}\`\n`;
+          message += `   💰 ${coupon.discount_percentage}% OFF\n`;
+          message += `   📦 ${productName}\n`;
+          message += `   📊 Usos: ${uses}\n\n`;
+        }
+      }
+      
+      message += `━━━━━━━━━━━━━━━━━━━━━━━━`;
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar', 'admin_menu')]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao listar cupons:', err);
+      return ctx.reply('❌ Erro ao carregar cupons.');
+    }
+  });
+  
+  // Limpar destinatários antigos (mais de 30 dias)
+  bot.action('clean_old_recipients', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🗑️ Limpando...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      const { data: deleted, error } = await db.supabase
+        .from('broadcast_recipients')
+        .delete()
+        .lt('created_at', thirtyDaysAgo.toISOString())
+        .select();
+      
+      if (error) throw error;
+      
+      const count = deleted?.length || 0;
+      
+      return ctx.editMessageText(`✅ *Limpeza concluída!*
+
+🗑️ ${count} registro(s) antigo(s) removido(s).
+
+Registros de broadcasts com mais de 30 dias foram excluídos.`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar', 'admin_menu')]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao limpar destinatários:', err);
+      return ctx.reply('❌ Erro ao limpar registros.');
+    }
+  });
+  
   // ===== PAINEL ADMIN (oculto) =====
   bot.command('admin', async (ctx) => {
     try {
@@ -1248,6 +1408,275 @@ ${message}`;
             [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
           ])
         });
+      }
+      
+      // Verificar se é broadcast + produto + cupom - definindo descontos
+      if (session.type === 'creator_broadcast_product_coupon' && session.step === 'set_discounts') {
+        const isCreator = await db.isUserCreator(ctx.from.id);
+        if (!isCreator) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        const discount = parseInt(ctx.message.text.trim());
+        
+        if (isNaN(discount) || discount < 1 || discount > 99) {
+          return ctx.reply('❌ Porcentagem inválida. Use um número entre 1 e 99.\n\nTente novamente:');
+        }
+        
+        const currentProduct = session.selectedProducts[session.currentDiscountIndex];
+        const key = `${currentProduct.type}_${currentProduct.id}`;
+        session.productDiscounts[key] = discount;
+        
+        // Verificar se há mais produtos
+        session.currentDiscountIndex++;
+        
+        if (session.currentDiscountIndex < session.selectedProducts.length) {
+          const nextProduct = session.selectedProducts[session.currentDiscountIndex];
+          const discountedPrice = parseFloat(nextProduct.price) * (1 - discount / 100);
+          
+          return ctx.reply(`✅ Desconto de ${discount}% definido para ${currentProduct.name}!
+
+📦 *Próximo produto:* ${nextProduct.name}
+💰 *Preço original:* R$ ${parseFloat(nextProduct.price).toFixed(2)}
+
+*Passo ${session.currentDiscountIndex + 1}/${session.selectedProducts.length}*
+
+Digite a *porcentagem de desconto* para este produto (ex: 10, 20, 50):
+
+_Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
+        }
+        
+        // Todos os descontos definidos, pedir código do cupom
+        session.step = 'coupon_code';
+        
+        let summary = `✅ *DESCONTOS DEFINIDOS!*
+
+📋 *Resumo:*
+
+`;
+        
+        for (const product of session.selectedProducts) {
+          const key = `${product.type}_${product.id}`;
+          const disc = session.productDiscounts[key];
+          const originalPrice = parseFloat(product.price);
+          const discountedPrice = originalPrice * (1 - disc / 100);
+          
+          summary += `• ${product.name}
+  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)
+
+`;
+        }
+        
+        summary += `━━━━━━━━━━━━━━━━━━━━━━━━
+
+Agora digite o *código do cupom* que os novos usuários poderão usar:
+
+💡 *Exemplo:* BLACKFRIDAY, NATAL20, PROMO50
+
+_Cancelar: /cancelar_`;
+        
+        return ctx.reply(summary, { parse_mode: 'Markdown' });
+      }
+      
+      // Verificar se é broadcast + produto + cupom - definindo código do cupom
+      if (session.type === 'creator_broadcast_product_coupon' && session.step === 'coupon_code') {
+        const isCreator = await db.isUserCreator(ctx.from.id);
+        if (!isCreator) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        const code = ctx.message.text.trim().toUpperCase();
+        
+        // Validar código
+        if (code.length < 3 || code.length > 20) {
+          return ctx.reply('❌ Código inválido. Use entre 3 e 20 caracteres.\n\nTente novamente:');
+        }
+        
+        // Verificar se código já existe
+        const { data: existingCoupon } = await db.supabase
+          .from('coupons')
+          .select('code')
+          .eq('code', code)
+          .single();
+        
+        if (existingCoupon) {
+          return ctx.reply('❌ Este código já está em uso. Escolha outro:');
+        }
+        
+        session.couponCode = code;
+        session.step = 'message';
+        
+        return ctx.reply(`✅ Cupom: \`${code}\`
+
+📝 Agora escreva a *mensagem do broadcast*:
+
+💡 *Dica:* Mencione os produtos e descontos na mensagem!
+
+*Exemplo:*
+"🔥 *PROMOÇÃO ESPECIAL!*
+
+Aproveite descontos incríveis:
+• Produto 1 com 20% OFF
+• Produto 2 com 30% OFF
+
+Use o cupom \`${code}\` para garantir seu desconto!
+
+Válido por tempo limitado! 🎉"
+
+_Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
+      }
+      
+      // Verificar se é broadcast + produto + cupom - mensagem
+      if (session.type === 'creator_broadcast_product_coupon' && session.step === 'message') {
+        const isCreator = await db.isUserCreator(ctx.from.id);
+        if (!isCreator) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        const message = ctx.message.text;
+        
+        // Preparar confirmação
+        session.step = 'confirm';
+        session.broadcastMessage = message;
+        
+        let previewMessage = `🎁 *CONFIRMAR BROADCAST + PRODUTO + CUPOM*
+
+*Mensagem:*
+${message}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 *Produtos com desconto:*
+
+`;
+        
+        for (const product of session.selectedProducts) {
+          const key = `${product.type}_${product.id}`;
+          const disc = session.productDiscounts[key];
+          const originalPrice = parseFloat(product.price);
+          const discountedPrice = originalPrice * (1 - disc / 100);
+          
+          previewMessage += `• ${product.name}
+  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)
+
+`;
+        }
+        
+        previewMessage += `🎟️ *Cupom:* \`${session.couponCode}\`
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ *Usuários que recebem o broadcast:*
+   Verão o preço com desconto automaticamente
+
+🎟️ *Novos usuários:*
+   Poderão usar o cupom \`${session.couponCode}\`
+
+⚠️ *Esta mensagem será enviada para TODOS os usuários desbloqueados.*
+
+Deseja continuar?`;
+        
+        return ctx.reply(previewMessage, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Confirmar e Enviar', 'confirm_bpc_broadcast')],
+            [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
+          ])
+        });
+      }
+      
+      // Verificar se usuário está digitando cupom
+      if (session.type === 'awaiting_coupon') {
+        const couponCode = ctx.message.text.trim().toUpperCase();
+        
+        if (couponCode === 'NÃO' || couponCode === 'NAO') {
+          // Continuar sem cupom
+          delete global._SESSIONS[ctx.from.id];
+          
+          // Redirecionar para compra sem desconto
+          return ctx.reply('✅ Continuando sem cupom. Gerando cobrança PIX...', {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🛍️ Comprar', callback_data: `buy:${session.productId}` }]
+              ]
+            }
+          });
+        }
+        
+        // Validar cupom
+        try {
+          const { data: coupon, error: couponError } = await db.supabase
+            .from('coupons')
+            .select('*')
+            .eq('code', couponCode)
+            .eq('product_id', session.productId)
+            .eq('is_active', true)
+            .single();
+          
+          if (couponError || !coupon) {
+            return ctx.reply('❌ Cupom inválido ou expirado. Tente novamente ou digite *NÃO* para continuar sem desconto:', {
+              parse_mode: 'Markdown'
+            });
+          }
+          
+          // Verificar limite de usos
+          if (coupon.max_uses && coupon.current_uses >= coupon.max_uses) {
+            return ctx.reply('❌ Este cupom atingiu o limite de usos. Tente outro ou digite *NÃO*:', {
+              parse_mode: 'Markdown'
+            });
+          }
+          
+          // Verificar expiração
+          if (coupon.expires_at) {
+            const expirationDate = new Date(coupon.expires_at);
+            if (expirationDate < new Date()) {
+              return ctx.reply('❌ Este cupom expirou. Tente outro ou digite *NÃO*:', {
+                parse_mode: 'Markdown'
+              });
+            }
+          }
+          
+          // Cupom válido! Aplicar desconto
+          const originalPrice = parseFloat(session.productPrice);
+          const discountedPrice = originalPrice * (1 - coupon.discount_percentage / 100);
+          
+          // Incrementar uso do cupom
+          await db.supabase
+            .from('coupons')
+            .update({ current_uses: (coupon.current_uses || 0) + 1 })
+            .eq('id', coupon.id);
+          
+          // Salvar cupom aplicado na sessão
+          session.appliedCouponId = coupon.id;
+          session.appliedDiscount = coupon.discount_percentage;
+          session.finalPrice = discountedPrice;
+          
+          delete global._SESSIONS[ctx.from.id];
+          
+          return ctx.reply(`✅ *CUPOM APLICADO!*
+
+🎟️ Cupom: \`${couponCode}\`
+💰 Desconto: ${coupon.discount_percentage}% OFF
+
+📦 ${session.productName}
+💵 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)}
+
+Gerando cobrança PIX com desconto...`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🛍️ Comprar com Desconto', callback_data: `buy_with_coupon:${session.productId}:${coupon.id}` }]
+              ]
+            }
+          });
+          
+        } catch (err) {
+          console.error('Erro ao validar cupom:', err);
+          return ctx.reply('❌ Erro ao validar cupom. Tente novamente.');
+        }
       }
       
       // Verificar se é criação de cupom

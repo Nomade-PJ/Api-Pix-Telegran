@@ -1807,7 +1807,87 @@ Clique no botão abaixo para renovar:`, {
         return ctx.reply('❌ Produto não encontrado.');
       }
       
-      const amount = product.price.toString();
+      // Verificar se usuário recebeu broadcast com desconto automático
+      let finalPrice = product.price;
+      let appliedCoupon = null;
+      let receivedBroadcast = false;
+      
+      try {
+        // Buscar se usuário recebeu broadcast com cupom para este produto
+        const { data: broadcastCoupon, error: couponError } = await db.supabase
+          .from('broadcast_recipients')
+          .select('broadcast_campaign_id')
+          .eq('telegram_id', ctx.from.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (!couponError && broadcastCoupon) {
+          receivedBroadcast = true;
+          
+          // Buscar cupom automático ativo para este produto
+          const { data: autoCoupon, error: autoCouponError } = await db.supabase
+            .from('coupons')
+            .select('*')
+            .eq('product_id', productId)
+            .eq('is_active', true)
+            .eq('is_broadcast_coupon', true)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (!autoCouponError && autoCoupon) {
+            // Aplicar desconto automático
+            finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
+            appliedCoupon = autoCoupon;
+            
+            console.log(`🎁 [BUY] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao verificar desconto automático:', err);
+        // Continuar sem desconto em caso de erro
+      }
+      
+      // Se não recebeu broadcast, perguntar se tem cupom
+      if (!receivedBroadcast) {
+        // Verificar se há cupons ativos para este produto
+        const { data: availableCoupons, error: couponsError } = await db.supabase
+          .from('coupons')
+          .select('code')
+          .eq('product_id', productId)
+          .eq('is_active', true)
+          .eq('is_broadcast_coupon', false)
+          .limit(1);
+        
+        if (!couponsError && availableCoupons && availableCoupons.length > 0) {
+          // Criar sessão para aguardar cupom
+          global._SESSIONS = global._SESSIONS || {};
+          global._SESSIONS[ctx.from.id] = {
+            type: 'awaiting_coupon',
+            productId: productId,
+            productName: product.name,
+            productPrice: product.price
+          };
+          
+          return ctx.reply(`🎟️ *TEM UM CUPOM DE DESCONTO?*
+
+📦 Produto: ${product.name}
+💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}
+
+Se você tem um cupom, digite o código agora.
+Se não tem, digite *NÃO* para continuar sem desconto.
+
+_Cancelar: /cancelar_`, { 
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('❌ Não tenho cupom', 'skip_coupon')]
+            ])
+          });
+        }
+      }
+      
+      const amount = finalPrice.toString();
 
       // Gerar cobrança PIX e salvar transação em paralelo
       const resp = await manualPix.createManualCharge({ amount, productId });
@@ -1919,45 +1999,163 @@ Esta transação foi cancelada automaticamente.
         }
       }, 30 * 60 * 1000); // 30 minutos
       
-      // Enviar QR Code imediatamente
-      if (charge.qrcodeBuffer) {
-        return await ctx.replyWithPhoto(
-          { source: charge.qrcodeBuffer },
-          {
-            caption: `💰 Pague R$ ${amount} usando PIX
+      // Montar mensagem com informação de desconto se aplicado
+      let paymentMessage = `💰 Pague R$ ${amount} usando PIX
 
 🔑 Chave: ${charge.key}
 
 📋 Cópia & Cola:
-\`${charge.copiaCola}\`
+\`${charge.copiaCola}\``;
+
+      if (appliedCoupon) {
+        const originalPrice = product.price;
+        const discount = appliedCoupon.discount_percentage;
+        paymentMessage += `
+
+🎁 *DESCONTO APLICADO!*
+💵 Preço original: R$ ${originalPrice.toFixed(2)}
+🎉 Desconto: ${discount}% OFF
+💰 Você paga: R$ ${finalPrice.toFixed(2)}`;
+      }
+
+      paymentMessage += `
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
 ⚠️ *Prazo:* 30 minutos para pagamento
 
 📸 Após pagar, envie o comprovante (foto) aqui.
 
-🆔 TXID: ${txid}`,
+🆔 TXID: ${txid}`;
+
+      // Enviar QR Code imediatamente
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: paymentMessage,
             parse_mode: 'Markdown'
           }
         );
       } else {
-        return await ctx.reply(`💰 Pague R$ ${amount} usando PIX
+        return await ctx.reply(paymentMessage, { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Erro na compra:', err.message);
+      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
+    }
+  });
+  
+  // Handler para pular cupom
+  bot.action('skip_coupon', async (ctx) => {
+    await ctx.answerCbQuery('Continuando sem cupom...');
+    
+    const session = global._SESSIONS?.[ctx.from.id];
+    if (!session || session.type !== 'awaiting_coupon') {
+      return ctx.reply('❌ Sessão expirada. Use /start para começar novamente.');
+    }
+    
+    const productId = session.productId;
+    delete global._SESSIONS[ctx.from.id];
+    
+    // Simular clique no botão de compra
+    ctx.match = [null, productId];
+    return bot.handleUpdate({
+      ...ctx.update,
+      callback_query: {
+        ...ctx.callbackQuery,
+        data: `buy:${productId}`
+      }
+    });
+  });
+  
+  // Handler para compra com cupom aplicado
+  bot.action(/buy_with_coupon:(.+):(.+)/, async (ctx) => {
+    try {
+      const productId = ctx.match[1];
+      const couponId = ctx.match[2];
+      
+      await ctx.answerCbQuery('⏳ Gerando cobrança com desconto...');
+      
+      // Buscar produto, usuário e cupom
+      const [product, user, couponData] = await Promise.all([
+        db.getProduct(productId),
+        db.getOrCreateUser(ctx.from),
+        db.supabase.from('coupons').select('*').eq('id', couponId).single()
+      ]);
+      
+      if (!product) {
+        return ctx.reply('❌ Produto não encontrado.');
+      }
+      
+      const coupon = couponData.data;
+      if (!coupon || !coupon.is_active) {
+        return ctx.reply('❌ Cupom inválido.');
+      }
+      
+      // Aplicar desconto
+      const finalPrice = product.price * (1 - coupon.discount_percentage / 100);
+      const amount = finalPrice.toString();
+      
+      // Gerar cobrança PIX
+      const resp = await manualPix.createManualCharge({ amount, productId });
+      const charge = resp.charge;
+      const txid = charge.txid;
+      
+      // Salvar transação com cupom aplicado
+      db.createTransaction({
+        txid,
+        userId: user.id,
+        telegramId: ctx.chat.id,
+        productId,
+        amount,
+        pixKey: charge.key,
+        pixPayload: charge.copiaCola,
+        couponId: couponId
+      }).catch(err => console.error('Erro ao salvar transação:', err));
+      
+      // Calcular tempo de expiração
+      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
+      
+      // Montar mensagem
+      let paymentMessage = `💰 Pague R$ ${amount} usando PIX
 
 🔑 Chave: ${charge.key}
 
 📋 Cópia & Cola:
 \`${charge.copiaCola}\`
 
+🎁 *DESCONTO APLICADO!*
+💵 Preço original: R$ ${product.price.toFixed(2)}
+🎉 Desconto: ${coupon.discount_percentage}% OFF
+💰 Você paga: R$ ${finalPrice.toFixed(2)}
+
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
 ⚠️ *Prazo:* 30 minutos para pagamento
 
-📸 Envie o comprovante quando pagar.
+📸 Após pagar, envie o comprovante (foto) aqui.
 
-🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+🆔 TXID: ${txid}`;
+      
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: paymentMessage,
+            parse_mode: 'Markdown'
+          }
+        );
+      } else {
+        return await ctx.reply(paymentMessage, { parse_mode: 'Markdown' });
       }
+      
     } catch (err) {
-      console.error('Erro na compra:', err.message);
-      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
+      console.error('Erro na compra com cupom:', err);
+      return ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
     }
   });
 
@@ -1992,16 +2190,57 @@ Esta transação foi cancelada automaticamente.
       }
       
       // Usar valor aleatório se houver valores variados, senão usar preço fixo
-      let amount;
+      let baseAmount;
       if (pack.variable_prices && Array.isArray(pack.variable_prices) && pack.variable_prices.length > 0) {
         // Selecionar valor aleatório do array
         const randomIndex = Math.floor(Math.random() * pack.variable_prices.length);
-        amount = pack.variable_prices[randomIndex].toString();
-        console.log(`🎲 [MEDIA-PACK] Valor aleatório selecionado: R$ ${amount} (de ${pack.variable_prices.length} opções)`);
+        baseAmount = parseFloat(pack.variable_prices[randomIndex]);
+        console.log(`🎲 [MEDIA-PACK] Valor aleatório selecionado: R$ ${baseAmount} (de ${pack.variable_prices.length} opções)`);
       } else {
         // Usar preço fixo
-        amount = pack.price.toString();
+        baseAmount = parseFloat(pack.price);
       }
+      
+      // Verificar se usuário recebeu broadcast com desconto automático
+      let finalPackPrice = baseAmount;
+      let appliedPackCoupon = null;
+      
+      try {
+        // Buscar se usuário recebeu broadcast com cupom para este pack
+        const { data: broadcastCoupon, error: couponError } = await db.supabase
+          .from('broadcast_recipients')
+          .select('broadcast_campaign_id')
+          .eq('telegram_id', ctx.from.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (!couponError && broadcastCoupon) {
+          // Buscar cupom automático ativo para este pack
+          const { data: autoCoupon, error: autoCouponError } = await db.supabase
+            .from('coupons')
+            .select('*')
+            .eq('media_pack_id', packId)
+            .eq('is_active', true)
+            .eq('is_broadcast_coupon', true)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (!autoCouponError && autoCoupon) {
+            // Aplicar desconto automático
+            finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
+            appliedPackCoupon = autoCoupon;
+            
+            console.log(`🎁 [BUY-MEDIA] Desconto automático aplicado: ${autoCoupon.discount_percentage}% para usuário ${ctx.from.id}`);
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao verificar desconto automático para pack:', err);
+        // Continuar sem desconto em caso de erro
+      }
+      
+      const amount = finalPackPrice.toString();
 
       // Gerar cobrança PIX
       const resp = await manualPix.createManualCharge({ amount, productId: `media_${packId}` });
@@ -2110,19 +2349,28 @@ Esta transação foi cancelada automaticamente.
         }
       }, 30 * 60 * 1000);
       
-      // Enviar QR Code
-      if (charge.qrcodeBuffer) {
-        return await ctx.replyWithPhoto(
-          { source: charge.qrcodeBuffer },
-          {
-            caption: `📸 *${pack.name}*
+      // Montar mensagem com informação de desconto se aplicado
+      let packPaymentMessage = `📸 *${pack.name}*
 
 💰 Pague R$ ${amount} usando PIX
 
 🔑 Chave: ${charge.key}
 
 📋 Cópia & Cola:
-\`${charge.copiaCola}\`
+\`${charge.copiaCola}\``;
+
+      if (appliedPackCoupon) {
+        const originalPrice = baseAmount;
+        const discount = appliedPackCoupon.discount_percentage;
+        packPaymentMessage += `
+
+🎁 *DESCONTO APLICADO!*
+💵 Preço original: R$ ${originalPrice.toFixed(2)}
+🎉 Desconto: ${discount}% OFF
+💰 Você paga: R$ ${finalPackPrice.toFixed(2)}`;
+      }
+
+      packPaymentMessage += `
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
 ⚠️ *Prazo:* 30 minutos para pagamento
@@ -2130,25 +2378,19 @@ Esta transação foi cancelada automaticamente.
 
 📸 Após pagar, envie o comprovante (foto) aqui.
 
-🆔 TXID: ${txid}`,
+🆔 TXID: ${txid}`;
+
+      // Enviar QR Code
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: packPaymentMessage,
             parse_mode: 'Markdown'
           }
         );
       } else {
-        return await ctx.reply(`📸 *${pack.name}*
-
-💰 Pague R$ ${amount} usando PIX
-
-🔑 Chave: ${charge.key}
-
-📋 Cópia & Cola:
-\`${charge.copiaCola}\`
-
-⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
-📦 *Entrega:* ${pack.items_per_delivery} itens aleatórios
-
-📸 Envie o comprovante quando pagar.
+        return await ctx.reply(packPaymentMessage, { parse_mode: 'Markdown' });
 
 🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
       }

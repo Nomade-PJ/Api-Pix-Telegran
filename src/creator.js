@@ -121,22 +121,38 @@ Selecione uma opção abaixo:`;
       const products = await db.getAllProducts();
       const mediaPacks = await db.getAllMediaPacks();
       
-      const message = `📢 *NOVO BROADCAST*
+      // Verificar se broadcast com cupom está ativado
+      const broadcastCouponEnabled = await db.getSetting('broadcast_coupon_enabled');
+      const showBroadcastCoupon = broadcastCouponEnabled === 'true' || broadcastCouponEnabled === true;
+      
+      let message = `📢 *NOVO BROADCAST*
 
 Escolha o tipo de broadcast:
 
 1️⃣ *Broadcast Simples* - Mensagem para todos os usuários
 2️⃣ *Broadcast com Produto* - Associar a um produto específico
-3️⃣ *Broadcast com Cupom* - Criar cupom e divulgar
+3️⃣ *Broadcast com Cupom* - Criar cupom e divulgar`;
+
+      if (showBroadcastCoupon) {
+        message += `
+4️⃣ *Broadcast + Produto + Cupom* - Desconto automático em produtos selecionados`;
+      }
+
+      message += `
 
 Selecione uma opção:`;
 
       const buttons = [
         [Markup.button.callback('📣 Broadcast Simples', 'creator_broadcast_simple')],
         [Markup.button.callback('🛍️ Broadcast + Produto', 'creator_broadcast_product')],
-        [Markup.button.callback('🎟️ Broadcast + Cupom', 'creator_broadcast_coupon')],
-        [Markup.button.callback('🔙 Voltar', 'creator_refresh')]
+        [Markup.button.callback('🎟️ Broadcast + Cupom', 'creator_broadcast_coupon')]
       ];
+      
+      if (showBroadcastCoupon) {
+        buttons.push([Markup.button.callback('🎁 Broadcast + Produto + Cupom', 'creator_broadcast_product_coupon')]);
+      }
+      
+      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_refresh')]);
       
       return ctx.editMessageText(message, {
         parse_mode: 'Markdown',
@@ -310,6 +326,315 @@ _Cancelar: /cancelar_`, {
 💰 Preço: R$ ${parseFloat(pack.price).toFixed(2)}
 
 📝 Agora envie a mensagem promocional:
+
+_Cancelar: /cancelar_`, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
+      ])
+    });
+  });
+  
+  // ===== BROADCAST + PRODUTO + CUPOM (NOVO) =====
+  bot.action('creator_broadcast_product_coupon', async (ctx) => {
+    await ctx.answerCbQuery('🎁 Carregando produtos...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    try {
+      const products = await db.getAllProducts();
+      const mediaPacks = await db.getAllMediaPacks();
+      
+      if (products.length === 0 && mediaPacks.length === 0) {
+        return ctx.editMessageText('📦 Nenhum produto disponível para broadcast.\n\nCrie produtos primeiro no painel admin.', {
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
+          ])
+        });
+      }
+      
+      let message = `🎁 *BROADCAST + PRODUTO + CUPOM*
+
+📝 *Como funciona:*
+1. Escreva a mensagem do broadcast
+2. Selecione os produtos que terão desconto
+3. Defina o desconto para cada produto
+4. Crie um cupom para compartilhar
+
+*Usuários que recebem o broadcast:*
+✅ Verão o preço com desconto automaticamente
+
+*Novos usuários ou quem usar /start:*
+🎟️ Poderão inserir o cupom manualmente
+
+Selecione os produtos:
+
+`;
+      
+      // Inicializar sessão
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'creator_broadcast_product_coupon',
+        step: 'select_products',
+        selectedProducts: [],
+        productDiscounts: {}
+      };
+      
+      const buttons = [];
+      
+      // Adicionar produtos
+      for (const product of products) {
+        message += `• ${product.name} - R$ ${parseFloat(product.price).toFixed(2)}\n`;
+        buttons.push([Markup.button.callback(
+          `📦 ${product.name}`, 
+          `bpc_select_product:${product.product_id}`
+        )]);
+      }
+      
+      // Adicionar media packs
+      for (const pack of mediaPacks) {
+        if (pack.is_active) {
+          message += `• ${pack.name} - R$ ${parseFloat(pack.price).toFixed(2)}\n`;
+          buttons.push([Markup.button.callback(
+            `📸 ${pack.name}`, 
+            `bpc_select_pack:${pack.pack_id}`
+          )]);
+        }
+      }
+      
+      buttons.push(
+        [Markup.button.callback('✅ Continuar', 'bpc_continue_to_discounts')],
+        [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
+      );
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+    } catch (err) {
+      console.error('Erro ao iniciar broadcast com produto e cupom:', err);
+      return ctx.reply('❌ Erro ao carregar produtos.');
+    }
+  });
+  
+  // Selecionar produto para broadcast + cupom
+  bot.action(/^bpc_select_product:(.+)$/, async (ctx) => {
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const session = global._SESSIONS?.[ctx.from.id];
+    if (!session || session.type !== 'creator_broadcast_product_coupon') {
+      await ctx.answerCbQuery('❌ Sessão expirada', { show_alert: true });
+      return;
+    }
+    
+    const productId = ctx.match[1];
+    const product = await db.getProduct(productId);
+    
+    if (!product) {
+      await ctx.answerCbQuery('❌ Produto não encontrado', { show_alert: true });
+      return;
+    }
+    
+    // Toggle seleção
+    const index = session.selectedProducts.findIndex(p => p.id === productId && p.type === 'product');
+    if (index > -1) {
+      session.selectedProducts.splice(index, 1);
+      delete session.productDiscounts[`product_${productId}`];
+      await ctx.answerCbQuery(`❌ ${product.name} removido`);
+    } else {
+      session.selectedProducts.push({
+        id: productId,
+        type: 'product',
+        name: product.name,
+        price: product.price
+      });
+      await ctx.answerCbQuery(`✅ ${product.name} selecionado`);
+    }
+    
+    // Atualizar mensagem
+    try {
+      const products = await db.getAllProducts();
+      const mediaPacks = await db.getAllMediaPacks();
+      
+      let message = `🎁 *BROADCAST + PRODUTO + CUPOM*
+
+📝 *Produtos selecionados:* ${session.selectedProducts.length}
+
+`;
+      
+      if (session.selectedProducts.length > 0) {
+        message += `*Selecionados:*\n`;
+        for (const item of session.selectedProducts) {
+          message += `✅ ${item.name} - R$ ${parseFloat(item.price).toFixed(2)}\n`;
+        }
+        message += `\n`;
+      }
+      
+      message += `*Disponíveis:*\n\n`;
+      
+      const buttons = [];
+      
+      for (const product of products) {
+        const isSelected = session.selectedProducts.some(p => p.id === product.product_id && p.type === 'product');
+        const icon = isSelected ? '✅' : '📦';
+        message += `${icon} ${product.name} - R$ ${parseFloat(product.price).toFixed(2)}\n`;
+        buttons.push([Markup.button.callback(
+          `${icon} ${product.name}`, 
+          `bpc_select_product:${product.product_id}`
+        )]);
+      }
+      
+      for (const pack of mediaPacks) {
+        if (pack.is_active) {
+          const isSelected = session.selectedProducts.some(p => p.id === pack.pack_id && p.type === 'pack');
+          const icon = isSelected ? '✅' : '📸';
+          message += `${icon} ${pack.name} - R$ ${parseFloat(pack.price).toFixed(2)}\n`;
+          buttons.push([Markup.button.callback(
+            `${icon} ${pack.name}`, 
+            `bpc_select_pack:${pack.pack_id}`
+          )]);
+        }
+      }
+      
+      buttons.push(
+        [Markup.button.callback('✅ Continuar', 'bpc_continue_to_discounts')],
+        [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
+      );
+      
+      await ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+    } catch (err) {
+      console.error('Erro ao atualizar seleção:', err);
+    }
+  });
+  
+  // Selecionar pack para broadcast + cupom
+  bot.action(/^bpc_select_pack:(.+)$/, async (ctx) => {
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const session = global._SESSIONS?.[ctx.from.id];
+    if (!session || session.type !== 'creator_broadcast_product_coupon') {
+      await ctx.answerCbQuery('❌ Sessão expirada', { show_alert: true });
+      return;
+    }
+    
+    const packId = ctx.match[1];
+    const pack = await db.getMediaPackById(packId);
+    
+    if (!pack) {
+      await ctx.answerCbQuery('❌ Pack não encontrado', { show_alert: true });
+      return;
+    }
+    
+    // Toggle seleção
+    const index = session.selectedProducts.findIndex(p => p.id === packId && p.type === 'pack');
+    if (index > -1) {
+      session.selectedProducts.splice(index, 1);
+      delete session.productDiscounts[`pack_${packId}`];
+      await ctx.answerCbQuery(`❌ ${pack.name} removido`);
+    } else {
+      session.selectedProducts.push({
+        id: packId,
+        type: 'pack',
+        name: pack.name,
+        price: pack.price
+      });
+      await ctx.answerCbQuery(`✅ ${pack.name} selecionado`);
+    }
+    
+    // Atualizar mensagem (mesmo código do handler de produtos)
+    try {
+      const products = await db.getAllProducts();
+      const mediaPacks = await db.getAllMediaPacks();
+      
+      let message = `🎁 *BROADCAST + PRODUTO + CUPOM*
+
+📝 *Produtos selecionados:* ${session.selectedProducts.length}
+
+`;
+      
+      if (session.selectedProducts.length > 0) {
+        message += `*Selecionados:*\n`;
+        for (const item of session.selectedProducts) {
+          message += `✅ ${item.name} - R$ ${parseFloat(item.price).toFixed(2)}\n`;
+        }
+        message += `\n`;
+      }
+      
+      message += `*Disponíveis:*\n\n`;
+      
+      const buttons = [];
+      
+      for (const product of products) {
+        const isSelected = session.selectedProducts.some(p => p.id === product.product_id && p.type === 'product');
+        const icon = isSelected ? '✅' : '📦';
+        message += `${icon} ${product.name} - R$ ${parseFloat(product.price).toFixed(2)}\n`;
+        buttons.push([Markup.button.callback(
+          `${icon} ${product.name}`, 
+          `bpc_select_product:${product.product_id}`
+        )]);
+      }
+      
+      for (const pack of mediaPacks) {
+        if (pack.is_active) {
+          const isSelected = session.selectedProducts.some(p => p.id === pack.pack_id && p.type === 'pack');
+          const icon = isSelected ? '✅' : '📸';
+          message += `${icon} ${pack.name} - R$ ${parseFloat(pack.price).toFixed(2)}\n`;
+          buttons.push([Markup.button.callback(
+            `${icon} ${pack.name}`, 
+            `bpc_select_pack:${pack.pack_id}`
+          )]);
+        }
+      }
+      
+      buttons.push(
+        [Markup.button.callback('✅ Continuar', 'bpc_continue_to_discounts')],
+        [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
+      );
+      
+      await ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+      });
+    } catch (err) {
+      console.error('Erro ao atualizar seleção:', err);
+    }
+  });
+  
+  // Continuar para definir descontos
+  bot.action('bpc_continue_to_discounts', async (ctx) => {
+    await ctx.answerCbQuery();
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const session = global._SESSIONS?.[ctx.from.id];
+    if (!session || session.type !== 'creator_broadcast_product_coupon') {
+      return ctx.reply('❌ Sessão expirada. Tente novamente.');
+    }
+    
+    if (session.selectedProducts.length === 0) {
+      await ctx.answerCbQuery('❌ Selecione pelo menos um produto!', { show_alert: true });
+      return;
+    }
+    
+    // Avançar para definir descontos
+    session.step = 'set_discounts';
+    session.currentDiscountIndex = 0;
+    
+    const currentProduct = session.selectedProducts[0];
+    
+    return ctx.editMessageText(`🎁 *DEFINIR DESCONTOS*
+
+📦 *Produto:* ${currentProduct.name}
+💰 *Preço original:* R$ ${parseFloat(currentProduct.price).toFixed(2)}
+
+*Passo ${session.currentDiscountIndex + 1}/${session.selectedProducts.length}*
+
+Digite a *porcentagem de desconto* para este produto (ex: 10, 20, 50):
 
 _Cancelar: /cancelar_`, {
       parse_mode: 'Markdown',
@@ -743,6 +1068,217 @@ ${coupons.length > 0 ? '\n📋 *Top 5 cupons mais usados:*\n\n' + coupons
         [Markup.button.callback('🔙 Voltar ao Painel', 'creator_refresh')]
       ])
     });
+  });
+  
+  // Confirmar e enviar broadcast + produto + cupom
+  bot.action('confirm_bpc_broadcast', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🎁 Criando cupons e enviando...');
+    } catch (err) {
+      if (!err.message || !err.message.includes('query is too old')) {
+        console.error('Erro ao responder callback query:', err.message);
+      }
+    }
+    
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    const session = global._SESSIONS?.[ctx.from.id];
+    if (!session || session.type !== 'creator_broadcast_product_coupon' || session.step !== 'confirm') {
+      return ctx.reply('❌ Sessão não encontrada.');
+    }
+    
+    try {
+      const user = await db.getOrCreateUser(ctx.from);
+      const message = session.broadcastMessage;
+      
+      // Buscar usuários desbloqueados
+      const users = await db.getActiveBuyers();
+      
+      if (users.length === 0) {
+        delete global._SESSIONS[ctx.from.id];
+        return ctx.reply('❌ Nenhum comprador ativo encontrado.');
+      }
+      
+      await ctx.editMessageText(`🎁 *CRIANDO CUPONS E ENVIANDO...*
+
+📨 Preparando envio para ${users.length} compradores ativos...
+
+⏳ Aguarde...`, {
+        parse_mode: 'Markdown'
+      });
+      
+      // Criar cupons automáticos para cada produto
+      const createdCoupons = [];
+      const broadcastCouponIds = [];
+      
+      for (const product of session.selectedProducts) {
+        const key = `${product.type}_${product.id}`;
+        const discount = session.productDiscounts[key];
+        
+        // Criar cupom automático para broadcast
+        const autoCouponCode = `AUTO_${session.couponCode}_${product.id}`;
+        
+        const { data: autoCoupon, error: autoCouponError } = await db.supabase
+          .from('coupons')
+          .insert([{
+            code: autoCouponCode,
+            discount_percentage: discount,
+            product_id: product.type === 'product' ? product.id : null,
+            media_pack_id: product.type === 'pack' ? product.id : null,
+            is_active: true,
+            is_broadcast_coupon: true,
+            created_by: user.id
+          }])
+          .select()
+          .single();
+        
+        if (autoCouponError) {
+          console.error('Erro ao criar cupom automático:', autoCouponError);
+          continue;
+        }
+        
+        broadcastCouponIds.push(autoCoupon.id);
+        
+        // Criar cupom manual para novos usuários
+        const { data: manualCoupon, error: manualCouponError } = await db.supabase
+          .from('coupons')
+          .insert([{
+            code: session.couponCode,
+            discount_percentage: discount,
+            product_id: product.type === 'product' ? product.id : null,
+            media_pack_id: product.type === 'pack' ? product.id : null,
+            is_active: true,
+            is_broadcast_coupon: false,
+            created_by: user.id
+          }])
+          .select()
+          .single();
+        
+        if (manualCouponError) {
+          console.error('Erro ao criar cupom manual:', manualCouponError);
+        } else {
+          createdCoupons.push(manualCoupon);
+        }
+      }
+      
+      // Salvar campanha de broadcast
+      const { data: campaign, error: campaignError } = await db.supabase
+        .from('broadcast_campaigns')
+        .insert([{
+          name: `Broadcast + Cupom ${new Date().toLocaleDateString('pt-BR')}`,
+          message: message,
+          target_audience: 'all',
+          status: 'sending',
+          created_by: user.id
+        }])
+        .select()
+        .single();
+      
+      if (campaignError) {
+        console.error('Erro ao salvar campanha:', campaignError);
+      }
+      
+      // Registrar usuários que receberão o broadcast
+      const broadcastRecipients = [];
+      for (const recipient of users) {
+        broadcastRecipients.push({
+          telegram_id: recipient.telegram_id,
+          broadcast_campaign_id: campaign?.id || null
+        });
+      }
+      
+      if (broadcastRecipients.length > 0) {
+        await db.supabase
+          .from('broadcast_recipients')
+          .insert(broadcastRecipients)
+          .catch(err => console.error('Erro ao registrar destinatários:', err));
+      }
+      
+      // Enviar broadcast
+      let success = 0;
+      let failed = 0;
+      
+      for (const recipient of users) {
+        try {
+          // Adicionar cupom copiável na mensagem
+          const messageWithCoupon = `${message}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎟️ *Cupom:* \`${session.couponCode}\`
+_(Toque para copiar)_`;
+          
+          await ctx.telegram.sendMessage(recipient.telegram_id, messageWithCoupon, {
+            parse_mode: 'Markdown'
+          });
+          success++;
+          
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+        } catch (err) {
+          failed++;
+          if (!err.message || !err.message.includes('bot was blocked by the user')) {
+            console.error(`❌ [BPC-BROADCAST] Erro ao enviar para ${recipient.telegram_id}:`, err.message);
+          }
+        }
+      }
+      
+      // Atualizar campanha
+      if (campaign) {
+        await db.supabase
+          .from('broadcast_campaigns')
+          .update({
+            sent_count: success,
+            failed_count: failed,
+            status: 'sent',
+            sent_at: new Date().toISOString()
+          })
+          .eq('id', campaign.id);
+      }
+      
+      delete global._SESSIONS[ctx.from.id];
+      
+      let resultMessage = `✅ *BROADCAST + CUPOM CONCLUÍDO!*
+
+📊 *Estatísticas:*
+✅ Enviados: ${success}
+❌ Falhas: ${failed}
+📝 Total: ${users.length}
+
+🎟️ *Cupom criado:* \`${session.couponCode}\`
+
+📦 *Produtos com desconto:*
+
+`;
+      
+      for (const product of session.selectedProducts) {
+        const key = `${product.type}_${product.id}`;
+        const disc = session.productDiscounts[key];
+        resultMessage += `• ${product.name} - ${disc}% OFF\n`;
+      }
+      
+      resultMessage += `
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ *Usuários que receberam:* Desconto aplicado automaticamente
+🎟️ *Novos usuários:* Podem usar o cupom \`${session.couponCode}\`
+
+_Broadcast enviado com sucesso!_`;
+      
+      return ctx.editMessageText(resultMessage, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Voltar ao Painel', 'creator_refresh')]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro no broadcast + cupom:', err);
+      delete global._SESSIONS[ctx.from.id];
+      return ctx.reply('❌ Erro ao enviar broadcast.');
+    }
   });
   
   // ===== ATUALIZAR PAINEL =====
