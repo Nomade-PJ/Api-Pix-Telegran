@@ -1557,23 +1557,64 @@ async function addGroupMember({ telegramId, userId, groupId, days = 30 }) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + days);
     
-    const { data, error } = await supabase
+    // 🆕 VERIFICAR SE JÁ EXISTE MEMBRO ATIVO PARA ESTE GRUPO
+    const { data: existingMember, error: checkError } = await supabase
       .from('group_members')
-      .insert([{
-        telegram_id: telegramId,
-        user_id: userId,
-        group_id: groupId,
-        expires_at: expiresAt.toISOString(),
-        status: 'active'
-      }])
-      .select()
-      .single();
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .eq('group_id', groupId)
+      .eq('status', 'active')
+      .maybeSingle();
     
-    if (error) throw error;
-    console.log('Membro adicionado:', telegramId);
-    return data;
+    if (checkError && checkError.code !== 'PGRST116') {
+      throw checkError;
+    }
+    
+    let result;
+    
+    if (existingMember) {
+      // 🆕 RENOVAR ASSINATURA EXISTENTE (UPDATE)
+      console.log(`🔄 [DB] Renovando assinatura existente para usuário ${telegramId} no grupo ${groupId}`);
+      
+      const { data: updated, error: updateError } = await supabase
+        .from('group_members')
+        .update({
+          expires_at: expiresAt.toISOString(),
+          status: 'active',
+          reminded_at: null, // Resetar lembrete
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', existingMember.id)
+        .select()
+        .single();
+      
+      if (updateError) throw updateError;
+      result = updated;
+      console.log(`✅ [DB] Assinatura renovada: usuário ${telegramId} - expira em ${expiresAt.toLocaleDateString('pt-BR')}`);
+    } else {
+      // 🆕 CRIAR NOVA ASSINATURA (INSERT)
+      console.log(`➕ [DB] Criando nova assinatura para usuário ${telegramId} no grupo ${groupId}`);
+      
+      const { data: inserted, error: insertError } = await supabase
+        .from('group_members')
+        .insert([{
+          telegram_id: telegramId,
+          user_id: userId,
+          group_id: groupId,
+          expires_at: expiresAt.toISOString(),
+          status: 'active'
+        }])
+        .select()
+        .single();
+      
+      if (insertError) throw insertError;
+      result = inserted;
+      console.log(`✅ [DB] Nova assinatura criada: usuário ${telegramId} - expira em ${expiresAt.toLocaleDateString('pt-BR')}`);
+    }
+    
+    return result;
   } catch (err) {
-    console.error('Erro ao adicionar membro:', err.message);
+    console.error('❌ [DB] Erro ao adicionar/renovar membro:', err.message);
     throw err;
   }
 }
@@ -1685,14 +1726,123 @@ async function getExpiringMembers() {
   return [];
 }
 
-async function getExpiredMembers() {
-  // Adicionar retry logic para erros de conexão
+// 🆕 NOVA FUNÇÃO: Buscar membros que expiram HOJE (para lembrete no dia do vencimento)
+async function getExpiringToday() {
   let retries = 3;
   let lastError;
   
   while (retries > 0) {
     try {
-      const now = new Date().toISOString();
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      
+      // Buscar membros que expiram HOJE e ainda não foram lembrados hoje
+      const { data, error } = await supabase
+        .from('group_members')
+        .select(`
+          *,
+          user:user_id(first_name, telegram_id),
+          group:group_id(id, group_name, group_id, subscription_price, subscription_days)
+        `)
+        .eq('status', 'active')
+        .gte('expires_at', startOfToday.toISOString())
+        .lte('expires_at', endOfToday.toISOString())
+        .or(`reminded_at.is.null,reminded_at.lt.${startOfToday.toISOString()}`);
+      
+      if (error) {
+        const errorMessage = error.message || '';
+        const errorDetails = error.details || '';
+        const errorString = JSON.stringify(error);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorDetails.includes('ETIMEDOUT') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorString.includes('ETIMEDOUT')
+        );
+        
+        if (isConnectionError) {
+          lastError = error;
+          retries--;
+          
+          if (retries > 0) {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirando hoje: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+            console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+            continue;
+          } else {
+            console.warn(`⚠️ [DB] Erro de conexão após 3 tentativas - retornando array vazio`);
+            return [];
+          }
+        } else {
+          throw error;
+        }
+      }
+      
+      return data || [];
+      
+    } catch (err) {
+      const errorMessage = err.message || '';
+      const errorDetails = err.details || '';
+      const errorString = JSON.stringify(err);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorDetails.includes('ETIMEDOUT') ||
+        errorString.includes('UND_ERR_SOCKET') ||
+        errorString.includes('ETIMEDOUT')
+      );
+      
+      if (isConnectionError) {
+        lastError = err;
+        retries--;
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar membros expirando hoje: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+          console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+          continue;
+        } else {
+          console.warn(`⚠️ [DB] Erro de conexão após 3 tentativas - retornando array vazio`);
+          return [];
+        }
+      } else {
+        console.error('❌ [DB] Erro ao buscar membros expirando hoje:', err.message);
+        return [];
+      }
+    }
+  }
+  
+  return [];
+}
+
+async function getExpiredMembers() {
+  // 🆕 AJUSTADO: Buscar membros que expiraram há MAIS de 1 dia (prazo de graça)
+  let retries = 3;
+  let lastError;
+  
+  while (retries > 0) {
+    try {
+      const now = new Date();
+      // 🆕 Considerar 1 dia de tolerância (remover apenas se expirou há mais de 1 dia)
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       
       const { data, error } = await supabase
         .from('group_members')
@@ -1702,7 +1852,7 @@ async function getExpiredMembers() {
           group:group_id(group_id, group_name, subscription_price, subscription_days)
         `)
         .eq('status', 'active')
-        .lt('expires_at', now);
+        .lt('expires_at', oneDayAgo.toISOString()); // 🆕 Expirou há mais de 1 dia
       
       if (error) {
         // Verificar se é erro de conexão
@@ -3460,6 +3610,7 @@ module.exports = {
   deleteGroup,
   addGroupMember,
   getExpiringMembers,
+  getExpiringToday,
   getExpiredMembers,
   markMemberReminded,
   expireMember,
