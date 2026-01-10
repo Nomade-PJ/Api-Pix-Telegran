@@ -1,0 +1,285 @@
+## 🚀 CONFIGURAÇÃO COMPLETA - AUTOMAÇÃO DE EXPIRAÇÃO
+
+### 📋 PASSO A PASSO COMPLETO
+
+---
+
+## ✅ ETAPA 1: CONFIGURAR CRON_SECRET NA VERCEL
+
+### 1️⃣ Acesse as Variáveis de Ambiente:
+```
+https://vercel.com/nomadepj/api-pix-telegran/settings/environment-variables
+```
+
+### 2️⃣ Clique em "Add New"
+
+### 3️⃣ Preencha EXATAMENTE assim:
+
+```
+Name: CRON_SECRET
+Value: OKOe9AdRCaUjgvdXDbgSbV5bKnG8NdCkWYEfITRh34A=
+```
+
+### 4️⃣ Selecione os 3 ambientes:
+- ✅ Production
+- ✅ Preview  
+- ✅ Development
+
+### 5️⃣ Clique em "Save"
+
+### 6️⃣ **IMPORTANTE:** Vá para "Deployments" e clique em "Redeploy"
+```
+https://vercel.com/nomadepj/api-pix-telegran/deployments
+```
+
+### 7️⃣ Aguarde 1-2 minutos até aparecer ✅ "Ready"
+
+---
+
+## ✅ ETAPA 2: CRIAR CONTA NO CRON-JOB.ORG
+
+### 1️⃣ Acesse:
+```
+https://cron-job.org/en/signup/
+```
+
+### 2️⃣ Preencha:
+- Email: (seu email)
+- Password: (crie uma senha)
+- Confirme o email
+
+### 3️⃣ Faça login
+
+---
+
+## ✅ ETAPA 3: CONFIGURAR O CRON JOB
+
+### 1️⃣ Clique em "Create cronjob"
+
+### 2️⃣ Preencha EXATAMENTE:
+
+**ABA "General":**
+```
+Title: Verificar Expirações de Membros
+```
+
+**URL:**
+```
+https://api-pix-telegran.vercel.app/api/jobs/expire-members
+```
+
+**ABA "Schedule":**
+```
+☑️ Every 30 minutes
+```
+
+Ou configure manualmente:
+```
+Minutes: */30
+Hours: *
+Days: *
+Months: *
+Days of week: *
+```
+
+**ABA "Advanced":**
+
+Request Method:
+```
+POST
+```
+
+Request Headers:
+```
+x-cron-secret: OKOe9AdRCaUjgvdXDbgSbV5bKnG8NdCkWYEfITRh34A=
+```
+
+Para adicionar o header:
+1. Clique em "Add header"
+2. Name: `x-cron-secret`
+3. Value: `OKOe9AdRCaUjgvdXDbgSbV5bKnG8NdCkWYEfITRh34A=`
+
+**ABA "Notifications":**
+```
+☑️ On failure only (opcional - para receber email se falhar)
+```
+
+### 3️⃣ Clique em "Create"
+
+### 4️⃣ **TESTAR IMEDIATAMENTE:**
+
+Na lista de cron jobs, clique nos 3 pontinhos (...) → "Run now"
+
+---
+
+## ✅ ETAPA 4: VALIDAR QUE ESTÁ FUNCIONANDO
+
+### 1️⃣ Após clicar em "Run now", aguarde 30 segundos
+
+### 2️⃣ Clique no job → "History" para ver o resultado
+
+Deve aparecer:
+```
+Status: 200 OK
+Response: {"success":true,...}
+```
+
+### 3️⃣ **IMPORTANTE:** Verifique no Supabase
+
+Execute esta query:
+```sql
+-- Deve retornar 0
+SELECT COUNT(*) FROM group_members
+WHERE status = 'active' AND expires_at < NOW() - INTERVAL '1 day';
+```
+
+### 4️⃣ Verifique logs na Vercel (opcional):
+```
+https://vercel.com/nomadepj/api-pix-telegran/logs
+```
+
+Procure por: `[CRON-EXPIRE] Job de expiração iniciado`
+
+---
+
+## ✅ ETAPA 5: CONFIGURAÇÃO FINAL (OPCIONAL MAS RECOMENDADO)
+
+### Adicionar notificações de erro no cron-job.org:
+
+1. Vá em Settings → Notification Settings
+2. Ative "Email notifications"
+3. Selecione "On failure only"
+
+Assim você recebe email se o cron falhar.
+
+---
+
+## 📊 O QUE VAI ACONTECER AUTOMATICAMENTE:
+
+### **A CADA 30 MINUTOS:**
+
+1. Cron-job.org chama o endpoint na Vercel
+2. Sistema verifica todos os membros de grupos
+3. **3 dias antes do vencimento:**
+   - Envia lembrete com QR Code (válido 7 dias)
+   - Link do grupo incluído
+4. **No dia do vencimento:**
+   - Envia lembrete URGENTE com QR Code
+   - "EXPIRA EM X HORAS"
+5. **1 dia após vencer (SEM pagamento):**
+   - Remove do grupo Telegram
+   - Marca como expired no banco
+   - Envia QR Code de renovação (válido 30 min)
+6. **Se usuário pagar:**
+   - Admin aprova
+   - Sistema renova automaticamente (+30 dias)
+   - Adiciona de volta ao grupo
+   - Envia link de acesso
+
+---
+
+## 🔍 COMO MONITORAR:
+
+### No Cron-Job.org:
+- Dashboard → Seu job → "History"
+- Veja todas as execuções e status
+
+### Na Vercel:
+- Logs → Filtrar por "CRON-EXPIRE"
+- Ver processamentos em tempo real
+
+### No Supabase:
+```sql
+-- Quantos estão para vencer (próximos 3 dias)
+SELECT COUNT(*) FROM group_members
+WHERE status = 'active' 
+  AND expires_at BETWEEN NOW() AND NOW() + INTERVAL '3 days';
+
+-- Quantos venceram e aguardam remoção
+SELECT COUNT(*) FROM group_members
+WHERE status = 'active' 
+  AND expires_at < NOW() - INTERVAL '1 day';
+
+-- Últimas expirações
+SELECT telegram_id, expires_at, status, updated_at
+FROM group_members
+WHERE status = 'expired'
+ORDER BY updated_at DESC
+LIMIT 10;
+```
+
+---
+
+## ⚠️ POSSÍVEIS PROBLEMAS E SOLUÇÕES:
+
+### ❌ Erro 401 - Unauthorized
+**Causa:** CRON_SECRET errado ou não configurado
+**Solução:**
+1. Verifique se `CRON_SECRET` está na Vercel
+2. Confirme que fez Redeploy
+3. Verifique se o header no cron-job.org está correto
+
+### ❌ Erro 500 - Internal Server Error
+**Causa:** Bot sem permissões ou erro no código
+**Solução:**
+1. Verifique logs na Vercel
+2. Confirme que bot é administrador do grupo
+3. Confirme permissão "Banir usuários"
+
+### ❌ Timeout / Sem resposta
+**Causa:** Endpoint demorando muito (muitos usuários)
+**Solução:** Normal para muitos usuários, aguarde até 60 segundos
+
+### ❌ Usuários não sendo removidos
+**Causa:** Bot não é admin do grupo
+**Solução:**
+1. Abra o grupo no Telegram
+2. Clique no nome → Editar
+3. Administradores → Adicionar
+4. Selecione o bot
+5. Ative "Banir usuários"
+
+---
+
+## ✅ CHECKLIST FINAL:
+
+- [ ] ADMIN_SECRET configurado na Vercel (já feito ✅)
+- [ ] CRON_SECRET configurado na Vercel
+- [ ] Redeploy feito na Vercel
+- [ ] Conta criada no cron-job.org
+- [ ] Cron job configurado (30 minutos)
+- [ ] Header x-cron-secret adicionado
+- [ ] Teste manual executado ("Run now")
+- [ ] Status 200 OK recebido
+- [ ] Query SQL retorna 0 expirados
+- [ ] Bot é admin do grupo
+- [ ] Bot tem permissão "Banir usuários"
+
+---
+
+## 🎯 RESUMO DOS COMANDOS:
+
+### Testar manualmente na Vercel:
+```powershell
+$headers = @{ "x-cron-secret" = "OKOe9AdRCaUjgvdXDbgSbV5bKnG8NdCkWYEfITRh34A=" }
+Invoke-WebRequest -Uri "https://api-pix-telegran.vercel.app/api/jobs/expire-members" -Method POST -Headers $headers | Select-Object -ExpandProperty Content
+```
+
+### Ver status no banco:
+```sql
+SELECT COUNT(*) FROM group_members
+WHERE status = 'active' AND expires_at < NOW() - INTERVAL '1 day';
+```
+
+---
+
+## 🎉 PRONTO!
+
+Após seguir todos os passos:
+- ✅ Sistema roda automaticamente a cada 30 minutos
+- ✅ Lembretes enviados automaticamente
+- ✅ Remoções automáticas
+- ✅ Renovações automáticas
+- ✅ Zero manutenção necessária
+
+**SISTEMA 100% AUTOMÁTICO!** 🚀

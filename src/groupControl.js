@@ -318,12 +318,28 @@ Não perca o acesso! 🚀`, {
         });
         
       } catch (err) {
-        stats.errors++;
-        console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete`, {
-          telegram_id: member.telegram_id,
-          error: err.message,
-          stack: err.stack
-        });
+        // Erros esperados que não devem ser contados (usuário bloqueou bot, conta deletada, etc)
+        const isExpectedError = (
+          err.message?.includes('bot was blocked') ||
+          err.message?.includes('user is deactivated') ||
+          err.message?.includes('chat not found') ||
+          err.message?.includes('PEER_ID_INVALID') ||
+          err.message?.includes('USER_DEACTIVATED')
+        );
+        
+        if (!isExpectedError) {
+          stats.errors++;
+          console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete`, {
+            telegram_id: member.telegram_id,
+            error: err.message,
+            stack: err.stack
+          });
+        } else {
+          console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível (bloqueou bot ou conta deletada)`, {
+            telegram_id: member.telegram_id,
+            reason: err.message
+          });
+        }
       }
     }
     
