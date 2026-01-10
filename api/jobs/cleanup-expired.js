@@ -87,13 +87,14 @@ module.exports = async function handler(req, res) {
           days_expired: memberResult.days_expired
         });
         
-        // Verificar se há transação pendente/aprovada
+        // Verificar se há transação pendente/aprovada (APENAS transações recentes - últimos 7 dias)
         const { data: pendingTransactions } = await db.supabase
           .from('transactions')
           .select('*')
           .eq('telegram_id', member.telegram_id)
           .eq('group_id', member.group_id)
           .in('status', ['pending', 'proof_sent', 'validated', 'delivered'])
+          .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
           .order('created_at', { ascending: false })
           .limit(1);
         
