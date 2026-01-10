@@ -551,10 +551,29 @@ Após aprovação, sua assinatura será renovada automaticamente!
             
             console.log(`✅ [GROUP-CONTROL] Lembrete urgente enviado para ${member.telegram_id}`);
           } catch (pixErr) {
+            // Erros esperados que não devem ser logados como erro crítico
+            const isExpectedError = (
+              pixErr.message?.includes('bot was blocked') ||
+              pixErr.message?.includes('user is deactivated') ||
+              pixErr.message?.includes('chat not found') ||
+              pixErr.message?.includes('PEER_ID_INVALID') ||
+              pixErr.message?.includes('USER_DEACTIVATED')
+            );
+            
+            if (isExpectedError) {
+              console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível para lembrete urgente`, {
+                telegram_id: member.telegram_id,
+                reason: pixErr.message
+              });
+              // Não tenta fallback se usuário bloqueou
+              throw pixErr; // Re-throw para ser tratado no catch externo
+            }
+            
             console.error(`❌ [GROUP-CONTROL] Erro ao gerar QR Code urgente:`, pixErr.message);
             
-            // Fallback
-            await bot.telegram.sendMessage(member.telegram_id, `🚨 *URGENTE: ASSINATURA EXPIRA HOJE!*
+            // Fallback apenas se não for erro esperado
+            try {
+              await bot.telegram.sendMessage(member.telegram_id, `🚨 *URGENTE: ASSINATURA EXPIRA HOJE!*
 
 ⚠️ Sua assinatura expira em ${hoursLeft} horas!
 
@@ -566,8 +585,14 @@ Após aprovação, sua assinatura será renovada automaticamente!
 Use o comando /renovar e faça o pagamento.
 
 ⏰ *ÚLTIMA CHANCE!* 🚀`, {
-              parse_mode: 'Markdown'
-            });
+                parse_mode: 'Markdown'
+              });
+            } catch (fallbackErr) {
+              // Se fallback também falhar, apenas logar
+              console.warn(`⚠️ [GROUP-CONTROL] Fallback também falhou:`, fallbackErr.message);
+              // Re-throw para ser tratado no catch externo
+              throw pixErr;
+            }
           }
         }
         
@@ -581,12 +606,28 @@ Use o comando /renovar e faça o pagamento.
         });
         
       } catch (err) {
-        stats.errors++;
-        console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete urgente`, {
-          telegram_id: member.telegram_id,
-          error: err.message,
-          stack: err.stack
-        });
+        // Erros esperados que não devem ser contados (usuário bloqueou bot, conta deletada, etc)
+        const isExpectedError = (
+          err.message?.includes('bot was blocked') ||
+          err.message?.includes('user is deactivated') ||
+          err.message?.includes('chat not found') ||
+          err.message?.includes('PEER_ID_INVALID') ||
+          err.message?.includes('USER_DEACTIVATED')
+        );
+        
+        if (!isExpectedError) {
+          stats.errors++;
+          console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete urgente`, {
+            telegram_id: member.telegram_id,
+            error: err.message,
+            stack: err.stack
+          });
+        } else {
+          console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível (bloqueou bot ou conta deletada)`, {
+            telegram_id: member.telegram_id,
+            reason: err.message
+          });
+        }
       }
     }
     
@@ -1151,26 +1192,71 @@ Use o comando /renovar e faça o pagamento.`, {
 async function acquireProcessingLock(memberId) {
   try {
     const lockTimeout = new Date(Date.now() + 5 * 60 * 1000); // Lock expira em 5 minutos
+    const now = new Date().toISOString();
     
+    // Primeiro, verificar se pode adquirir o lock (está null ou expirado)
+    const { data: checkData, error: checkError } = await db.supabase
+      .from('group_members')
+      .select('id, processing_lock')
+      .eq('id', memberId)
+      .single();
+    
+    if (checkError) {
+      // Se coluna não existe ou erro de query, tentar sem lock (continuar processamento)
+      if (checkError.message?.includes('does not exist')) {
+        console.warn(`⚠️ [LOCK] Coluna processing_lock não existe, continuando sem lock`);
+        return true; // Permite processar sem lock
+      }
+      console.error(`❌ [LOCK] Erro ao verificar lock:`, checkError.message);
+      return false;
+    }
+    
+    // Se já tem lock ativo e não expirou, não pode adquirir
+    if (checkData?.processing_lock && new Date(checkData.processing_lock) > new Date()) {
+      return false; // Já está locked
+    }
+    
+    // Tentar adquirir o lock
     const { data, error } = await db.supabase
       .from('group_members')
       .update({ 
         processing_lock: lockTimeout.toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: now
       })
       .eq('id', memberId)
-      .or(`processing_lock.is.null,processing_lock.lt.${new Date().toISOString()}`)
+      .is('processing_lock', null)
       .select('id');
     
-    if (error) {
-      console.error(`❌ [LOCK] Erro ao adquirir lock:`, error.message);
-      return false;
+    // Se não conseguiu (já foi adquirido por outro processo), tentar atualizar se expirou
+    if (error || !data || data.length === 0) {
+      // Verificar se lock expirou e tentar novamente
+      const { data: retryData, error: retryError } = await db.supabase
+        .from('group_members')
+        .update({ 
+          processing_lock: lockTimeout.toISOString(),
+          updated_at: now
+        })
+        .eq('id', memberId)
+        .lt('processing_lock', now) // Lock expirado
+        .select('id');
+      
+      if (retryError) {
+        console.error(`❌ [LOCK] Erro ao adquirir lock:`, retryError.message);
+        return false;
+      }
+      
+      return retryData && retryData.length > 0;
     }
     
-    // Se retornou dados, conseguiu adquirir o lock
-    return data && data.length > 0;
+    // Conseguiu adquirir o lock
+    return true;
     
   } catch (err) {
+    // Se erro é "coluna não existe", permitir processar sem lock
+    if (err.message?.includes('does not exist')) {
+      console.warn(`⚠️ [LOCK] Coluna processing_lock não existe, continuando sem lock`);
+      return true;
+    }
     console.error(`❌ [LOCK] Erro crítico ao adquirir lock:`, err.message);
     return false;
   }
