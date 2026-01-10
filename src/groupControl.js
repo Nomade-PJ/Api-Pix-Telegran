@@ -1195,5 +1195,8 @@ function startGroupControl(bot) {
   }, 30 * 60 * 1000); // 30 minutos
 }
 
-module.exports = { startGroupControl };
+module.exports = { 
+  startGroupControl,
+  checkExpirations 
+};
 
