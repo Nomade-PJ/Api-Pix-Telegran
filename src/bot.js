@@ -3531,9 +3531,11 @@ _Cancelar: /cancelar`, {
   });
   
 
-  // Integrar controle de grupos
-  const groupControl = require('./groupControl');
-  groupControl.startGroupControl(bot);
+  // ⚠️ CONTROLE DE GRUPOS DESATIVADO NO BOT (roda via cron externo)
+  // Em ambiente serverless (Vercel), setInterval não funciona.
+  // O controle de expiração roda via cron job externo: /api/jobs/expire-members
+  // const groupControl = require('./groupControl');
+  // groupControl.startGroupControl(bot);
 
   return bot;
 }
