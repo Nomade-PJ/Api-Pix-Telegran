@@ -1,0 +1,129 @@
+## 🚨 LIMPEZA URGENTE - 29 USUÁRIOS EXPIRADOS
+
+### 📊 SITUAÇÃO ATUAL
+
+Foram encontrados **29 usuários** com assinatura expirada que ainda estão marcados como "active" no banco:
+
+| Mais Antigo | Mais Recente | Média |
+|-------------|--------------|-------|
+| 8.6 dias | 2.2 dias | 6.5 dias |
+
+**Nenhum deles tem pagamento pendente** - todos podem ser removidos imediatamente.
+
+---
+
+## ⚡ EXECUTAR LIMPEZA AGORA
+
+### 1️⃣ Configure a Variável (se ainda não configurou)
+
+Na Vercel, adicione:
+```
+ADMIN_SECRET = [sua_senha_forte_aqui]
+```
+
+Gere com:
+```bash
+# Windows PowerShell
+[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
+```
+
+### 2️⃣ Faça Redeploy
+
+Clique em **"Redeploy"** na Vercel para atualizar o código.
+
+### 3️⃣ Execute a Limpeza
+
+```bash
+curl -X POST \
+  https://seu-projeto.vercel.app/api/jobs/cleanup-expired \
+  -H "x-admin-secret: SEU_ADMIN_SECRET"
+```
+
+---
+
+## 📋 O QUE VAI ACONTECER
+
+Para **CADA um dos 29 usuários**, o sistema vai:
+
+1. ✅ **Verificar** se há pagamento pendente (dupla verificação)
+2. ❌ **Remover do grupo** Telegram
+3. 💾 **Marcar como expirado** no banco (`status = 'expired'`)
+4. 📲 **Enviar QR Code** de renovação via Telegram
+5. 🔗 **Enviar link** do grupo junto
+
+**Exemplo da mensagem que cada usuário vai receber:**
+
+```
+🔄 RENOVAÇÃO DE ASSINATURA
+
+❌ Sua assinatura expirou há 8 dias e você foi removido do grupo.
+
+👥 Grupo: Privadinho da Val 🛐🔞
+💰 Valor: R$ 59.90
+📅 Duração: 30 dias
+
+🔑 Chave PIX: [chave]
+📋 Cópia & Cola: [payload]
+⏰ VÁLIDO ATÉ: [horário]
+
+📸 Após pagar, envie o comprovante.
+Após aprovação, você será adicionado automaticamente!
+
+🔗 Link do grupo: [link]
+```
+
+---
+
+## 📊 RESPOSTA ESPERADA
+
+```json
+{
+  "success": true,
+  "summary": {
+    "total_analyzed": 29,
+    "removed_from_group": 29,
+    "kept_pending_payment": 0,
+    "kept_already_renewed": 0,
+    "errors": 0
+  },
+  "message": "Processados 29 membros. 29 removidos."
+}
+```
+
+---
+
+## ✅ APÓS A LIMPEZA
+
+1. **Configure o cron job** (se ainda não configurou):
+   - URL: `https://seu-projeto.vercel.app/api/jobs/expire-members`
+   - Frequência: A cada 30 minutos
+   - Header: `x-cron-secret: SEU_CRON_SECRET`
+
+2. **Valide no banco**:
+```sql
+SELECT COUNT(*) FROM group_members
+WHERE status = 'active' AND expires_at < NOW() - INTERVAL '1 day';
+-- Deve retornar 0
+```
+
+3. **Delete este endpoint** (opcional, após limpeza):
+   - Remova `api/jobs/cleanup-expired.js`
+   - Remova rota do `vercel.json`
+   - Endpoint só é necessário uma vez
+
+---
+
+## ⚠️ IMPORTANTE
+
+- ✅ O bot precisa ser **administrador** do grupo
+- ✅ Permissão "Banir usuários" deve estar ativa
+- ✅ Usuários que pagaram continuam no grupo
+- ✅ Verificação dupla previne remover quem está pagando
+
+---
+
+## 🎯 PRÓXIMO PASSO
+
+**Execute o comando acima AGORA** para limpar os 29 usuários acumulados.
+
+Após isso, o cron job manterá tudo funcionando automaticamente.

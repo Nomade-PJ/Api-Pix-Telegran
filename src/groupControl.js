@@ -4,11 +4,26 @@ const manualPix = require('./pix/manual');
 const deliver = require('./deliver');
 
 async function checkExpirations(bot) {
+  const startTime = Date.now();
+  const stats = {
+    reminders_3_days: 0,
+    reminders_urgent: 0,
+    removed: 0,
+    errors: 0,
+    skipped_locked: 0
+  };
+  
   try {
-    console.log('🔍 [GROUP-CONTROL] Verificando expirações de assinaturas...');
+    console.log('🔍 [GROUP-CONTROL] Verificando expirações de assinaturas...', {
+      timestamp: new Date().toISOString()
+    });
     
     // 1. Enviar lembretes COM QR CODE (3 dias antes)
     const expiring = await db.getExpiringMembers();
+    console.log(`📊 [GROUP-CONTROL] ${expiring.length} membro(s) expirando em 3 dias`, {
+      timestamp: new Date().toISOString(),
+      count: expiring.length
+    });
     
     for (const member of expiring) {
       try {
@@ -19,7 +34,12 @@ async function checkExpirations(bot) {
         const group = member.group;
         const amount = parseFloat(group?.subscription_price || 30.00).toFixed(2);
         
-        console.log(`⏰ [GROUP-CONTROL] Enviando lembrete de 3 dias para ${member.telegram_id}`);
+        console.log(`⏰ [GROUP-CONTROL] Enviando lembrete de 3 dias`, {
+          telegram_id: member.telegram_id,
+          expires_at: member.expires_at,
+          days_left: daysLeft,
+          group_name: group?.group_name
+        });
         
         // 🆕 GERAR QR CODE NO LEMBRETE DE 3 DIAS
         try {
@@ -290,15 +310,29 @@ Não perca o acesso! 🚀`, {
         
         // Marcar como lembrado
         await db.markMemberReminded(member.id);
+        stats.reminders_3_days++;
+        
+        console.log(`✅ [GROUP-CONTROL] Lembrete de 3 dias enviado com sucesso`, {
+          telegram_id: member.telegram_id,
+          group_name: group?.group_name
+        });
         
       } catch (err) {
-        console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete para ${member.telegram_id}:`, err.message);
+        stats.errors++;
+        console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete`, {
+          telegram_id: member.telegram_id,
+          error: err.message,
+          stack: err.stack
+        });
       }
     }
     
     // 🆕 2. Enviar lembretes URGENTES no dia do vencimento
     const expiringToday = await db.getExpiringToday();
-    console.log(`⏰ [GROUP-CONTROL] ${expiringToday.length} membro(s) expirando HOJE - enviando lembrete urgente`);
+    console.log(`🚨 [GROUP-CONTROL] ${expiringToday.length} membro(s) expirando HOJE - enviando lembrete urgente`, {
+      timestamp: new Date().toISOString(),
+      count: expiringToday.length
+    });
     
     for (const member of expiringToday) {
       try {
@@ -523,18 +557,49 @@ Use o comando /renovar e faça o pagamento.
         
         // Marcar como lembrado hoje
         await db.markMemberReminded(member.id);
+        stats.reminders_urgent++;
+        
+        console.log(`✅ [GROUP-CONTROL] Lembrete urgente enviado com sucesso`, {
+          telegram_id: member.telegram_id,
+          hours_left: hoursLeft
+        });
         
       } catch (err) {
-        console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete urgente para ${member.telegram_id}:`, err.message);
+        stats.errors++;
+        console.error(`❌ [GROUP-CONTROL] Erro ao enviar lembrete urgente`, {
+          telegram_id: member.telegram_id,
+          error: err.message,
+          stack: err.stack
+        });
       }
     }
     
     // 3. Remover membros expirados há mais de 1 dia E enviar QR Code de renovação
     const expired = await db.getExpiredMembers();
+    console.log(`❌ [GROUP-CONTROL] ${expired.length} membro(s) expirados há mais de 1 dia - iniciando remoção`, {
+      timestamp: new Date().toISOString(),
+      count: expired.length
+    });
     
     for (const member of expired) {
       try {
-        console.log(`🔄 [GROUP-CONTROL] Processando membro expirado: ${member.telegram_id}`);
+        // 🆕 VERIFICAR PROCESSING LOCK (evitar duplicação)
+        const lockAcquired = await acquireProcessingLock(member.id);
+        
+        if (!lockAcquired) {
+          stats.skipped_locked++;
+          console.log(`⏭️ [GROUP-CONTROL] Membro já sendo processado por outra instância`, {
+            telegram_id: member.telegram_id,
+            member_id: member.id
+          });
+          continue;
+        }
+        
+        console.log(`🔄 [GROUP-CONTROL] Processando membro expirado`, {
+          telegram_id: member.telegram_id,
+          expires_at: member.expires_at,
+          days_since_expiry: Math.floor((new Date() - new Date(member.expires_at)) / (1000 * 60 * 60 * 24))
+        });
         
         // 🆕 VERIFICAR SE JÁ TEM TRANSAÇÃO PENDENTE/APROVADA DE RENOVAÇÃO
         let pendingRenewal = null;
@@ -791,6 +856,16 @@ Após aprovação, sua assinatura será renovada automaticamente.
         // Atualizar status
         await db.expireMember(member.id);
         
+        // 🆕 LIBERAR LOCK
+        await releaseProcessingLock(member.id);
+        
+        stats.removed++;
+        console.log(`✅ [GROUP-CONTROL] Membro expirado removido com sucesso`, {
+          telegram_id: member.telegram_id,
+          group_id: member.group.group_id,
+          group_name: member.group.group_name
+        });
+        
         // 🆕 GERAR QR CODE DE RENOVAÇÃO AUTOMÁTICO (apenas se não houver transação pendente)
         try {
           const group = member.group;
@@ -883,8 +958,8 @@ Após aprovação, você será adicionado automaticamente ao grupo!
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
 ⚠️ *Prazo:* 30 minutos para pagamento
 
-📸 Após pagar, envie o comprovante aqui.
-Após aprovação, você será adicionado automaticamente ao grupo!
+📸 *Após pagar, envie o comprovante aqui.*
+✅ *Após a aprovação, você receberá o link do grupo automaticamente!*
 
 🆔 TXID: ${finalCheck.txid}`, {
                 parse_mode: 'Markdown'
@@ -923,7 +998,7 @@ Após aprovação, você será adicionado automaticamente ao grupo!
               groupId: group.id // 🆕 Marcar como renovação de grupo
             });
             
-            // Enviar QR Code
+            // Enviar QR Code (SEM link do grupo)
             if (charge.charge.qrcodeBuffer) {
               await bot.telegram.sendPhoto(
                 member.telegram_id,
@@ -945,15 +1020,15 @@ Após aprovação, você será adicionado automaticamente ao grupo!
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
 ⚠️ *Prazo:* 30 minutos para pagamento
 
-📸 Após pagar, envie o comprovante aqui.
-Após aprovação, você será adicionado automaticamente ao grupo!
+📸 *Após pagar, envie o comprovante aqui.*
+✅ *Após a aprovação, você receberá o link do grupo automaticamente!*
 
 🆔 TXID: ${txid}`,
                   parse_mode: 'Markdown'
                 }
               );
             } else {
-              // Fallback: enviar sem QR Code
+              // Fallback: enviar sem QR Code (SEM link do grupo)
               await bot.telegram.sendMessage(member.telegram_id, `🔄 *RENOVAÇÃO DE ASSINATURA*
 
 ❌ Sua assinatura expirou e você foi removido do grupo.
@@ -970,8 +1045,8 @@ Após aprovação, você será adicionado automaticamente ao grupo!
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
 ⚠️ *Prazo:* 30 minutos para pagamento
 
-📸 Após pagar, envie o comprovante aqui.
-Após aprovação, você será adicionado automaticamente ao grupo!
+📸 *Após pagar, envie o comprovante aqui.*
+✅ *Após a aprovação, você receberá o link do grupo automaticamente!*
 
 🆔 TXID: ${txid}`, {
                 parse_mode: 'Markdown'
@@ -998,14 +1073,112 @@ Use o comando /renovar e faça o pagamento.`, {
         }
         
       } catch (err) {
-        console.error(`❌ [GROUP-CONTROL] Erro ao processar membro expirado ${member.telegram_id}:`, err.message);
+        stats.errors++;
+        
+        // 🆕 LIBERAR LOCK EM CASO DE ERRO
+        try {
+          await releaseProcessingLock(member.id);
+        } catch (unlockErr) {
+          console.error(`❌ [GROUP-CONTROL] Erro ao liberar lock`, {
+            member_id: member.id,
+            error: unlockErr.message
+          });
+        }
+        
+        console.error(`❌ [GROUP-CONTROL] Erro ao processar membro expirado`, {
+          telegram_id: member.telegram_id,
+          error: err.message,
+          stack: err.stack
+        });
       }
     }
     
-    console.log(`✅ [GROUP-CONTROL] Verificação concluída: ${expiring.length} lembretes (3 dias), ${expiringToday.length} lembretes urgentes (hoje), ${expired.length} removidos (após 1 dia)`);
+    // ===== ESTATÍSTICAS FINAIS =====
+    const duration = Date.now() - startTime;
+    console.log(`✅ [GROUP-CONTROL] Verificação concluída`, {
+      timestamp: new Date().toISOString(),
+      duration_ms: duration,
+      stats: {
+        reminders_3_days: stats.reminders_3_days,
+        reminders_urgent: stats.reminders_urgent,
+        removed: stats.removed,
+        errors: stats.errors,
+        skipped_locked: stats.skipped_locked
+      },
+      counts: {
+        expiring_3_days: expiring.length,
+        expiring_today: expiringToday.length,
+        expired_processed: expired.length
+      }
+    });
+    
+    return stats;
     
   } catch (err) {
-    console.error('❌ [GROUP-CONTROL] Erro crítico:', err);
+    const duration = Date.now() - startTime;
+    console.error('❌ [GROUP-CONTROL] Erro crítico', {
+      timestamp: new Date().toISOString(),
+      duration_ms: duration,
+      error: err.message,
+      stack: err.stack
+    });
+    throw err;
+  }
+}
+
+// ===== FUNÇÕES AUXILIARES PARA LOCK DISTRIBUÍDO =====
+
+/**
+ * Adquire lock de processamento para um membro
+ * Retorna true se conseguiu adquirir, false se já está locked
+ */
+async function acquireProcessingLock(memberId) {
+  try {
+    const lockTimeout = new Date(Date.now() + 5 * 60 * 1000); // Lock expira em 5 minutos
+    
+    const { data, error } = await db.supabase
+      .from('group_members')
+      .update({ 
+        processing_lock: lockTimeout.toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', memberId)
+      .or(`processing_lock.is.null,processing_lock.lt.${new Date().toISOString()}`)
+      .select('id');
+    
+    if (error) {
+      console.error(`❌ [LOCK] Erro ao adquirir lock:`, error.message);
+      return false;
+    }
+    
+    // Se retornou dados, conseguiu adquirir o lock
+    return data && data.length > 0;
+    
+  } catch (err) {
+    console.error(`❌ [LOCK] Erro crítico ao adquirir lock:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Libera lock de processamento para um membro
+ */
+async function releaseProcessingLock(memberId) {
+  try {
+    const { error } = await db.supabase
+      .from('group_members')
+      .update({ 
+        processing_lock: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', memberId);
+    
+    if (error) {
+      console.error(`❌ [LOCK] Erro ao liberar lock:`, error.message);
+    }
+    
+  } catch (err) {
+    console.error(`❌ [LOCK] Erro crítico ao liberar lock:`, err.message);
   }
 }
 

@@ -1,0 +1,93 @@
+## 🎯 PRÓXIMOS PASSOS PARA DEPLOY
+
+### 1️⃣ CONFIGURAR NA VERCEL
+
+Acesse: https://vercel.com/seu-usuario/seu-projeto/settings/environment-variables
+
+Adicione a variável:
+```
+CRON_SECRET
+```
+
+**Como gerar o valor:**
+```bash
+# Windows PowerShell
+[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
+
+# Ou use: https://randomkeygen.com/
+```
+
+Salve e faça **Redeploy**
+
+---
+
+### 2️⃣ CONFIGURAR CRON JOB
+
+1. Acesse: https://cron-job.org/en/signup/
+2. Crie conta (gratuito)
+3. Clique em **"Create Cronjob"**
+
+**Configurações:**
+- **Title:** Expire Group Members
+- **URL:** `https://seu-projeto.vercel.app/api/jobs/expire-members`
+- **Schedule:** Every 30 minutes
+- **Method:** POST
+- **Headers:** `x-cron-secret: SEU_CRON_SECRET_AQUI`
+
+Salve e clique em **"Run now"** para testar
+
+---
+
+### 3️⃣ VALIDAR
+
+```bash
+# Testar endpoint
+curl -X POST https://seu-projeto.vercel.app/api/jobs/expire-members \
+  -H "x-cron-secret: SEU_CRON_SECRET"
+
+# Deve retornar algo como:
+# {
+#   "success": true,
+#   "result": {
+#     "removed": 31,
+#     "reminders_3_days": 5,
+#     "reminders_urgent": 2
+#   }
+# }
+```
+
+Aguarde 30 minutos e execute no Supabase:
+
+```sql
+-- Deve retornar 0
+SELECT COUNT(*) FROM group_members
+WHERE status = 'active' AND expires_at < NOW() - INTERVAL '1 day';
+```
+
+---
+
+## ✅ PRONTO!
+
+Sistema funcionando automaticamente:
+- ✅ Lembretes enviados 3 dias antes
+- ✅ Lembretes urgentes no dia
+- ✅ Remoção automática após 1 dia
+- ✅ QR Code de renovação enviado
+
+---
+
+## 🔧 PERMISSÕES DO BOT
+
+**IMPORTANTE:** O bot precisa ser **administrador** do grupo com:
+- ✅ Permissão "Banir usuários"
+
+Para configurar:
+1. Abra o grupo no Telegram
+2. Clique em nome do grupo → Editar
+3. Administradores → Adicionar administrador
+4. Selecione o bot
+5. Ative "Banir usuários"
+
+---
+
+**Dúvidas?** Consulte README.md

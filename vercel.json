@@ -16,6 +16,14 @@
     {
       "src": "api/contrato.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "api/jobs/expire-members.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/jobs/cleanup-expired.js",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
@@ -34,6 +42,16 @@
     {
       "src": "/api/check-contract",
       "dest": "/api/check-contract.js"
+    },
+    {
+      "src": "/api/jobs/expire-members",
+      "dest": "/api/jobs/expire-members.js",
+      "methods": ["POST", "GET"]
+    },
+    {
+      "src": "/api/jobs/cleanup-expired",
+      "dest": "/api/jobs/cleanup-expired.js",
+      "methods": ["POST"]
     }
   ]
 }

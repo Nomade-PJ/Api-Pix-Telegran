@@ -1,0 +1,97 @@
+## ✅ CORREÇÃO APLICADA - LINK APENAS APÓS APROVAÇÃO
+
+### 🔧 O QUE FOI CORRIGIDO:
+
+#### ❌ **ANTES (ERRADO):**
+Quando usuário era removido por não pagar, recebia:
+```
+❌ Você foi removido do grupo.
+💳 Aqui está o QR Code...
+🔗 Link do grupo: [link aqui]  ← ERRADO!
+```
+
+#### ✅ **AGORA (CORRETO):**
+Quando usuário é removido por não pagar, recebe:
+```
+❌ Você foi removido do grupo.
+💳 Aqui está o QR Code...
+📸 Após pagar, envie o comprovante.
+✅ Após a aprovação, você receberá o link do grupo automaticamente!
+```
+
+---
+
+### 🎯 FLUXO COMPLETO AGORA:
+
+#### 1️⃣ **USUÁRIO É REMOVIDO (não pagou):**
+```
+🔄 RENOVAÇÃO DE ASSINATURA
+
+❌ Sua assinatura expirou há X dias e você foi removido do grupo.
+
+👥 Grupo: Privadinho da Val 🛐🔞
+💰 Valor: R$ 59.90
+📅 Duração: 30 dias
+
+🔑 Chave PIX: [chave]
+📋 Cópia & Cola: [payload]
+⏰ VÁLIDO ATÉ: 14:30
+
+📸 Após pagar, envie o comprovante aqui.
+✅ Após a aprovação, você receberá o link do grupo automaticamente!
+
+🆔 TXID: abc123
+```
+**SEM LINK DO GRUPO** ✅
+
+---
+
+#### 2️⃣ **USUÁRIO PAGA E ADMIN APROVA:**
+```
+✅ ASSINATURA APROVADA!
+
+👥 Grupo: Privadinho da Val 🛐🔞
+📅 Acesso válido por: 30 dias
+
+✅ Seu acesso foi liberado!
+
+🔗 Link direto para entrar:
+https://t.me/+xxxxx
+
+Clique no botão abaixo ou no link acima para entrar no grupo:
+
+🆔 TXID: abc123
+```
+**COM LINK DO GRUPO** ✅
+
+---
+
+### 📁 ARQUIVOS CORRIGIDOS:
+
+✅ `api/jobs/cleanup-expired.js` - Limpeza única (29 usuários)
+✅ `src/groupControl.js` - Sistema automático (cron job)
+
+---
+
+### ✅ RESUMO DA CORREÇÃO:
+
+| Momento | Link do Grupo? | Status |
+|---------|---------------|--------|
+| Quando remove (não pagou) | ❌ **NÃO** | ✅ Corrigido |
+| Após aprovar pagamento | ✅ **SIM** | ✅ Correto |
+| Lembrete 3 dias antes | ✅ Sim | ✅ Correto (ainda está no grupo) |
+| Lembrete urgente | ✅ Sim | ✅ Correto (ainda está no grupo) |
+
+---
+
+### 🎯 TUDO PRONTO AGORA!
+
+**Link do grupo é enviado APENAS:**
+- ✅ Nos lembretes (quando ainda está no grupo)
+- ✅ Após aprovar pagamento de renovação
+
+**Link do grupo NÃO é enviado:**
+- ❌ Quando remove por não pagar
+- ❌ Na mensagem de QR Code de renovação
+
+**PERFEITO!** Sistema agora funciona exatamente como você pediu! 🎉

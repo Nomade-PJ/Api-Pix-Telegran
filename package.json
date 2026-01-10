@@ -1,6 +1,6 @@
 {
   "name": "bot-pix-vercel",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Bot Telegram com PIX (modo manual) hospedado na Vercel",
   "main": "src/bot.js",
   "scripts": {
