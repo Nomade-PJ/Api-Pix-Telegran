@@ -1425,31 +1425,47 @@ ${message}`;
           return;
         }
         
-        const discount = parseInt(ctx.message.text.trim());
+        const currentProduct = session.selectedProducts[session.currentDiscountIndex];
+        const originalPrice = parseFloat(currentProduct.price);
         
-        if (isNaN(discount) || discount < 1 || discount > 99) {
-          return ctx.reply('❌ Porcentagem inválida. Use um número entre 1 e 99.\n\nTente novamente:');
+        // Aceitar valor em reais (ex: 5.00, 5, 10.50)
+        const discountValue = parseFloat(ctx.message.text.trim().replace(',', '.'));
+        
+        if (isNaN(discountValue) || discountValue <= 0) {
+          return ctx.reply('❌ Valor inválido. Digite um valor em reais (ex: 5.00, 10.50):');
         }
         
-        const currentProduct = session.selectedProducts[session.currentDiscountIndex];
+        if (discountValue >= originalPrice) {
+          return ctx.reply(`❌ O desconto (R$ ${discountValue.toFixed(2)}) não pode ser maior ou igual ao preço original (R$ ${originalPrice.toFixed(2)}).\n\nDigite um valor menor:`);
+        }
+        
+        // Calcular porcentagem para armazenar no banco
+        const discountPercentage = (discountValue / originalPrice) * 100;
+        const discountedPrice = originalPrice - discountValue;
+        
         const key = `${currentProduct.type}_${currentProduct.id}`;
-        session.productDiscounts[key] = discount;
+        // Armazenar porcentagem (para compatibilidade com o banco)
+        session.productDiscounts[key] = discountPercentage;
+        // Também armazenar valor para exibição
+        if (!session.productDiscountValues) session.productDiscountValues = {};
+        session.productDiscountValues[key] = discountValue;
         
         // Verificar se há mais produtos
         session.currentDiscountIndex++;
         
         if (session.currentDiscountIndex < session.selectedProducts.length) {
           const nextProduct = session.selectedProducts[session.currentDiscountIndex];
-          const discountedPrice = parseFloat(nextProduct.price) * (1 - discount / 100);
           
-          return ctx.reply(`✅ Desconto de ${discount}% definido para ${currentProduct.name}!
+          return ctx.reply(`✅ Desconto de R$ ${discountValue.toFixed(2)} definido para ${currentProduct.name}!
+
+💰 *De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)}* (${discountPercentage.toFixed(1)}% OFF)
 
 📦 *Próximo produto:* ${nextProduct.name}
 💰 *Preço original:* R$ ${parseFloat(nextProduct.price).toFixed(2)}
 
 *Passo ${session.currentDiscountIndex + 1}/${session.selectedProducts.length}*
 
-Digite a *porcentagem de desconto* para este produto (ex: 10, 20, 50):
+Digite o *valor do desconto* em reais (ex: 5.00, 10.50):
 
 _Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
         }
@@ -1465,12 +1481,13 @@ _Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
         
         for (const product of session.selectedProducts) {
           const key = `${product.type}_${product.id}`;
-          const disc = session.productDiscounts[key];
+          const discPercent = session.productDiscounts[key];
+          const discValue = session.productDiscountValues?.[key] || (parseFloat(product.price) * discPercent / 100);
           const originalPrice = parseFloat(product.price);
-          const discountedPrice = originalPrice * (1 - disc / 100);
+          const discountedPrice = originalPrice - discValue;
           
           summary += `• ${product.name}
-  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)
+  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (Desconto de R$ ${discValue.toFixed(2)} - ${discPercent.toFixed(1)}% OFF)
 
 `;
         }
@@ -1545,12 +1562,13 @@ ${session.broadcastMessage}
         
         for (const product of session.selectedProducts) {
           const key = `${product.type}_${product.id}`;
-          const disc = session.productDiscounts[key];
+          const discPercent = session.productDiscounts[key];
+          const discValue = session.productDiscountValues?.[key] || (parseFloat(product.price) * discPercent / 100);
           const originalPrice = parseFloat(product.price);
-          const discountedPrice = originalPrice * (1 - disc / 100);
+          const discountedPrice = originalPrice - discValue;
           
           previewMessage += `• ${product.name}
-  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)
+  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (Desconto de R$ ${discValue.toFixed(2)} - ${discPercent.toFixed(1)}% OFF)
 
 `;
         }
@@ -2006,12 +2024,13 @@ ${session.broadcastMessage}
         
         for (const product of session.selectedProducts) {
           const key = `${product.type}_${product.id}`;
-          const disc = session.productDiscounts[key];
+          const discPercent = session.productDiscounts[key];
+          const discValue = session.productDiscountValues?.[key] || (parseFloat(product.price) * discPercent / 100);
           const originalPrice = parseFloat(product.price);
-          const discountedPrice = originalPrice * (1 - disc / 100);
+          const discountedPrice = originalPrice - discValue;
           
           previewMessage += `• ${product.name}
-  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)
+  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (Desconto de R$ ${discValue.toFixed(2)} - ${discPercent.toFixed(1)}% OFF)
 
 `;
         }

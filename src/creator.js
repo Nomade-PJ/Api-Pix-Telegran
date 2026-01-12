@@ -661,7 +661,9 @@ Selecione os produtos:
 
 *Passo ${session.currentDiscountIndex + 1}/${session.selectedProducts.length}*
 
-Digite a *porcentagem de desconto* para este produto (ex: 10, 20, 50):
+Digite o *valor do desconto* em reais para este produto (ex: 5.00, 10.00, 15.50):
+
+💡 *Dica:* O desconto será aplicado diretamente no valor (ex: R$ 21,90 - R$ 5,00 = R$ 16,90)
 
 _Cancelar: /cancelar_`, {
       parse_mode: 'Markdown',
@@ -1563,18 +1565,19 @@ A promoção foi completamente removida do sistema.`, {
       const productButtons = [];
       for (const product of session.selectedProducts) {
         const key = `${product.type}_${product.id}`;
-        const disc = session.productDiscounts[key];
+        const discPercent = session.productDiscounts[key];
+        const discValue = session.productDiscountValues?.[key] || (parseFloat(product.price) * discPercent / 100);
         const originalPrice = parseFloat(product.price);
-        const discountedPrice = originalPrice * (1 - disc / 100);
+        const discountedPrice = originalPrice - discValue;
         
         if (product.type === 'product') {
           productButtons.push([Markup.button.callback(
-            `🛍️ ${product.name} - R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)`,
+            `🛍️ ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discPercent.toFixed(1)}% OFF)`,
             `buy:${product.id}`
           )]);
         } else {
           productButtons.push([Markup.button.callback(
-            `📸 ${product.name} - R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)`,
+            `📸 ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discPercent.toFixed(1)}% OFF)`,
             `buy_media:${product.id}`
           )]);
         }
