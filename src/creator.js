@@ -1589,65 +1589,114 @@ A promoção foi completamente removida do sistema.`, {
         }
       }
       
-      // Enviar broadcast
-      let success = 0;
-      let failed = 0;
+      // Responder ao usuário imediatamente
+      await ctx.editMessageText(`✅ *PROMOÇÃO INICIADA!*
+
+📨 O broadcast está sendo enviado para ${users.length} usuários...
+
+⏳ Este processo pode levar alguns minutos.
+
+🔔 Você receberá uma notificação quando concluir.`, {
+        parse_mode: 'Markdown'
+      });
       
-      for (const recipient of users) {
+      // Salvar referências necessárias antes do setImmediate
+      const telegram = ctx.telegram;
+      const creatorId = ctx.from.id;
+      
+      // Processar broadcast em background (não bloqueia webhook)
+      setImmediate(async () => {
+        let success = 0;
+        let failed = 0;
+        
         try {
-          // Enviar imagem primeiro (se houver)
-          if (session.imageFileId) {
-            await ctx.telegram.sendPhoto(recipient.telegram_id, session.imageFileId, {
-              caption: message,
-              parse_mode: 'Markdown',
-              reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
-            });
-          } else {
-            // Se não tiver imagem, enviar apenas mensagem com produtos
-            await ctx.telegram.sendMessage(recipient.telegram_id, message, {
-              parse_mode: 'Markdown',
-              reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
-            });
+          for (const recipient of users) {
+            try {
+              // Enviar imagem primeiro (se houver)
+              if (session.imageFileId) {
+                await telegram.sendPhoto(recipient.telegram_id, session.imageFileId, {
+                  caption: message,
+                  parse_mode: 'Markdown',
+                  reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
+                });
+              } else {
+                // Se não tiver imagem, enviar apenas mensagem com produtos
+                await telegram.sendMessage(recipient.telegram_id, message, {
+                  parse_mode: 'Markdown',
+                  reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
+                });
+              }
+              success++;
+              
+              await new Promise(resolve => setTimeout(resolve, 50));
+              
+            } catch (err) {
+              failed++;
+              // Não logar como erro se for um caso esperado (comportamento normal)
+              const errorMessage = err.message || '';
+              const isExpectedError = 
+                errorMessage.includes('bot was blocked by the user') ||
+                errorMessage.includes('user is deactivated') ||
+                errorMessage.includes('chat not found') ||
+                errorMessage.includes('user not found') ||
+                errorMessage.includes('chat_id is empty') ||
+                errorMessage.includes('bot was blocked') ||
+                errorMessage.includes('chat_not_found');
+              
+              if (!isExpectedError) {
+                // Logar apenas erros reais (não relacionados a usuários inativos)
+                console.error(`❌ [BPC-BROADCAST] Erro inesperado ao enviar para ${recipient.telegram_id}:`, err.message);
+                console.error(`❌ [BPC-BROADCAST] Código de erro:`, err.code);
+              }
+            }
           }
-          success++;
           
-          await new Promise(resolve => setTimeout(resolve, 50));
+          // Atualizar campanha
+          if (campaign) {
+            await db.supabase
+              .from('broadcast_campaigns')
+              .update({
+                sent_count: success,
+                failed_count: failed,
+                status: 'sent',
+                sent_at: new Date().toISOString()
+              })
+              .eq('id', campaign.id);
+          }
           
-        } catch (err) {
-          failed++;
-          // Não logar como erro se for um caso esperado (comportamento normal)
-          const errorMessage = err.message || '';
-          const isExpectedError = 
-            errorMessage.includes('bot was blocked by the user') ||
-            errorMessage.includes('user is deactivated') ||
-            errorMessage.includes('chat not found') ||
-            errorMessage.includes('user not found') ||
-            errorMessage.includes('chat_id is empty') ||
-            errorMessage.includes('bot was blocked') ||
-            errorMessage.includes('chat_not_found');
+          // Notificar criador do resultado
+          try {
+            await telegram.sendMessage(creatorId, `✅ *BROADCAST CONCLUÍDO!*
+
+📊 *Resultado:*
+✅ Enviados: ${success}
+❌ Falhas: ${failed}
+
+📨 Total processado: ${users.length} usuários
+
+🎉 Promoção enviada com sucesso!`, {
+              parse_mode: 'Markdown'
+            });
+          } catch (notifyErr) {
+            console.error('Erro ao notificar criador:', notifyErr.message);
+          }
           
-          if (!isExpectedError) {
-            // Logar apenas erros reais (não relacionados a usuários inativos)
-            console.error(`❌ [BPC-BROADCAST] Erro inesperado ao enviar para ${recipient.telegram_id}:`, err.message);
-            console.error(`❌ [BPC-BROADCAST] Código de erro:`, err.code);
+          delete global._SESSIONS[creatorId];
+        } catch (backgroundErr) {
+          console.error('❌ [BPC-BROADCAST] Erro no processamento em background:', backgroundErr);
+          try {
+            await telegram.sendMessage(creatorId, `❌ *ERRO NO BROADCAST*
+
+⚠️ Ocorreu um erro durante o envio.
+
+Tente novamente ou verifique os logs.`, {
+              parse_mode: 'Markdown'
+            });
+          } catch (notifyErr) {
+            console.error('Erro ao notificar criador do erro:', notifyErr.message);
           }
         }
-      }
-      
-      // Atualizar campanha
-      if (campaign) {
-        await db.supabase
-          .from('broadcast_campaigns')
-          .update({
-            sent_count: success,
-            failed_count: failed,
-            status: 'sent',
-            sent_at: new Date().toISOString()
-          })
-          .eq('id', campaign.id);
-      }
-      
-      delete global._SESSIONS[ctx.from.id];
+      });
       
       let resultMessage = `✅ *PROMOÇÃO ENVIADA COM SUCESSO!*
 
