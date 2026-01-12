@@ -1829,28 +1829,18 @@ Clique no botão abaixo para renovar:`, {
           .single();
         
         if (!autoCouponError && autoCoupon) {
-          // Encontrou cupom de broadcast! Verificar se o usuário recebeu alguma campanha recente
-          // Buscar campanhas enviadas recentemente (últimas 30 dias)
-          const thirtyDaysAgo = new Date();
-          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          
-          const { data: recentCampaigns, error: campaignsError } = await db.supabase
-            .from('broadcast_campaigns')
-            .select('id')
-            .eq('status', 'sent')
-            .gte('sent_at', thirtyDaysAgo.toISOString())
-            .order('created_at', { ascending: false })
-            .limit(10);
-          
-          if (!campaignsError && recentCampaigns && recentCampaigns.length > 0) {
-            const campaignIds = recentCampaigns.map(c => c.id);
+          // Encontrou cupom de broadcast! Extrair campaign_id do código do cupom
+          // Formato: BROADCAST_{campaign_id}_{product_id}
+          const codeParts = autoCoupon.code.split('_');
+          if (codeParts.length >= 2 && codeParts[0] === 'BROADCAST') {
+            const campaignId = codeParts[1];
             
-            // Verificar se o usuário recebeu alguma dessas campanhas
+            // Verificar se o usuário recebeu essa campanha específica
             const { data: recipient, error: recipientError } = await db.supabase
               .from('broadcast_recipients')
               .select('broadcast_campaign_id')
               .eq('telegram_id', ctx.from.id)
-              .in('broadcast_campaign_id', campaignIds)
+              .eq('broadcast_campaign_id', campaignId)
               .limit(1)
               .single();
             
@@ -1859,7 +1849,9 @@ Clique no botão abaixo para renovar:`, {
               finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
               appliedCoupon = autoCoupon;
               
-              console.log(`🎁 [BUY] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast)`);
+              console.log(`🎁 [BUY] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast ${campaignId})`);
+            } else {
+              console.log(`ℹ️ [BUY] Usuário ${ctx.from.id} não recebeu o broadcast ${campaignId} - sem desconto`);
             }
           }
         }
@@ -2098,28 +2090,18 @@ Esta transação foi cancelada automaticamente.
           .single();
         
         if (!autoCouponError && autoCoupon) {
-          // Encontrou cupom de broadcast! Verificar se o usuário recebeu alguma campanha recente
-          // Buscar campanhas enviadas recentemente (últimas 30 dias)
-          const thirtyDaysAgo = new Date();
-          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          
-          const { data: recentCampaigns, error: campaignsError } = await db.supabase
-            .from('broadcast_campaigns')
-            .select('id')
-            .eq('status', 'sent')
-            .gte('sent_at', thirtyDaysAgo.toISOString())
-            .order('created_at', { ascending: false })
-            .limit(10);
-          
-          if (!campaignsError && recentCampaigns && recentCampaigns.length > 0) {
-            const campaignIds = recentCampaigns.map(c => c.id);
+          // Encontrou cupom de broadcast! Extrair campaign_id do código do cupom
+          // Formato: BROADCAST_{campaign_id}_{pack_id}
+          const codeParts = autoCoupon.code.split('_');
+          if (codeParts.length >= 2 && codeParts[0] === 'BROADCAST') {
+            const campaignId = codeParts[1];
             
-            // Verificar se o usuário recebeu alguma dessas campanhas
+            // Verificar se o usuário recebeu essa campanha específica
             const { data: recipient, error: recipientError } = await db.supabase
               .from('broadcast_recipients')
               .select('broadcast_campaign_id')
               .eq('telegram_id', ctx.from.id)
-              .in('broadcast_campaign_id', campaignIds)
+              .eq('broadcast_campaign_id', campaignId)
               .limit(1)
               .single();
             
@@ -2128,7 +2110,9 @@ Esta transação foi cancelada automaticamente.
               finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
               appliedPackCoupon = autoCoupon;
               
-              console.log(`🎁 [BUY-MEDIA] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast)`);
+              console.log(`🎁 [BUY-MEDIA] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast ${campaignId})`);
+            } else {
+              console.log(`ℹ️ [BUY-MEDIA] Usuário ${ctx.from.id} não recebeu o broadcast ${campaignId} - sem desconto`);
             }
           }
         }
