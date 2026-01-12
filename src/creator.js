@@ -1479,17 +1479,17 @@ A promoção foi completamente removida do sistema.`, {
       const user = await db.getOrCreateUser(ctx.from);
       const message = session.broadcastMessage;
       
-      // Buscar usuários desbloqueados
-      const users = await db.getActiveBuyers();
+      // Buscar todos os usuários desbloqueados
+      const users = await db.getAllUnblockedUsers();
       
       if (users.length === 0) {
         delete global._SESSIONS[ctx.from.id];
-        return ctx.reply('❌ Nenhum comprador ativo encontrado.');
+        return ctx.reply('❌ Nenhum usuário desbloqueado encontrado.');
       }
       
       await ctx.editMessageText(`🎁 *ENVIANDO PROMOÇÃO...*
 
-📨 Preparando envio para ${users.length} compradores ativos...
+📨 Preparando envio para ${users.length} usuários desbloqueados...
 
 ⏳ Aguarde...`, {
         parse_mode: 'Markdown'
@@ -1619,11 +1619,14 @@ A promoção foi completamente removida do sistema.`, {
             errorMessage.includes('user is deactivated') ||
             errorMessage.includes('chat not found') ||
             errorMessage.includes('user not found') ||
-            errorMessage.includes('chat_id is empty');
+            errorMessage.includes('chat_id is empty') ||
+            errorMessage.includes('bot was blocked') ||
+            errorMessage.includes('chat_not_found');
           
           if (!isExpectedError) {
             // Logar apenas erros reais (não relacionados a usuários inativos)
-            console.error(`❌ [BPC-BROADCAST] Erro ao enviar para ${recipient.telegram_id}:`, err.message);
+            console.error(`❌ [BPC-BROADCAST] Erro inesperado ao enviar para ${recipient.telegram_id}:`, err.message);
+            console.error(`❌ [BPC-BROADCAST] Código de erro:`, err.code);
           }
         }
       }

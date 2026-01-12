@@ -1451,6 +1451,29 @@ async function getActiveBuyers() {
   }
 }
 
+// Buscar todos os usuários desbloqueados (para broadcast)
+async function getAllUnblockedUsers() {
+  try {
+    console.log('🔍 [DB] Buscando todos os usuários desbloqueados...');
+    
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('telegram_id, first_name, username, is_blocked')
+      .eq('is_blocked', false);
+    
+    if (error) {
+      console.error('❌ [DB] Erro ao buscar usuários desbloqueados:', error);
+      throw error;
+    }
+    
+    console.log(`✅ [DB] ${users?.length || 0} usuários desbloqueados encontrados`);
+    return users || [];
+  } catch (err) {
+    console.error('❌ [DB] Erro ao buscar usuários desbloqueados:', err.message);
+    return [];
+  }
+}
+
 async function getAllAdmins() {
   try {
     console.log('🔍 [DB] Buscando admins na tabela users...');
@@ -3663,6 +3686,7 @@ module.exports = {
   setUserAsCreator,
   getRecentUsers,
   getActiveBuyers,
+  getAllUnblockedUsers,
   getAllAdmins,
   getProduct,
   getAllProducts,
