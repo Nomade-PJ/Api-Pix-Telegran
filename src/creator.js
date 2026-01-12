@@ -37,6 +37,7 @@ function registerCreatorCommands(bot) {
 
 💳 *Transações Aprovadas:* ${stats.totalTransactions}
 ⏳ *Pendentes:* ${pendingCount}
+📅 *Este Mês:* R$ ${parseFloat(stats.monthSales || 0).toFixed(2)}
 💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
 
 📅 *Hoje:*
@@ -82,10 +83,12 @@ Selecione uma opção abaixo:`;
 
 💰 *FINANCEIRO*
 • Total Vendido: R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
+• Este Mês: R$ ${parseFloat(stats.monthSales || 0).toFixed(2)}
 • Hoje: R$ ${parseFloat(stats.todaySales || 0).toFixed(2)}
 
 📅 *PERÍODO*
 • Transações Hoje: ${stats.todayTransactions || 0}
+• Transações Este Mês: ${stats.monthTransactions || 0}
 
 🔄 *Atualização:* Automática em tempo real
 📅 *Última atualização:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
@@ -95,6 +98,7 @@ Selecione uma opção abaixo:`;
       return ctx.editMessageText(message, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
+          [Markup.button.callback('📅 Ver Mês Anterior', 'creator_stats_prev_month')],
           [Markup.button.callback('🔄 Atualizar', 'creator_stats')],
           [Markup.button.callback('🔙 Voltar', 'creator_refresh')]
         ])
@@ -103,6 +107,45 @@ Selecione uma opção abaixo:`;
     } catch (err) {
       console.error('Erro ao buscar estatísticas:', err);
       return ctx.reply('❌ Erro ao buscar estatísticas.');
+    }
+  });
+  
+  // ===== ESTATÍSTICAS DO MÊS ANTERIOR =====
+  bot.action('creator_stats_prev_month', async (ctx) => {
+    await ctx.answerCbQuery('📅 Carregando mês anterior...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+    
+    try {
+      const stats = await db.getCreatorStats();
+      
+      const message = `📊 *ESTATÍSTICAS - MÊS ANTERIOR*
+
+💰 *VENDAS*
+• Total do Mês Anterior: R$ ${parseFloat(stats.prevMonthSales || 0).toFixed(2)}
+
+📦 *TRANSAÇÕES*
+• Total de Transações: ${stats.prevMonthTransactions || 0}
+
+📅 *PERÍODO*
+• Mês anterior (completo)
+
+🔄 *Atualização:* Automática em tempo real
+📅 *Última atualização:* ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+
+⏰ *Atualizado:* ${new Date().toLocaleString('pt-BR')}`;
+
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('📊 Ver Estatísticas Gerais', 'creator_stats')],
+          [Markup.button.callback('🔙 Voltar', 'creator_refresh')]
+        ])
+      });
+      
+    } catch (err) {
+      console.error('Erro ao buscar estatísticas do mês anterior:', err);
+      return ctx.reply('❌ Erro ao buscar estatísticas do mês anterior.');
     }
   });
   
@@ -124,16 +167,14 @@ Selecione uma opção abaixo:`;
 
 *Criar nova promoção:*
 
-1️⃣ *Simples* - Mensagem para todos
-2️⃣ *Com Produto* - Associar produto
-3️⃣ *Produto + Cupom* - Desconto automático
+1️⃣ *Com Produto* - Associar produto
+2️⃣ *Produto + Cupom* - Desconto automático
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 *Gerenciar promoções ativas:*`;
 
       const buttons = [
-        [Markup.button.callback('📣 Simples', 'creator_broadcast_simple')],
         [Markup.button.callback('🛍️ Com Produto', 'creator_broadcast_product')],
         [Markup.button.callback('🎁 Produto + Cupom', 'creator_broadcast_product_coupon')],
         [Markup.button.callback('🗑️ Deletar Promoções', 'creator_delete_promotions')],
@@ -1444,7 +1485,7 @@ A promoção foi completamente removida do sistema.`, {
         return ctx.reply('❌ Nenhum comprador ativo encontrado.');
       }
       
-      await ctx.editMessageText(`🎁 *CRIANDO CUPONS E ENVIANDO...*
+      await ctx.editMessageText(`🎁 *ENVIANDO PROMOÇÃO...*
 
 📨 Preparando envio para ${users.length} compradores ativos...
 
@@ -1452,16 +1493,33 @@ A promoção foi completamente removida do sistema.`, {
         parse_mode: 'Markdown'
       });
       
-      // Criar cupons automáticos para cada produto
-      const createdCoupons = [];
+      // Criar cupons automáticos para cada produto (apenas para quem recebeu)
       const broadcastCouponIds = [];
       
+      // Salvar campanha de broadcast primeiro para ter o ID
+      const { data: campaign, error: campaignError } = await db.supabase
+        .from('broadcast_campaigns')
+        .insert([{
+          name: `Promoção ${new Date().toLocaleDateString('pt-BR')}`,
+          message: message,
+          target_audience: 'all',
+          status: 'sending',
+          created_by: user.id
+        }])
+        .select()
+        .single();
+      
+      if (campaignError) {
+        console.error('Erro ao salvar campanha:', campaignError);
+      }
+      
+      // Criar cupons automáticos para cada produto (relacionados à campanha)
       for (const product of session.selectedProducts) {
         const key = `${product.type}_${product.id}`;
         const discount = session.productDiscounts[key];
         
-        // Criar cupom automático para broadcast
-        const autoCouponCode = `AUTO_${session.couponCode}_${product.id}`;
+        // Criar cupom automático para broadcast (sem código manual)
+        const autoCouponCode = `BROADCAST_${campaign?.id || Date.now()}_${product.id}`;
         
         const { data: autoCoupon, error: autoCouponError } = await db.supabase
           .from('coupons')
@@ -1483,44 +1541,6 @@ A promoção foi completamente removida do sistema.`, {
         }
         
         broadcastCouponIds.push(autoCoupon.id);
-        
-        // Criar cupom manual para novos usuários
-        const { data: manualCoupon, error: manualCouponError } = await db.supabase
-          .from('coupons')
-          .insert([{
-            code: session.couponCode,
-            discount_percentage: discount,
-            product_id: product.type === 'product' ? product.id : null,
-            media_pack_id: product.type === 'pack' ? product.id : null,
-            is_active: true,
-            is_broadcast_coupon: false,
-            created_by: user.id
-          }])
-          .select()
-          .single();
-        
-        if (manualCouponError) {
-          console.error('Erro ao criar cupom manual:', manualCouponError);
-        } else {
-          createdCoupons.push(manualCoupon);
-        }
-      }
-      
-      // Salvar campanha de broadcast
-      const { data: campaign, error: campaignError } = await db.supabase
-        .from('broadcast_campaigns')
-        .insert([{
-          name: `Broadcast + Cupom ${new Date().toLocaleDateString('pt-BR')}`,
-          message: message,
-          target_audience: 'all',
-          status: 'sending',
-          created_by: user.id
-        }])
-        .select()
-        .single();
-      
-      if (campaignError) {
-        console.error('Erro ao salvar campanha:', campaignError);
       }
       
       // Registrar usuários que receberão o broadcast
@@ -1539,23 +1559,47 @@ A promoção foi completamente removida do sistema.`, {
           .catch(err => console.error('Erro ao registrar destinatários:', err));
       }
       
+      // Preparar mensagem com produtos em botões
+      const productButtons = [];
+      for (const product of session.selectedProducts) {
+        const key = `${product.type}_${product.id}`;
+        const disc = session.productDiscounts[key];
+        const originalPrice = parseFloat(product.price);
+        const discountedPrice = originalPrice * (1 - disc / 100);
+        
+        if (product.type === 'product') {
+          productButtons.push([Markup.button.callback(
+            `🛍️ ${product.name} - R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)`,
+            `buy:${product.id}`
+          )]);
+        } else {
+          productButtons.push([Markup.button.callback(
+            `📸 ${product.name} - R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)`,
+            `buy_media:${product.id}`
+          )]);
+        }
+      }
+      
       // Enviar broadcast
       let success = 0;
       let failed = 0;
       
       for (const recipient of users) {
         try {
-          // Adicionar cupom copiável na mensagem
-          const messageWithCoupon = `${message}
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-🎟️ *Cupom:* \`${session.couponCode}\`
-_(Toque para copiar)_`;
-          
-          await ctx.telegram.sendMessage(recipient.telegram_id, messageWithCoupon, {
-            parse_mode: 'Markdown'
-          });
+          // Enviar imagem primeiro (se houver)
+          if (session.imageFileId) {
+            await ctx.telegram.sendPhoto(recipient.telegram_id, session.imageFileId, {
+              caption: message,
+              parse_mode: 'Markdown',
+              reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
+            });
+          } else {
+            // Se não tiver imagem, enviar apenas mensagem com produtos
+            await ctx.telegram.sendMessage(recipient.telegram_id, message, {
+              parse_mode: 'Markdown',
+              reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
+            });
+          }
           success++;
           
           await new Promise(resolve => setTimeout(resolve, 50));
@@ -1593,14 +1637,12 @@ _(Toque para copiar)_`;
       
       delete global._SESSIONS[ctx.from.id];
       
-      let resultMessage = `✅ *BROADCAST + CUPOM CONCLUÍDO!*
+      let resultMessage = `✅ *PROMOÇÃO ENVIADA COM SUCESSO!*
 
 📊 *Estatísticas:*
 ✅ Enviados: ${success}
 ❌ Falhas: ${failed}
 📝 Total: ${users.length}
-
-🎟️ *Cupom criado:* \`${session.couponCode}\`
 
 📦 *Produtos com desconto:*
 
@@ -1616,10 +1658,9 @@ _(Toque para copiar)_`;
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-✅ *Usuários que receberam:* Desconto aplicado automaticamente
-🎟️ *Novos usuários:* Podem usar o cupom \`${session.couponCode}\`
+✅ *Usuários que receberam:* Verão o preço com desconto automaticamente ao clicar no produto
 
-_Broadcast enviado com sucesso!_`;
+_Promoção enviada com sucesso!_`;
       
       return ctx.editMessageText(resultMessage, {
         parse_mode: 'Markdown',
@@ -1656,6 +1697,7 @@ _Broadcast enviado com sucesso!_`;
 
 💳 *Transações Aprovadas:* ${stats.totalTransactions}
 ⏳ *Pendentes:* ${pendingCount}
+📅 *Este Mês:* R$ ${parseFloat(stats.monthSales || 0).toFixed(2)}
 💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
 
 📅 *Hoje:*

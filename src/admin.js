@@ -409,8 +409,7 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('📊 Estatísticas', 'admin_stats')
       ],
         [
-          Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos'),
-          Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
+          Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos')
         ],
       [
         Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),
@@ -1455,8 +1454,8 @@ Digite a *porcentagem de desconto* para este produto (ex: 10, 20, 50):
 _Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
         }
         
-        // Todos os descontos definidos, pedir código do cupom
-        session.step = 'coupon_code';
+        // Todos os descontos definidos, pedir mensagem persuasiva
+        session.step = 'message';
         
         let summary = `✅ *DESCONTOS DEFINIDOS!*
 
@@ -1478,62 +1477,19 @@ _Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
         
         summary += `━━━━━━━━━━━━━━━━━━━━━━━━
 
-Agora digite o *código do cupom* que os novos usuários poderão usar:
+Agora escreva a *mensagem persuasiva* para chamar atenção dos clientes:
 
-💡 *Exemplo:* BLACKFRIDAY, NATAL20, PROMO50
+💡 *Dica:* Use uma mensagem atrativa que destaque os descontos e incentive a compra!
+
+*Exemplo:*
+"🔥 *PROMOÇÃO IMPERDÍVEL!*
+
+Aproveite agora mesmo descontos exclusivos!
+Não perca essa oportunidade única! 🎉"
 
 _Cancelar: /cancelar_`;
         
         return ctx.reply(summary, { parse_mode: 'Markdown' });
-      }
-      
-      // Verificar se é broadcast + produto + cupom - definindo código do cupom
-      if (session.type === 'creator_broadcast_product_coupon' && session.step === 'coupon_code') {
-        const isCreator = await db.isUserCreator(ctx.from.id);
-        if (!isCreator) {
-          delete global._SESSIONS[ctx.from.id];
-          return;
-        }
-        
-        const code = ctx.message.text.trim().toUpperCase();
-        
-        // Validar código
-        if (code.length < 3 || code.length > 20) {
-          return ctx.reply('❌ Código inválido. Use entre 3 e 20 caracteres.\n\nTente novamente:');
-        }
-        
-        // Verificar se código já existe
-        const { data: existingCoupon } = await db.supabase
-          .from('coupons')
-          .select('code')
-          .eq('code', code)
-          .single();
-        
-        if (existingCoupon) {
-          return ctx.reply('❌ Este código já está em uso. Escolha outro:');
-        }
-        
-        session.couponCode = code;
-        session.step = 'message';
-        
-        return ctx.reply(`✅ Cupom: \`${code}\`
-
-📝 Agora escreva a *mensagem do broadcast*:
-
-💡 *Dica:* Mencione os produtos e descontos na mensagem!
-
-*Exemplo:*
-"🔥 *PROMOÇÃO ESPECIAL!*
-
-Aproveite descontos incríveis:
-• Produto 1 com 20% OFF
-• Produto 2 com 30% OFF
-
-Use o cupom \`${code}\` para garantir seu desconto!
-
-Válido por tempo limitado! 🎉"
-
-_Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
       }
       
       // Verificar se é broadcast + produto + cupom - mensagem
@@ -1546,14 +1502,40 @@ _Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
         
         const message = ctx.message.text;
         
-        // Preparar confirmação
-        session.step = 'confirm';
+        // Salvar mensagem e pedir imagem
         session.broadcastMessage = message;
+        session.step = 'image';
         
-        let previewMessage = `🎁 *CONFIRMAR BROADCAST + PRODUTO + CUPOM*
+        return ctx.reply(`✅ *Mensagem salva!*
+
+📝 *Sua mensagem:*
+${message.substring(0, 100)}${message.length > 100 ? '...' : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📸 Agora envie uma *imagem* para acompanhar a promoção:
+
+💡 *Dica:* Pode ser uma imagem atrativa do produto, banner promocional, etc.
+
+_Envie a foto agora ou digite /pular para continuar sem imagem_
+_Cancelar: /cancelar_`, { parse_mode: 'Markdown' });
+      }
+      
+      // Handler para pular imagem
+      if (ctx.message.text === '/pular' && session.type === 'creator_broadcast_product_coupon' && session.step === 'image') {
+        const isCreator = await db.isUserCreator(ctx.from.id);
+        if (!isCreator) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+        
+        session.imageFileId = null;
+        session.step = 'confirm';
+        
+        let previewMessage = `🎁 *CONFIRMAR BROADCAST + PRODUTO + DESCONTO*
 
 *Mensagem:*
-${message}
+${session.broadcastMessage}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1573,17 +1555,12 @@ ${message}
 `;
         }
         
-        previewMessage += `🎟️ *Cupom:* \`${session.couponCode}\`
-
-━━━━━━━━━━━━━━━━━━━━━━━━
+        previewMessage += `━━━━━━━━━━━━━━━━━━━━━━━━
 
 ✅ *Usuários que recebem o broadcast:*
-   Verão o preço com desconto automaticamente
+   Verão o preço com desconto automaticamente ao clicar no produto
 
-🎟️ *Novos usuários:*
-   Poderão usar o cupom \`${session.couponCode}\`
-
-⚠️ *Esta mensagem será enviada para TODOS os usuários desbloqueados.*
+⚠️ *Esta promoção será enviada apenas para usuários desbloqueados e ativos.*
 
 Deseja continuar?`;
         
@@ -1989,6 +1966,81 @@ O botão "🔞 Grupo Privado 🔞" aparecerá no menu principal!`, {
     }
   });
   
+  // ===== HANDLER DE FOTOS (PARA BROADCAST) =====
+  bot.on('photo', async (ctx, next) => {
+    try {
+      const isCreator = await db.isUserCreator(ctx.from.id);
+      
+      if (!isCreator) {
+        return next();
+      }
+      
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      
+      // Verificar se é broadcast + produto + cupom - imagem
+      if (session && session.type === 'creator_broadcast_product_coupon' && session.step === 'image') {
+        // Pegar a foto de maior qualidade (última do array)
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const photoFileId = photo.file_id;
+        
+        // Salvar file_id da imagem
+        session.imageFileId = photoFileId;
+        session.step = 'confirm';
+        
+        // Preparar confirmação
+        const { Markup } = require('telegraf');
+        
+        let previewMessage = `🎁 *CONFIRMAR BROADCAST + PRODUTO + DESCONTO*
+
+*Mensagem:*
+${session.broadcastMessage}
+
+📸 *Imagem:* Anexada
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 *Produtos com desconto:*
+
+`;
+        
+        for (const product of session.selectedProducts) {
+          const key = `${product.type}_${product.id}`;
+          const disc = session.productDiscounts[key];
+          const originalPrice = parseFloat(product.price);
+          const discountedPrice = originalPrice * (1 - disc / 100);
+          
+          previewMessage += `• ${product.name}
+  💰 De R$ ${originalPrice.toFixed(2)} por R$ ${discountedPrice.toFixed(2)} (${disc}% OFF)
+
+`;
+        }
+        
+        previewMessage += `━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ *Usuários que recebem o broadcast:*
+   Verão o preço com desconto automaticamente ao clicar no produto
+
+⚠️ *Esta promoção será enviada apenas para usuários desbloqueados e ativos.*
+
+Deseja continuar?`;
+        
+        return ctx.reply(previewMessage, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Confirmar e Enviar', 'confirm_bpc_broadcast')],
+            [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
+          ])
+        });
+      }
+      
+      return next();
+    } catch (err) {
+      console.error('Erro ao processar foto:', err);
+      return next();
+    }
+  });
+  
   // ===== HANDLER DE ARQUIVOS (PARA UPLOAD) =====
   bot.on('document', async (ctx, next) => {
     console.log(`📄 [DOCUMENT-ADMIN] ========== HANDLER ADMIN.JS EXECUTADO ==========`);
@@ -2185,8 +2237,7 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('📊 Estatísticas', 'admin_stats')
       ],
       [
-        Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos'),
-        Markup.button.callback('➕ Novo Produto', 'admin_novoproduto')
+        Markup.button.callback('🛍️ Ver Produtos', 'admin_produtos')
       ],
       [
         Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),

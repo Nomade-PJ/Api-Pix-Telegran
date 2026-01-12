@@ -1812,35 +1812,51 @@ Clique no botão abaixo para renovar:`, {
       let appliedCoupon = null;
       
       try {
-        // PRIORIDADE 1: Verificar se há campanha ativa com cupom para este produto
-        // Se houver, aplicar desconto automaticamente para TODOS (sem perguntar)
-        const { data: activeCampaign, error: campaignError } = await db.supabase
-          .from('broadcast_campaigns')
-          .select('id, coupon_code, product_id')
+        // PRIORIDADE 1: Verificar se há cupom ativo de broadcast para este produto
+        // Aplicar desconto apenas se o usuário recebeu o broadcast
+        const { data: autoCoupon, error: autoCouponError } = await db.supabase
+          .from('coupons')
+          .select('*')
           .eq('product_id', productId)
-          .not('coupon_code', 'is', null)
+          .eq('is_active', true)
+          .eq('is_broadcast_coupon', true)
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
         
-        if (!campaignError && activeCampaign) {
-          // Encontrou campanha ativa! Buscar cupom automático relacionado
-          const { data: autoCoupon, error: autoCouponError } = await db.supabase
-            .from('coupons')
-            .select('*')
-            .eq('product_id', productId)
-            .eq('is_active', true)
-            .eq('is_broadcast_coupon', true)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
+        if (!autoCouponError && autoCoupon) {
+          // Encontrou cupom de broadcast! Verificar se o usuário recebeu alguma campanha recente
+          // Buscar campanhas enviadas recentemente (últimas 30 dias)
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
           
-          if (!autoCouponError && autoCoupon) {
-            // Aplicar desconto automático para TODOS (promoção ativa)
-            finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
-            appliedCoupon = autoCoupon;
+          const { data: recentCampaigns, error: campaignsError } = await db.supabase
+            .from('broadcast_campaigns')
+            .select('id')
+            .eq('status', 'sent')
+            .gte('sent_at', thirtyDaysAgo.toISOString())
+            .order('created_at', { ascending: false })
+            .limit(10);
+          
+          if (!campaignsError && recentCampaigns && recentCampaigns.length > 0) {
+            const campaignIds = recentCampaigns.map(c => c.id);
             
-            console.log(`🎁 [BUY] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado automaticamente para ${ctx.from.id}`);
+            // Verificar se o usuário recebeu alguma dessas campanhas
+            const { data: recipient, error: recipientError } = await db.supabase
+              .from('broadcast_recipients')
+              .select('broadcast_campaign_id')
+              .eq('telegram_id', ctx.from.id)
+              .in('broadcast_campaign_id', campaignIds)
+              .limit(1)
+              .single();
+            
+            if (!recipientError && recipient) {
+              // Usuário recebeu o broadcast! Aplicar desconto
+              finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
+              appliedCoupon = autoCoupon;
+              
+              console.log(`🎁 [BUY] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast)`);
+            }
           }
         }
         
@@ -2065,35 +2081,51 @@ Esta transação foi cancelada automaticamente.
       let appliedPackCoupon = null;
       
       try {
-        // PRIORIDADE 1: Verificar se há campanha ativa com cupom para este pack
-        // Se houver, aplicar desconto automaticamente para TODOS (sem perguntar)
-        const { data: activeCampaign, error: campaignError } = await db.supabase
-          .from('broadcast_campaigns')
-          .select('id, coupon_code, media_pack_id')
+        // PRIORIDADE 1: Verificar se há cupom ativo de broadcast para este pack
+        // Aplicar desconto apenas se o usuário recebeu o broadcast
+        const { data: autoCoupon, error: autoCouponError } = await db.supabase
+          .from('coupons')
+          .select('*')
           .eq('media_pack_id', packId)
-          .not('coupon_code', 'is', null)
+          .eq('is_active', true)
+          .eq('is_broadcast_coupon', true)
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
         
-        if (!campaignError && activeCampaign) {
-          // Encontrou campanha ativa! Buscar cupom automático relacionado
-          const { data: autoCoupon, error: autoCouponError } = await db.supabase
-            .from('coupons')
-            .select('*')
-            .eq('media_pack_id', packId)
-            .eq('is_active', true)
-            .eq('is_broadcast_coupon', true)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
+        if (!autoCouponError && autoCoupon) {
+          // Encontrou cupom de broadcast! Verificar se o usuário recebeu alguma campanha recente
+          // Buscar campanhas enviadas recentemente (últimas 30 dias)
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
           
-          if (!autoCouponError && autoCoupon) {
-            // Aplicar desconto automático para TODOS (promoção ativa)
-            finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
-            appliedPackCoupon = autoCoupon;
+          const { data: recentCampaigns, error: campaignsError } = await db.supabase
+            .from('broadcast_campaigns')
+            .select('id')
+            .eq('status', 'sent')
+            .gte('sent_at', thirtyDaysAgo.toISOString())
+            .order('created_at', { ascending: false })
+            .limit(10);
+          
+          if (!campaignsError && recentCampaigns && recentCampaigns.length > 0) {
+            const campaignIds = recentCampaigns.map(c => c.id);
             
-            console.log(`🎁 [BUY-MEDIA] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado automaticamente para ${ctx.from.id}`);
+            // Verificar se o usuário recebeu alguma dessas campanhas
+            const { data: recipient, error: recipientError } = await db.supabase
+              .from('broadcast_recipients')
+              .select('broadcast_campaign_id')
+              .eq('telegram_id', ctx.from.id)
+              .in('broadcast_campaign_id', campaignIds)
+              .limit(1)
+              .single();
+            
+            if (!recipientError && recipient) {
+              // Usuário recebeu o broadcast! Aplicar desconto
+              finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
+              appliedPackCoupon = autoCoupon;
+              
+              console.log(`🎁 [BUY-MEDIA] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast)`);
+            }
           }
         }
       } catch (err) {

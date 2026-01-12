@@ -1092,6 +1092,61 @@ function getTodayStartBrasil() {
   return utcMidnight.toISOString();
 }
 
+// Função para obter início do mês atual em Brasília
+function getMonthStartBrasil() {
+  const now = new Date();
+  
+  // Obter componentes da data atual no timezone de Brasília
+  const brasilDateStr = now.toLocaleString('pt-BR', { 
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  
+  // Formato: "DD/MM/YYYY"
+  const [day, month, year] = brasilDateStr.split('/');
+  
+  // Criar data no início do mês (dia 01) em Brasília (00:00:00)
+  const brasilMonthStart = `${year}-${month}-01T00:00:00`;
+  const utcMonthStart = new Date(`${year}-${month}-01T03:00:00Z`);
+  
+  return utcMonthStart.toISOString();
+}
+
+// Função para obter início do mês anterior em Brasília
+function getPreviousMonthStartBrasil() {
+  const now = new Date();
+  
+  // Obter componentes da data atual no timezone de Brasília
+  const brasilDateStr = now.toLocaleString('pt-BR', { 
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  
+  // Formato: "DD/MM/YYYY"
+  const [day, month, year] = brasilDateStr.split('/');
+  
+  // Calcular mês anterior
+  let prevMonth = parseInt(month) - 1;
+  let prevYear = parseInt(year);
+  
+  if (prevMonth < 1) {
+    prevMonth = 12;
+    prevYear--;
+  }
+  
+  const prevMonthStr = String(prevMonth).padStart(2, '0');
+  
+  // Criar data no início do mês anterior (dia 01) em Brasília (00:00:00)
+  const brasilPrevMonthStart = `${prevYear}-${prevMonthStr}-01T00:00:00`;
+  const utcPrevMonthStart = new Date(`${prevYear}-${prevMonthStr}-01T03:00:00Z`);
+  
+  return utcPrevMonthStart.toISOString();
+}
+
 async function getStats(useCache = true) {
   try {
     // 🚀 CACHE: Verificar se existe no cache (TTL de 30 segundos)
@@ -1251,6 +1306,32 @@ async function getCreatorStats(useCache = true) {
       .select('*', { count: 'exact', head: true })
       .eq('status', 'proof_sent');
     
+    // Vendas do mês atual (usando delivered_at no horário de Brasília)
+    const monthStartISO = getMonthStartBrasil();
+    
+    const { data: monthSalesData } = await supabase
+      .from('transactions')
+      .select('amount, delivered_at')
+      .eq('status', 'delivered')
+      .gte('delivered_at', monthStartISO);
+    
+    const monthSales = monthSalesData?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+    const monthTransactions = monthSalesData?.length || 0;
+    
+    // Vendas do mês anterior
+    const prevMonthStartISO = getPreviousMonthStartBrasil();
+    
+    // Fim do mês anterior = início do mês atual
+    const { data: prevMonthSalesData } = await supabase
+      .from('transactions')
+      .select('amount, delivered_at')
+      .eq('status', 'delivered')
+      .gte('delivered_at', prevMonthStartISO)
+      .lt('delivered_at', monthStartISO);
+    
+    const prevMonthSales = prevMonthSalesData?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
+    const prevMonthTransactions = prevMonthSalesData?.length || 0;
+    
     return {
       totalTransactions: approvedCount || 0, // Apenas aprovadas
       approvedTransactions: approvedCount || 0,
@@ -1258,7 +1339,11 @@ async function getCreatorStats(useCache = true) {
       pendingTransactions: pendingCount || 0,
       totalSales: totalSales.toFixed(2),
       todaySales: todaySales.toFixed(2),
-      todayTransactions: todayTransactions || 0
+      todayTransactions: todayTransactions || 0,
+      monthSales: monthSales.toFixed(2),
+      monthTransactions: monthTransactions || 0,
+      prevMonthSales: prevMonthSales.toFixed(2),
+      prevMonthTransactions: prevMonthTransactions || 0
     };
   } catch (err) {
     console.error('Erro ao buscar estatísticas do criador:', err);
