@@ -11,6 +11,18 @@ const { startBotDescriptionJob } = require('./jobs/updateBotDescription');
 const { startBackupJob } = require('./jobs/backupDatabase');
 const { startReminderJob } = require('./jobs/sendPaymentReminders');
 
+// Helper para formatar valores monetários (remover .00)
+function formatAmount(value) {
+  const num = parseFloat(value);
+  if (isNaN(num)) return value;
+  // Se termina com .00, remover decimais
+  if (num % 1 === 0) {
+    return num.toString();
+  }
+  // Caso contrário, manter 2 decimais mas remover zeros à direita
+  return num.toFixed(2).replace(/\.?0+$/, '');
+}
+
 function createBot(token) {
   const bot = new Telegraf(token);
   
@@ -1988,14 +2000,14 @@ Esta transação foi cancelada automaticamente.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-💰 Pague R$ ${amount} usando PIX
+💰 Pague R$ ${formatAmount(amount)} usando PIX
 
 🔑 Chave: ${charge.key}
 
 📋 Cópia & Cola:
 \`${charge.copiaCola}\``;
       } else {
-        paymentMessage = `💰 Pague R$ ${amount} usando PIX
+        paymentMessage = `💰 Pague R$ ${formatAmount(amount)} usando PIX
 
 🔑 Chave: ${charge.key}
 
@@ -2245,7 +2257,7 @@ Esta transação foi cancelada automaticamente.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-💰 Pague R$ ${amount} usando PIX
+💰 Pague R$ ${formatAmount(amount)} usando PIX
 
 🔑 Chave: ${charge.key}
 
@@ -2254,7 +2266,7 @@ Esta transação foi cancelada automaticamente.
       } else {
         packPaymentMessage = `📸 *${pack.name}*
 
-💰 Pague R$ ${amount} usando PIX
+💰 Pague R$ ${formatAmount(amount)} usando PIX
 
 🔑 Chave: ${charge.key}
 
@@ -2459,7 +2471,7 @@ Esta transação foi cancelada automaticamente.
           {
             caption: `👥 *ASSINATURA DE GRUPO*
 
-💰 Pague R$ ${amount} para acessar o grupo
+💰 Pague R$ ${formatAmount(amount)} para acessar o grupo
 
 🔑 Chave: ${charge.key}
 
