@@ -859,12 +859,11 @@ _Cancelar: /cancelar_`, {
     try {
       const user = await db.getOrCreateUser(ctx.from);
       
-      // Buscar broadcasts com cupons (promoções) do criador
+      // Buscar TODAS as campanhas do criador (incluindo "Com Produto" e "Produto + Cupom")
       const { data: campaigns, error } = await db.supabase
         .from('broadcast_campaigns')
         .select('*')
         .eq('created_by', user.id)
-        .not('coupon_code', 'is', null)
         .order('created_at', { ascending: false })
         .limit(20);
       
@@ -905,12 +904,25 @@ Você ainda não criou nenhuma promoção com cupom.`, {
         });
         
         // Buscar cupons ativos desta promoção
-        const { data: activeCoupons } = await db.supabase
+        // 1. Cupons com código manual (se houver coupon_code na campanha)
+        // 2. Cupons automáticos (formato BROADCAST_{campaign_id}_{product_id})
+        let activeCoupons = [];
+        if (campaign.coupon_code) {
+          const { data: manualCoupons } = await db.supabase
+            .from('coupons')
+            .select('code, discount_percentage, is_active, product_id, media_pack_id')
+            .eq('code', campaign.coupon_code)
+            .eq('is_active', true);
+          if (manualCoupons) activeCoupons = activeCoupons.concat(manualCoupons);
+        }
+        
+        // Buscar cupons automáticos (formato BROADCAST_{campaign_id}_*)
+        const { data: autoCoupons } = await db.supabase
           .from('coupons')
-          .select('code, discount_percentage, is_active')
-          .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
-          .eq('is_active', true)
-          .limit(5);
+          .select('code, discount_percentage, is_active, product_id, media_pack_id')
+          .like('code', `BROADCAST_${campaign.id}_%`)
+          .eq('is_active', true);
+        if (autoCoupons) activeCoupons = activeCoupons.concat(autoCoupons);
         
         const couponsCount = activeCoupons?.length || 0;
         const couponStatus = couponsCount > 0 ? '✅ Ativa' : '❌ Inativa';
@@ -970,19 +982,25 @@ Você ainda não criou nenhuma promoção com cupom.`, {
       }
       
       // Buscar TODOS os cupons relacionados (ativos e inativos)
-      const campaignDate = new Date(campaign.created_at);
-      const startDate = new Date(campaignDate);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(campaignDate);
-      endDate.setHours(23, 59, 59, 999);
+      // 1. Cupons com código manual (se houver coupon_code na campanha)
+      // 2. Cupons automáticos (formato BROADCAST_{campaign_id}_{product_id})
+      let allCoupons = [];
       
-      const { data: allCoupons, error: couponsError } = await db.supabase
+      if (campaign.coupon_code) {
+        const { data: manualCoupons } = await db.supabase
+          .from('coupons')
+          .select('code, discount_percentage, is_active, product_id, media_pack_id, created_at')
+          .eq('code', campaign.coupon_code);
+        if (manualCoupons) allCoupons = allCoupons.concat(manualCoupons);
+      }
+      
+      // Buscar cupons automáticos (formato BROADCAST_{campaign_id}_*)
+      const { data: autoCoupons } = await db.supabase
         .from('coupons')
         .select('code, discount_percentage, is_active, product_id, media_pack_id, created_at')
-        .or(`code.eq.${campaign.coupon_code},is_broadcast_coupon.eq.true`)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString())
+        .like('code', `BROADCAST_${campaign.id}_%`)
         .order('created_at', { ascending: false });
+      if (autoCoupons) allCoupons = allCoupons.concat(autoCoupons);
       
       const activeCoupons = allCoupons?.filter(c => c.is_active) || [];
       const inactiveCoupons = allCoupons?.filter(c => !c.is_active) || [];
@@ -1134,44 +1152,46 @@ Deseja continuar?`, {
       }
       
       // Buscar e desativar todos os cupons relacionados
-      const campaignDate = new Date(campaign.created_at);
-      const startDate = new Date(campaignDate);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(campaignDate);
-      endDate.setHours(23, 59, 59, 999);
+      // 1. Cupons com código manual (se houver coupon_code)
+      // 2. Cupons automáticos (formato BROADCAST_{campaign_id}_*)
+      let relatedCouponIds = [];
       
-      let couponConditions = [];
       if (campaign.coupon_code) {
-        couponConditions.push(`code.eq.${campaign.coupon_code}`);
-      }
-      if (campaign.product_id) {
-        couponConditions.push(`product_id.eq.${campaign.product_id}`);
-      }
-      if (campaign.media_pack_id) {
-        couponConditions.push(`media_pack_id.eq.${campaign.media_pack_id}`);
+        const { data: manualCoupons } = await db.supabase
+          .from('coupons')
+          .select('id')
+          .eq('code', campaign.coupon_code)
+          .eq('is_active', true);
+        if (manualCoupons) {
+          relatedCouponIds = relatedCouponIds.concat(manualCoupons.map(c => c.id));
+        }
       }
       
-      const { data: relatedCoupons } = await db.supabase
+      // Buscar cupons automáticos (formato BROADCAST_{campaign_id}_*)
+      const { data: autoCoupons } = await db.supabase
         .from('coupons')
         .select('id')
-        .or(couponConditions.length > 0 ? couponConditions.join(',') : 'is_broadcast_coupon.eq.true')
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString());
+        .like('code', `BROADCAST_${campaign.id}_%`)
+        .eq('is_active', true);
+      if (autoCoupons) {
+        relatedCouponIds = relatedCouponIds.concat(autoCoupons.map(c => c.id));
+      }
+      
+      // Remover duplicatas
+      relatedCouponIds = [...new Set(relatedCouponIds)];
       
       let deactivatedCount = 0;
       
-      if (relatedCoupons && relatedCoupons.length > 0) {
-        const couponIds = relatedCoupons.map(c => c.id);
-        
+      if (relatedCouponIds.length > 0) {
         const { error: updateError } = await db.supabase
           .from('coupons')
           .update({ is_active: false })
-          .in('id', couponIds);
+          .in('id', relatedCouponIds);
         
         if (updateError) {
           console.error('Erro ao desativar cupons:', updateError);
         } else {
-          deactivatedCount = relatedCoupons.length;
+          deactivatedCount = relatedCouponIds.length;
         }
       }
       
@@ -1352,69 +1372,54 @@ Os cupons relacionados a este broadcast foram desativados e não poderão mais s
       }
       
       // 1. Desativar TODOS os cupons relacionados ao broadcast
-      // IMPORTANTE: Desativar por código (todos os cupons com mesmo código, independente da data)
-      // E também cupons automáticos do mesmo produto/pack criados no mesmo dia
+      // 1.1. Cupons com código manual (se houver coupon_code)
+      // 1.2. Cupons automáticos (formato BROADCAST_{campaign_id}_*)
       
-      let deactivatedCount = 0;
+      let relatedCouponIds = [];
       
-      // Primeiro: Desativar TODOS os cupons com o mesmo código (manuais e automáticos)
+      // Primeiro: Desativar TODOS os cupons com o mesmo código (manuais)
       if (campaign.coupon_code) {
         const { data: sameCodeCoupons, error: codeError } = await db.supabase
           .from('coupons')
           .select('id')
           .eq('code', campaign.coupon_code)
           .eq('is_active', true);
-        
+
         if (!codeError && sameCodeCoupons && sameCodeCoupons.length > 0) {
           const codeCouponIds = sameCodeCoupons.map(c => c.id);
-          
-          const { error: updateCodeError } = await db.supabase
-            .from('coupons')
-            .update({ is_active: false })
-            .in('id', codeCouponIds);
-          
-          if (!updateCodeError) {
-            deactivatedCount += codeCouponIds.length;
-            console.log(`✅ ${codeCouponIds.length} cupom(ns) com código ${campaign.coupon_code} desativado(s)`);
-          }
+          relatedCouponIds = relatedCouponIds.concat(codeCouponIds);
+          console.log(`✅ ${codeCouponIds.length} cupom(ns) com código ${campaign.coupon_code} encontrado(s)`);
         }
       }
       
-      // Segundo: Desativar cupons automáticos do mesmo produto/pack criados no mesmo dia
-      const campaignDate = new Date(campaign.created_at);
-      const startDate = new Date(campaignDate);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(campaignDate);
-      endDate.setHours(23, 59, 59, 999);
-      
-      let autoCouponConditions = ['is_broadcast_coupon.eq.true'];
-      
-      if (campaign.product_id) {
-        autoCouponConditions.push(`product_id.eq.${campaign.product_id}`);
-      }
-      if (campaign.media_pack_id) {
-        autoCouponConditions.push(`media_pack_id.eq.${campaign.media_pack_id}`);
-      }
-      
+      // Segundo: Buscar cupons automáticos (formato BROADCAST_{campaign_id}_*)
       const { data: autoCoupons, error: autoError } = await db.supabase
         .from('coupons')
         .select('id')
-        .or(autoCouponConditions.join(','))
-        .eq('is_active', true)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString());
+        .like('code', `BROADCAST_${campaign.id}_%`)
+        .eq('is_active', true);
       
       if (!autoError && autoCoupons && autoCoupons.length > 0) {
         const autoCouponIds = autoCoupons.map(c => c.id);
-        
-        const { error: updateAutoError } = await db.supabase
+        relatedCouponIds = relatedCouponIds.concat(autoCouponIds);
+        console.log(`✅ ${autoCouponIds.length} cupom(ns) automático(s) encontrado(s)`);
+      }
+      
+      // Remover duplicatas e desativar todos de uma vez
+      relatedCouponIds = [...new Set(relatedCouponIds)];
+      let deactivatedCount = 0;
+      
+      if (relatedCouponIds.length > 0) {
+        const { error: updateAllError } = await db.supabase
           .from('coupons')
           .update({ is_active: false })
-          .in('id', autoCouponIds);
+          .in('id', relatedCouponIds);
         
-        if (!updateAutoError) {
-          deactivatedCount += autoCouponIds.length;
-          console.log(`✅ ${autoCouponIds.length} cupom(ns) automático(s) desativado(s)`);
+        if (!updateAllError) {
+          deactivatedCount = relatedCouponIds.length;
+          console.log(`✅ ${relatedCouponIds.length} cupom(ns) desativado(s) no total`);
+        } else {
+          console.error('Erro ao desativar cupons:', updateAllError);
         }
       }
       
