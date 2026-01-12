@@ -1783,10 +1783,22 @@ Selecione uma opção abaixo:`;
       
       // Editar a mensagem existente ao invés de criar um update manual
       if (ctx.callbackQuery && ctx.callbackQuery.message) {
-        return ctx.editMessageText(message, {
-          parse_mode: 'Markdown',
-          ...keyboard
-        });
+        try {
+          return await ctx.editMessageText(message, {
+            parse_mode: 'Markdown',
+            ...keyboard
+          });
+        } catch (editError) {
+          // Se o conteúdo for exatamente o mesmo, o Telegram retorna erro 400
+          // Nesse caso, apenas confirmamos que recebemos o callback
+          if (editError.response && editError.response.error_code === 400 && 
+              editError.response.description && editError.response.description.includes('message is not modified')) {
+            // Mensagem já está atualizada, apenas confirmar
+            return;
+          }
+          // Outro tipo de erro, relançar
+          throw editError;
+        }
       } else {
         return ctx.reply(message, {
           parse_mode: 'Markdown',
@@ -1795,7 +1807,12 @@ Selecione uma opção abaixo:`;
       }
     } catch (err) {
       console.error('❌ [CREATOR-REFRESH] Erro:', err);
-      return ctx.answerCbQuery('❌ Erro ao atualizar. Tente novamente.');
+      // Tentar responder ao callback mesmo em caso de erro
+      try {
+        await ctx.answerCbQuery('❌ Erro ao atualizar. Tente novamente.');
+      } catch (answerError) {
+        // Callback pode ter expirado, não é crítico
+      }
     }
   });
 }
