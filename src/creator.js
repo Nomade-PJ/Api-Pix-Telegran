@@ -1573,17 +1573,17 @@ A promoção foi completamente removida do sistema.`, {
         const originalPrice = parseFloat(product.price);
         const discountedPrice = originalPrice - discValue;
         
-        // Formatar desconto como número inteiro seguido de %
+        // Formatar desconto como número inteiro seguido de % OFF
         const discountDisplay = Math.round(discPercent);
         
         if (product.type === 'product') {
           productButtons.push([Markup.button.callback(
-            `🛍️ ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}%)`,
+            `🛍️ ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}% OFF)`,
             `buy:${product.id}`
           )]);
         } else {
           productButtons.push([Markup.button.callback(
-            `📸 ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}%)`,
+            `📸 ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}% OFF)`,
             `buy_media:${product.id}`
           )]);
         }
