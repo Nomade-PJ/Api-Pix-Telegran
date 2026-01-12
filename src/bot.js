@@ -436,11 +436,15 @@ Selecione uma opção abaixo:`;
   // Receber comprovante (foto ou documento)
   bot.on(['photo', 'document'], async (ctx, next) => {
     try {
-      // 🆕 PRIORIDADE: Verificar se usuário está em sessão de admin PRIMEIRO
+      // 🆕 PRIORIDADE: Verificar se usuário está em sessão de admin/criador PRIMEIRO
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
-      if (session && (session.type === 'create_product' || session.type === 'edit_product')) {
-        console.log('⏭️ [HANDLER-BOT] Sessão de admin detectada, passando para handler do admin.js');
+      if (session && (
+        session.type === 'create_product' || 
+        session.type === 'edit_product' ||
+        (session.type === 'creator_broadcast_product_coupon' && session.step === 'image')
+      )) {
+        console.log('⏭️ [HANDLER-BOT] Sessão de admin/criador detectada, passando para handler do admin.js');
         return next(); // ✅ Passar para próximo handler (admin.js)
       }
       
