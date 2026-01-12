@@ -1377,7 +1377,7 @@ Os cupons relacionados a este broadcast foram desativados e não poderão mais s
       
       let relatedCouponIds = [];
       
-      // Primeiro: Desativar TODOS os cupons com o mesmo código (manuais)
+      // Primeiro: Buscar cupons com código manual (se houver coupon_code)
       if (campaign.coupon_code) {
         const { data: sameCodeCoupons, error: codeError } = await db.supabase
           .from('coupons')
@@ -1385,10 +1385,12 @@ Os cupons relacionados a este broadcast foram desativados e não poderão mais s
           .eq('code', campaign.coupon_code)
           .eq('is_active', true);
 
-        if (!codeError && sameCodeCoupons && sameCodeCoupons.length > 0) {
-          const codeCouponIds = sameCodeCoupons.map(c => c.id);
-          relatedCouponIds = relatedCouponIds.concat(codeCouponIds);
-          console.log(`✅ ${codeCouponIds.length} cupom(ns) com código ${campaign.coupon_code} encontrado(s)`);
+        if (!codeError && sameCodeCoupons && Array.isArray(sameCodeCoupons) && sameCodeCoupons.length > 0) {
+          const codeCouponIds = sameCodeCoupons.map(c => c.id).filter(id => id != null);
+          if (codeCouponIds.length > 0) {
+            relatedCouponIds = relatedCouponIds.concat(codeCouponIds);
+            console.log(`✅ ${codeCouponIds.length} cupom(ns) com código ${campaign.coupon_code} encontrado(s)`);
+          }
         }
       }
       
@@ -1399,14 +1401,16 @@ Os cupons relacionados a este broadcast foram desativados e não poderão mais s
         .like('code', `BROADCAST_${campaign.id}_%`)
         .eq('is_active', true);
       
-      if (!autoError && autoCoupons && autoCoupons.length > 0) {
-        const autoCouponIds = autoCoupons.map(c => c.id);
-        relatedCouponIds = relatedCouponIds.concat(autoCouponIds);
-        console.log(`✅ ${autoCouponIds.length} cupom(ns) automático(s) encontrado(s)`);
+      if (!autoError && autoCoupons && Array.isArray(autoCoupons) && autoCoupons.length > 0) {
+        const autoCouponIds = autoCoupons.map(c => c.id).filter(id => id != null);
+        if (autoCouponIds.length > 0) {
+          relatedCouponIds = relatedCouponIds.concat(autoCouponIds);
+          console.log(`✅ ${autoCouponIds.length} cupom(ns) automático(s) encontrado(s)`);
+        }
       }
       
       // Remover duplicatas e desativar todos de uma vez
-      relatedCouponIds = [...new Set(relatedCouponIds)];
+      relatedCouponIds = Array.isArray(relatedCouponIds) ? [...new Set(relatedCouponIds)] : [];
       let deactivatedCount = 0;
       
       if (relatedCouponIds.length > 0) {
