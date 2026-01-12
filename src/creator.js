@@ -1555,10 +1555,13 @@ A promoção foi completamente removida do sistema.`, {
       }
       
       if (broadcastRecipients.length > 0) {
-        await db.supabase
+        const { error: recipientsError } = await db.supabase
           .from('broadcast_recipients')
-          .insert(broadcastRecipients)
-          .catch(err => console.error('Erro ao registrar destinatários:', err));
+          .insert(broadcastRecipients);
+        
+        if (recipientsError) {
+          console.error('Erro ao registrar destinatários:', recipientsError);
+        }
       }
       
       // Preparar mensagem com produtos em botões
