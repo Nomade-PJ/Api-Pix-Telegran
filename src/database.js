@@ -1665,13 +1665,14 @@ async function addGroupMember({ telegramId, userId, groupId, days = 30 }) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + days);
     
-    // 🆕 VERIFICAR SE JÁ EXISTE MEMBRO ATIVO PARA ESTE GRUPO
+    // 🆕 VERIFICAR SE JÁ EXISTE MEMBRO PARA ESTE GRUPO (independente do status)
+    // A constraint única é em (telegram_id, group_id), então precisamos verificar
+    // independente do status para evitar erro de duplicate key
     const { data: existingMember, error: checkError } = await supabase
       .from('group_members')
       .select('*')
       .eq('telegram_id', telegramId)
       .eq('group_id', groupId)
-      .eq('status', 'active')
       .maybeSingle();
     
     if (checkError && checkError.code !== 'PGRST116') {
@@ -1682,7 +1683,8 @@ async function addGroupMember({ telegramId, userId, groupId, days = 30 }) {
     
     if (existingMember) {
       // 🆕 RENOVAR ASSINATURA EXISTENTE (UPDATE)
-      console.log(`🔄 [DB] Renovando assinatura existente para usuário ${telegramId} no grupo ${groupId}`);
+      // Atualizar mesmo se status for 'expired' ou outro
+      console.log(`🔄 [DB] Renovando assinatura existente para usuário ${telegramId} no grupo ${groupId} (status atual: ${existingMember.status || 'N/A'})`);
       
       const { data: updated, error: updateError } = await supabase
         .from('group_members')
