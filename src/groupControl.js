@@ -132,13 +132,14 @@ async function checkExpirations(bot) {
             });
             
             // Enviar mensagem com transação existente
-            if (charge.charge.qrcodeBuffer) {
-              await bot.telegram.sendPhoto(
-                member.telegram_id,
-                { source: charge.charge.qrcodeBuffer },
-                {
-                  caption: `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
-            
+            try {
+              if (charge.charge.qrcodeBuffer) {
+                await bot.telegram.sendPhoto(
+                  member.telegram_id,
+                  { source: charge.charge.qrcodeBuffer },
+                  {
+                    caption: `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
+
 ⚠️ Sua assinatura expira em *${daysLeft} dias*!
 
 👥 *Grupo:* ${group?.group_name || 'Grupo'}
@@ -161,11 +162,11 @@ Após aprovação, sua assinatura será renovada automaticamente!
 Não perca o acesso! 🚀
 
 🆔 TXID: ${charge.charge.txid}`,
-                  parse_mode: 'Markdown'
-                }
-              );
-            } else {
-              await bot.telegram.sendMessage(member.telegram_id, `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
+                    parse_mode: 'Markdown'
+                  }
+                );
+              } else {
+                await bot.telegram.sendMessage(member.telegram_id, `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
 
 ⚠️ Sua assinatura expira em *${daysLeft} dias*!
 
@@ -186,11 +187,33 @@ Não perca o acesso! 🚀
 📸 Após pagar, envie o comprovante aqui.
 
 🆔 TXID: ${charge.charge.txid}`, {
-                parse_mode: 'Markdown'
-              });
+                  parse_mode: 'Markdown'
+                });
+              }
+
+              console.log(`✅ [GROUP-CONTROL] Lembrete enviado reutilizando transação existente ${existingTransaction.txid}`);
+            } catch (sendErr) {
+              // Verificar se é erro esperado (bot bloqueado, usuário deletado, etc)
+              const isExpectedError = (
+                sendErr.message?.includes('bot was blocked') ||
+                sendErr.message?.includes('bot was blocked by the user') ||
+                sendErr.message?.includes('user is deactivated') ||
+                sendErr.message?.includes('chat not found') ||
+                sendErr.message?.includes('PEER_ID_INVALID') ||
+                sendErr.message?.includes('USER_DEACTIVATED') ||
+                sendErr.message?.includes('Forbidden') ||
+                (sendErr.response && sendErr.response.error_code === 403)
+              );
+
+              if (isExpectedError) {
+                console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível (bloqueou bot ou conta deletada)`, {
+                  telegram_id: member.telegram_id,
+                  reason: sendErr.message || sendErr.response?.description
+                });
+                throw sendErr; // Re-throw para ser tratado no catch externo
+              }
+              throw sendErr; // Re-throw outros erros
             }
-            
-            console.log(`✅ [GROUP-CONTROL] Lembrete enviado reutilizando transação existente ${existingTransaction.txid}`);
           } else {
             // Não existe transação pendente - criar nova (mas sem expiração curta no lembrete)
             console.log(`➕ [GROUP-CONTROL] Criando nova transação de renovação para lembrete de 3 dias`);
@@ -227,12 +250,13 @@ Não perca o acesso! 🚀
             });
             
             // Enviar QR Code
-            if (charge.charge.qrcodeBuffer) {
-              await bot.telegram.sendPhoto(
-              member.telegram_id,
-              { source: charge.charge.qrcodeBuffer },
-              {
-                caption: `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
+            try {
+              if (charge.charge.qrcodeBuffer) {
+                await bot.telegram.sendPhoto(
+                member.telegram_id,
+                { source: charge.charge.qrcodeBuffer },
+                {
+                  caption: `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
 
 ⚠️ Sua assinatura expira em *${daysLeft} dias*!
 
@@ -256,12 +280,12 @@ Após aprovação, sua assinatura será renovada automaticamente!
 Não perca o acesso! 🚀
 
 🆔 TXID: ${txid}`,
-                parse_mode: 'Markdown'
-              }
-            );
-            } else {
-              // Fallback sem QR Code
-              await bot.telegram.sendMessage(member.telegram_id, `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
+                  parse_mode: 'Markdown'
+                }
+              );
+              } else {
+                // Fallback sem QR Code
+                await bot.telegram.sendMessage(member.telegram_id, `⏰ *LEMBRETE DE RENOVAÇÃO - ${daysLeft} DIAS*
 
 ⚠️ Sua assinatura expira em *${daysLeft} dias*!
 
@@ -282,17 +306,60 @@ Não perca o acesso! 🚀
 📸 Após pagar, envie o comprovante aqui.
 
 🆔 TXID: ${txid}`, {
-                parse_mode: 'Markdown'
-              });
+                  parse_mode: 'Markdown'
+                });
+              }
+              
+              console.log(`✅ [GROUP-CONTROL] Lembrete com QR Code enviado para ${member.telegram_id}`);
+            } catch (sendErr) {
+              // Verificar se é erro esperado (bot bloqueado, usuário deletado, etc)
+              const isExpectedError = (
+                sendErr.message?.includes('bot was blocked') ||
+                sendErr.message?.includes('bot was blocked by the user') ||
+                sendErr.message?.includes('user is deactivated') ||
+                sendErr.message?.includes('chat not found') ||
+                sendErr.message?.includes('PEER_ID_INVALID') ||
+                sendErr.message?.includes('USER_DEACTIVATED') ||
+                sendErr.message?.includes('Forbidden') ||
+                (sendErr.response && sendErr.response.error_code === 403)
+              );
+
+              if (isExpectedError) {
+                console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível (bloqueou bot ou conta deletada)`, {
+                  telegram_id: member.telegram_id,
+                  reason: sendErr.message || sendErr.response?.description
+                });
+                throw sendErr; // Re-throw para ser tratado no catch externo
+              }
+              throw sendErr; // Re-throw outros erros
             }
-            
-            console.log(`✅ [GROUP-CONTROL] Lembrete com QR Code enviado para ${member.telegram_id}`);
           }
         } catch (pixErr) {
+          // Verificar se é erro esperado (bot bloqueado, usuário deletado, etc)
+          const isExpectedError = (
+            pixErr.message?.includes('bot was blocked') ||
+            pixErr.message?.includes('bot was blocked by the user') ||
+            pixErr.message?.includes('user is deactivated') ||
+            pixErr.message?.includes('chat not found') ||
+            pixErr.message?.includes('PEER_ID_INVALID') ||
+            pixErr.message?.includes('USER_DEACTIVATED') ||
+            pixErr.message?.includes('Forbidden') ||
+            (pixErr.response && pixErr.response.error_code === 403)
+          );
+
+          if (isExpectedError) {
+            console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível (bloqueou bot ou conta deletada)`, {
+              telegram_id: member.telegram_id,
+              reason: pixErr.message || pixErr.response?.description
+            });
+            throw pixErr; // Re-throw para ser tratado no catch externo
+          }
+
           console.error(`❌ [GROUP-CONTROL] Erro ao gerar QR Code no lembrete:`, pixErr.message);
           
-          // Fallback: enviar só mensagem
-          await bot.telegram.sendMessage(member.telegram_id, `⏰ *LEMBRETE DE ASSINATURA*
+          // Fallback: enviar só mensagem (apenas se não for erro esperado)
+          try {
+            await bot.telegram.sendMessage(member.telegram_id, `⏰ *LEMBRETE DE ASSINATURA*
 
 ⚠️ Sua assinatura expira em *${daysLeft} dias*!
 
@@ -304,8 +371,13 @@ Não perca o acesso! 🚀
 Use o comando /renovar e faça o pagamento.
 
 Não perca o acesso! 🚀`, {
-            parse_mode: 'Markdown'
-          });
+              parse_mode: 'Markdown'
+            });
+          } catch (fallbackErr) {
+            // Se fallback também falhar, apenas logar e re-throw
+            console.warn(`⚠️ [GROUP-CONTROL] Fallback também falhou:`, fallbackErr.message);
+            throw pixErr; // Re-throw o erro original para ser tratado no catch externo
+          }
         }
         
         // Marcar como lembrado
