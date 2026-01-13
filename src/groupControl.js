@@ -626,21 +626,24 @@ Após aprovação, sua assinatura será renovada automaticamente!
             // Erros esperados que não devem ser logados como erro crítico
             const isExpectedError = (
               pixErr.message?.includes('bot was blocked') ||
+              pixErr.message?.includes('bot was blocked by the user') ||
               pixErr.message?.includes('user is deactivated') ||
               pixErr.message?.includes('chat not found') ||
               pixErr.message?.includes('PEER_ID_INVALID') ||
-              pixErr.message?.includes('USER_DEACTIVATED')
+              pixErr.message?.includes('USER_DEACTIVATED') ||
+              pixErr.message?.includes('Forbidden') ||
+              (pixErr.response && pixErr.response.error_code === 403)
             );
-            
+
             if (isExpectedError) {
               console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível para lembrete urgente`, {
                 telegram_id: member.telegram_id,
-                reason: pixErr.message
+                reason: pixErr.message || pixErr.response?.description
               });
               // Não tenta fallback se usuário bloqueou
               throw pixErr; // Re-throw para ser tratado no catch externo
             }
-            
+
             console.error(`❌ [GROUP-CONTROL] Erro ao gerar QR Code urgente:`, pixErr.message);
             
             // Fallback apenas se não for erro esperado
@@ -1188,17 +1191,43 @@ Após aprovação, você será adicionado automaticamente ao grupo!
           console.log(`✅ [GROUP-CONTROL] QR Code de renovação enviado para ${member.telegram_id}`);
           
         } catch (pixErr) {
+          // Verificar se é erro esperado (bot bloqueado, usuário deletado, etc)
+          const isExpectedError = (
+            pixErr.message?.includes('bot was blocked') ||
+            pixErr.message?.includes('bot was blocked by the user') ||
+            pixErr.message?.includes('user is deactivated') ||
+            pixErr.message?.includes('chat not found') ||
+            pixErr.message?.includes('PEER_ID_INVALID') ||
+            pixErr.message?.includes('USER_DEACTIVATED') ||
+            pixErr.message?.includes('Forbidden') ||
+            (pixErr.response && pixErr.response.error_code === 403)
+          );
+
+          if (isExpectedError) {
+            console.log(`ℹ️ [GROUP-CONTROL] Usuário não acessível (bloqueou bot ou conta deletada)`, {
+              telegram_id: member.telegram_id,
+              reason: pixErr.message || pixErr.response?.description
+            });
+            throw pixErr; // Re-throw para ser tratado no catch externo
+          }
+
           console.error(`❌ [GROUP-CONTROL] Erro ao gerar QR Code de renovação:`, pixErr.message);
           
-          // Enviar mensagem sem QR Code
-          await bot.telegram.sendMessage(member.telegram_id, `❌ *ASSINATURA EXPIRADA*
+          // Enviar mensagem sem QR Code (apenas se não for erro esperado)
+          try {
+            await bot.telegram.sendMessage(member.telegram_id, `❌ *ASSINATURA EXPIRADA*
 
 Sua assinatura do grupo expirou e você foi removido.
 
 🔄 *Para renovar:*
 Use o comando /renovar e faça o pagamento.`, {
-            parse_mode: 'Markdown'
-          });
+              parse_mode: 'Markdown'
+            });
+          } catch (fallbackErr) {
+            // Se fallback também falhar, apenas logar e re-throw
+            console.warn(`⚠️ [GROUP-CONTROL] Fallback também falhou:`, fallbackErr.message);
+            throw pixErr; // Re-throw o erro original
+          }
         }
         
       } catch (err) {
