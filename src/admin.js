@@ -1768,6 +1768,72 @@ Use /produtos para ver todos.`, { parse_mode: 'Markdown' });
 Use /admin → Produtos para ver todas as alterações.`, { parse_mode: 'Markdown' });
       }
 
+      // ===== EDITAR CAMPO DE GRUPO =====
+      if (session.type === 'edit_group_field') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+
+        const { field, groupUuid } = session.data;
+        const rawValue = ctx.message.text.trim();
+
+        const fieldMap = {
+          name:  'group_name',
+          price: 'subscription_price',
+          days:  'subscription_days',
+          link:  'group_link'
+        };
+
+        const dbColumn = fieldMap[field];
+        let parsedValue = rawValue;
+
+        if (field === 'price') {
+          parsedValue = parseFloat(rawValue.replace(',', '.'));
+          if (isNaN(parsedValue) || parsedValue <= 0) {
+            return ctx.reply('❌ Preço inválido. Digite um número maior que zero.\nEx: 59.90');
+          }
+        }
+
+        if (field === 'days') {
+          parsedValue = parseInt(rawValue);
+          if (isNaN(parsedValue) || parsedValue <= 0) {
+            return ctx.reply('❌ Duração inválida. Digite um número inteiro.\nEx: 30');
+          }
+        }
+
+        if (field === 'link' && !rawValue.startsWith('http')) {
+          return ctx.reply('❌ Link inválido. Deve começar com https://');
+        }
+
+        const { error } = await db.supabase
+          .from('groups')
+          .update({ [dbColumn]: parsedValue, updated_at: new Date().toISOString() })
+          .eq('id', groupUuid);
+
+        if (error) {
+          console.error('Erro ao salvar campo do grupo:', error.message);
+          return ctx.reply('❌ Erro ao salvar. Tente novamente.');
+        }
+
+        delete global._SESSIONS[ctx.from.id];
+
+        const fieldLabels = { name: 'Nome', price: 'Preço', days: 'Duração', link: 'Link' };
+        const displayValue = field === 'price' ? `R$ ${parsedValue.toFixed(2)}` : String(parsedValue);
+
+        return ctx.reply(
+          `✅ *${fieldLabels[field]} atualizado com sucesso!*\n\nNovo valor: \`${displayValue}\``,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('✏️ Continuar editando', `edit_group:${groupUuid}`)],
+              [Markup.button.callback('👥 Ver Grupos', 'admin_groups')]
+            ])
+          }
+        );
+      }
+
       // ===== CRIAR GRUPO =====
       if (session.type === 'create_group') {
         if (session.step === 'group_id') {
@@ -3806,6 +3872,105 @@ Clique no botão abaixo para cadastrar o primeiro grupo.`;
     } catch (err) {
       console.error('Erro ao editar grupo:', err);
       return ctx.reply('❌ Erro ao carregar grupo.');
+    }
+  });
+
+
+  // ===== TOGGLE GRUPO (ATIVAR / DESATIVAR) =====
+  bot.action(/^toggle_group:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('⏳ Alterando status...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      const groupUuid = ctx.match[1];
+
+      const { data: group, error } = await db.supabase
+        .from('groups')
+        .select('*')
+        .eq('id', groupUuid)
+        .single();
+
+      if (error || !group) {
+        return ctx.reply('❌ Grupo não encontrado.');
+      }
+
+      const newStatus = !group.is_active;
+
+      const { error: updateError } = await db.supabase
+        .from('groups')
+        .update({ is_active: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', groupUuid);
+
+      if (updateError) throw updateError;
+
+      const statusLabel = newStatus ? '✅ Ativado' : '🔴 Desativado';
+
+      await ctx.reply(`${statusLabel} com sucesso!\n\n👥 *${group.group_name || 'Grupo'}*\nNovo status: ${newStatus ? '🟢 Ativo' : '🔴 Inativo'}`, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('✏️ Continuar editando', `edit_group:${groupUuid}`)],
+          [Markup.button.callback('👥 Ver Grupos', 'admin_groups')],
+          [Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]
+        ])
+      });
+
+    } catch (err) {
+      console.error('Erro ao alternar status do grupo:', err);
+      return ctx.reply('❌ Erro ao alterar status do grupo.');
+    }
+  });
+
+  // ===== EDITAR CAMPO DO GRUPO (Nome / Preço / Duração / Link) =====
+  bot.action(/^edit_group_field:(\w+):(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('✏️ Editando campo...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      const field = ctx.match[1];   // name | price | days | link
+      const groupUuid = ctx.match[2];
+
+      const { data: group, error } = await db.supabase
+        .from('groups')
+        .select('*')
+        .eq('id', groupUuid)
+        .single();
+
+      if (error || !group) {
+        return ctx.reply('❌ Grupo não encontrado.');
+      }
+
+      const fieldLabels = {
+        name:  { label: 'Nome',           example: 'Ex: Privadinho VIP',       current: group.group_name || 'Sem nome' },
+        price: { label: 'Preço (R$)',     example: 'Ex: 59.90',                current: `R$ ${parseFloat(group.subscription_price).toFixed(2)}` },
+        days:  { label: 'Duração (dias)', example: 'Ex: 30',                   current: `${group.subscription_days} dias` },
+        link:  { label: 'Link do grupo',  example: 'Ex: https://t.me/+XXXXX',  current: group.group_link }
+      };
+
+      const info = fieldLabels[field];
+      if (!info) return ctx.reply('❌ Campo inválido.');
+
+      // Guardar estado na sessão global para capturar texto na sequência
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'edit_group_field',
+        data: { field, groupUuid }
+      };
+
+      await ctx.reply(
+        `✏️ *Editar ${info.label}*\n\n*Valor atual:* ${info.current}\n\n📝 Digite o novo valor:\n_${info.example}_`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Cancelar', `edit_group:${groupUuid}`)]
+          ])
+        }
+      );
+
+    } catch (err) {
+      console.error('Erro ao iniciar edição de campo do grupo:', err);
+      return ctx.reply('❌ Erro ao carregar campo de edição.');
     }
   });
 
@@ -6045,4 +6210,3 @@ Use /admin para voltar ao painel.`,
 }
 
 module.exports = { registerAdminCommands };
-
