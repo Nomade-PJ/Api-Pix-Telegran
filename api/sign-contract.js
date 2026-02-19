@@ -6,7 +6,7 @@ const { createClient } = require('@supabase/supabase-js');
 // Inicializar Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_KEY
 );
 
 module.exports = async (req, res) => {
@@ -132,4 +132,3 @@ module.exports = async (req, res) => {
     });
   }
 };
-
