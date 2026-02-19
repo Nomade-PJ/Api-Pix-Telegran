@@ -1636,9 +1636,16 @@ A promoção foi completamente removida do sistema.`, {
                 });
               }
               success++;
-              
-              await new Promise(resolve => setTimeout(resolve, 50));
-              
+
+              // Rate limit seguro: máx ~3 msgs/s por usuário diferente (Telegram permite 30/s no total)
+              // 350ms garante ~2.8 msgs/s — bem abaixo do limite de ban
+              await new Promise(resolve => setTimeout(resolve, 350));
+
+              // Progresso a cada 100 envios
+              if ((success + failed) % 100 === 0) {
+                console.log(`📊 [BROADCAST] Progresso: ${success + failed}/${users.length} (✅ ${success} ❌ ${failed})`);
+              }
+
             } catch (err) {
               failed++;
               // Não logar como erro se for um caso esperado (comportamento normal)
@@ -1822,4 +1829,3 @@ Selecione uma opção abaixo:`;
 }
 
 module.exports = { registerCreatorCommands };
-
