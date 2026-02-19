@@ -86,6 +86,32 @@ function createBot(token) {
   })();
   
 
+  // ============================================================
+  // MENU BUTTON — aparece no canto inferior esquerdo do chat
+  // Aciona /start ao ser clicado (apenas no chat privado com o bot)
+  // ============================================================
+  const axios = require('axios');
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+  axios.post(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
+    menu_button: {
+      type: 'commands'  // Mostra botão "Menu" que abre lista de comandos do bot
+    }
+  }).then(() => {
+    console.log('✅ [MENU-BUTTON] Botão Menu configurado com sucesso');
+  }).catch(err => {
+    console.warn('⚠️ [MENU-BUTTON] Erro ao configurar botão Menu:', err.message);
+  });
+
+  // Registrar comandos visíveis no Menu
+  bot.telegram.setMyCommands([
+    { command: 'start', description: '🏠 Menu principal' }
+  ]).then(() => {
+    console.log('✅ [MENU-BUTTON] Comandos registrados no Menu');
+  }).catch(err => {
+    console.warn('⚠️ [MENU-BUTTON] Erro ao registrar comandos:', err.message);
+  });
+
   // Registrar handler do /start PRIMEIRO (antes de tudo)
   bot.start(async (ctx) => {
     try {
