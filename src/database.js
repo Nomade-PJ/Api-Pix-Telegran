@@ -1646,13 +1646,53 @@ async function updateGroup(groupId, updates) {
 
 async function deleteGroup(groupId) {
   try {
-    const { error } = await supabase
+    // 1. Buscar UUID interno do grupo pelo group_id (bigint do Telegram)
+    const { data: groupRow, error: findError } = await supabase
+      .from('groups')
+      .select('id')
+      .eq('group_id', groupId)
+      .single();
+
+    if (findError || !groupRow) {
+      console.error('Grupo não encontrado para deletar:', groupId);
+      return false;
+    }
+
+    const groupUuid = groupRow.id;
+
+    // 2. Remover membros do grupo (FK: group_members.group_id → groups.id)
+    const { error: membersError } = await supabase
+      .from('group_members')
+      .delete()
+      .eq('group_id', groupUuid);
+
+    if (membersError) {
+      console.error('Erro ao remover membros do grupo:', membersError.message);
+      throw membersError;
+    }
+    console.log(`Membros do grupo ${groupId} removidos.`);
+
+    // 3. Desassociar transações do grupo (não deletar — apenas NULL o group_id para preservar histórico)
+    const { error: txError } = await supabase
+      .from('transactions')
+      .update({ group_id: null })
+      .eq('group_id', groupUuid);
+
+    if (txError) {
+      console.error('Erro ao desassociar transações do grupo:', txError.message);
+      throw txError;
+    }
+    console.log(`Transações do grupo ${groupId} desassociadas.`);
+
+    // 4. Agora sim deletar o grupo
+    const { error: deleteError } = await supabase
       .from('groups')
       .delete()
       .eq('group_id', groupId);
-    
-    if (error) throw error;
-    console.log('Grupo deletado:', groupId);
+
+    if (deleteError) throw deleteError;
+
+    console.log('Grupo deletado permanentemente:', groupId);
     return true;
   } catch (err) {
     console.error('Erro ao deletar grupo:', err.message);
@@ -3783,4 +3823,3 @@ module.exports = {
   getTopCustomers,
   getConversionSummary
 };
-
