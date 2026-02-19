@@ -49,8 +49,19 @@ function createBot(token) {
   console.log('✅ [BOT-INIT] Comando /criador registrado PRIMEIRO');
   
   // Configurar usuário criador automaticamente (se ainda não estiver configurado)
-  const CREATOR_TELEGRAM_ID = 7147424680; // ID do primeiro criador (vê painel no /start)
-  const SECOND_CREATOR_ID = 6668959779; // ID do segundo criador (menu normal, acesso via /criador)
+  // IDs dos criadores carregados do banco (tabela settings)
+  // Para alterar: atualize a tabela settings — sem precisar de novo deploy
+  let CREATOR_TELEGRAM_ID = 7147424680; // fallback hardcoded
+  let SECOND_CREATOR_ID = 6668959779;   // fallback hardcoded
+  try {
+    const creatorSetting  = await db.getSetting('creator_telegram_id');
+    const creator2Setting = await db.getSetting('creator2_telegram_id');
+    if (creatorSetting)  CREATOR_TELEGRAM_ID = parseInt(creatorSetting);
+    if (creator2Setting) SECOND_CREATOR_ID   = parseInt(creator2Setting);
+    console.log(`✅ [BOT-INIT] IDs de criadores carregados do banco: ${CREATOR_TELEGRAM_ID}, ${SECOND_CREATOR_ID}`);
+  } catch (e) {
+    console.warn('⚠️ [BOT-INIT] Não foi possível carregar IDs do banco, usando fallback:', e.message);
+  }
   (async () => {
     try {
       const { data: creatorUser } = await db.supabase
@@ -1451,12 +1462,50 @@ ${product.delivery_type === 'file' ? '📄 Arquivo anexado acima' : `🔗 Link: 
         } catch (err) {
           console.error(`❌ [AUTO-ANALYSIS] Erro na análise para TXID ${transactionData.txid}:`, err.message);
           console.error('Stack:', err.stack);
-          console.error('Detalhes do erro:', {
-            name: err.name,
-            message: err.message,
-            code: err.code
-          });
-          // Em caso de erro, validação manual já foi solicitada ao admin
+
+          // ✅ NOVO: Notificar admins que existe comprovante na fila sem análise
+          try {
+            const admins = await db.getAllAdmins();
+            for (const admin of admins) {
+              try {
+                await telegram.sendMessage(admin.telegram_id,
+                  `⚠️ *COMPROVANTE AGUARDANDO REVISÃO MANUAL*
+
+` +
+                  `🤖 OCR falhou — o comprovante precisa ser revisado manualmente.
+
+` +
+                  `👤 Usuário: ${fromUser.first_name} (@${fromUser.username || 'N/A'})
+` +
+                  `🔢 ID: ${fromUser.id}
+` +
+                  `📦 Produto: ${productName}
+` +
+                  `💰 Valor: R$ ${transactionData.amount}
+` +
+                  `❌ Erro OCR: ${err.message}
+` +
+                  `🆔 TXID: ${transactionData.txid}
+
+` +
+                  `👁️ *Revise o comprovante acima e decida:*`,
+                  {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                      inline_keyboard: [[
+                        { text: '✅ Aprovar', callback_data: `approve_${transactionData.txid}` },
+                        { text: '❌ Rejeitar', callback_data: `reject_${transactionData.txid}` }
+                      ]]
+                    }
+                  }
+                );
+              } catch (notifyErr) {
+                console.error(`❌ [AUTO-ANALYSIS] Erro ao notificar admin ${admin.telegram_id}:`, notifyErr.message);
+              }
+            }
+          } catch (adminErr) {
+            console.error('❌ [AUTO-ANALYSIS] Erro ao buscar admins para notificação OCR:', adminErr.message);
+          }
         }
       });
       
