@@ -413,6 +413,7 @@ Selecione uma opção abaixo:`;
         ],
       [
         Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),
+        Markup.button.callback('⚠️ Falhas de Entrega', 'admin_delivery_failures'),
         Markup.button.callback('🔑 Alterar PIX', 'admin_setpix')
       ],
       [
@@ -4827,55 +4828,173 @@ ${zwsp}${zwnj}${zwsp}`, {
           console.error(`❌ [ADMIN] Grupo não encontrado para transação ${txid}`);
         }
       } else if (transaction.product_id) {
-        // Entregar produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+        // Entregar produto normal
         const product = await db.getProduct(transaction.product_id, true);
         if (product && product.delivery_url) {
-          // Usar deliverContent que detecta automaticamente se é arquivo ou link
-          await deliver.deliverContent(
-            transaction.telegram_id, 
-            product, 
-            `✅ *PAGAMENTO APROVADO!*\n\n💰 Valor: R$ ${transaction.amount}\n🆔 TXID: ${txid}`
-          );
-          
-          console.log(`✅ Produto entregue com sucesso para ${transaction.telegram_id}`);
-        } else {
-          // Se não tem produto/URL, notificar mesmo assim
           try {
-            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *PAGAMENTO APROVADO!*
-
-💰 Valor: R$ ${transaction.amount}
-⚠️ Aguarde instruções do suporte para receber seu produto.
-
-🆔 TXID: ${txid}`, {
-              parse_mode: 'Markdown'
-            });
+            await deliver.deliverContent(
+              transaction.telegram_id,
+              product,
+              `✅ *PAGAMENTO APROVADO!*\n\n💰 Valor: R$ ${transaction.amount}\n🆔 TXID: ${txid}`
+            );
+            console.log(`✅ Produto entregue com sucesso para ${transaction.telegram_id}`);
+          } catch (deliverErr) {
+            const errorType = deliver.classifyDeliveryError(deliverErr);
+            console.error(`❌ [APPROVE] Erro na entrega (${errorType}):`, deliverErr.message);
+            await db.markDeliveryFailed(txid, deliverErr.message, errorType);
+            await notifyDeliveryFailure(ctx, transaction, txid, deliverErr.message, errorType);
+            await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: '⚠️ Aprovado (falha na entrega)', callback_data: 'approved' }]] });
+            return ctx.reply(`⚠️ *Pagamento aprovado, mas falha na entrega!*\n\n🆔 TXID: ${txid}\n❌ Motivo: ${deliverErr.message}\n\nO admin foi notificado com opções de ação.`, { parse_mode: 'Markdown' });
+          }
+        } else {
+          try {
+            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *PAGAMENTO APROVADO!*\n\n💰 Valor: R$ ${transaction.amount}\n⚠️ Aguarde instruções do suporte.\n\n🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
           } catch (err) {
             console.error('Erro ao notificar usuário:', err);
           }
         }
       }
-      
-      await db.markAsDelivered(txid);
-      
-      // Atualizar mensagem do botão
-      await ctx.editMessageReplyMarkup({
-        inline_keyboard: [
-          [{ text: '✅ Aprovado', callback_data: 'approved' }]
-        ]
-      });
-      
-      return ctx.reply(`✅ *Transação aprovada com sucesso!*
 
-🆔 TXID: ${txid}
-👤 Usuário notificado
-📦 Produto/Grupo entregue`, {
+      await db.markAsDelivered(txid);
+
+      await ctx.editMessageReplyMarkup({
+        inline_keyboard: [[{ text: '✅ Aprovado', callback_data: 'approved' }]]
+      });
+
+      return ctx.reply(`✅ *Transação aprovada com sucesso!*\n\n🆔 TXID: ${txid}\n👤 Usuário notificado\n📦 Produto/Grupo entregue`, {
         parse_mode: 'Markdown'
       });
-      
+
     } catch (err) {
       console.error('Erro ao aprovar transação:', err);
       return ctx.reply('❌ Erro ao aprovar transação.');
     }
+  });
+
+  // ===== HELPER: Notifica admins sobre falha na entrega =====
+  async function notifyDeliveryFailure(ctx, transaction, txid, errorMessage, errorType) {
+    const esc = (s) => String(s || '').replace(/([_*`[\]])/g, '\\$1');
+    const typeLabel = {
+      blocked: '🚫 Usuário bloqueou o bot',
+      temporary: '⏱️ Erro temporário de rede',
+      unknown: '❓ Erro desconhecido'
+    }[errorType] || errorType;
+
+    const msg =
+      `⚠️ *FALHA NA ENTREGA*\n\n` +
+      `👤 ${esc(transaction.user?.first_name || 'N/A')}\n` +
+      `🔢 ID: \`${transaction.telegram_id}\`\n` +
+      `💵 Valor: R$ ${transaction.amount}\n` +
+      `❌ Motivo: ${typeLabel}\n` +
+      `🆔 TXID: \`${esc(txid)}\``;
+
+    const keyboard = {
+      inline_keyboard: [[
+        { text: '🔄 Tentar Novamente', callback_data: `retry_delivery:${txid}` },
+        { text: '✅ Marcar Entregue', callback_data: `force_delivered:${txid}` }
+      ]]
+    };
+
+    try {
+      await ctx.reply(msg, { parse_mode: 'Markdown', reply_markup: keyboard });
+    } catch (e) {
+      console.error('Erro ao enviar alerta de falha:', e.message);
+    }
+  }
+
+  // ===== RETRY MANUAL DA ENTREGA =====
+  bot.action(/^retry_delivery:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('🔄 Tentando reenviar...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+
+    const txid = ctx.match[1];
+    const transaction = await db.getTransactionByTxid(txid);
+    if (!transaction) return ctx.reply('❌ Transação não encontrada.');
+
+    try {
+      if (transaction.product_id && !transaction.product_id.startsWith('group_')) {
+        const product = await db.getProduct(transaction.product_id, true);
+        if (!product) throw new Error('Produto não encontrado');
+        await deliver.deliverContent(transaction.telegram_id, product);
+      } else if (transaction.media_pack_id) {
+        const { data: transData } = await db.supabase.from('transactions').select('id').eq('txid', txid).single();
+        await deliver.deliverMediaPack(transaction.telegram_id, transaction.media_pack_id, transaction.user_id, transData.id, db);
+      } else if (transaction.group_id) {
+        const { data: group } = await db.supabase.from('groups').select('*').eq('id', transaction.group_id).single();
+        if (group) {
+          await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *SEU ACESSO FOI LIBERADO!*\n\n👥 ${group.group_name}\n🔗 ${group.group_link}`, { parse_mode: 'Markdown' });
+        }
+      }
+
+      await db.markAsDelivered(txid);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: '✅ Entregue com sucesso', callback_data: 'done' }]] });
+      return ctx.reply(`✅ Reenvio bem-sucedido!\n\n🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+
+    } catch (err) {
+      const errorType = deliver.classifyDeliveryError(err);
+      await db.markDeliveryFailed(txid, err.message, errorType);
+      return ctx.reply(`❌ Reenvio falhou novamente.\n\nMotivo: ${err.message}\nTipo: ${errorType}`, { parse_mode: 'Markdown' });
+    }
+  });
+
+  // ===== FORÇAR MARCAÇÃO COMO ENTREGUE (sem reenvio) =====
+  bot.action(/^force_delivered:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('✅ Marcando como entregue...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+
+    const txid = ctx.match[1];
+    await db.markAsDelivered(txid);
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: '✅ Marcado como entregue manualmente', callback_data: 'done' }]] });
+    return ctx.reply(`✅ TXID \`${txid}\` marcado como entregue manualmente.`, { parse_mode: 'Markdown' });
+  });
+
+  // ===== PAINEL: VER FALHAS DE ENTREGA =====
+  bot.action('admin_delivery_failures', async (ctx) => {
+    await ctx.answerCbQuery('⚠️ Carregando falhas...');
+    const isAdmin = await db.isUserAdmin(ctx.from.id);
+    if (!isAdmin) return;
+
+    const failures = await db.getAllDeliveryFailures(15);
+
+    if (failures.length === 0) {
+      return ctx.reply('✅ Nenhuma falha de entrega registrada!', {
+        ...require('telegraf').Markup.inlineKeyboard([[require('telegraf').Markup.button.callback('🔙 Voltar', 'admin_refresh')]])
+      });
+    }
+
+    const esc = (s) => String(s || '').replace(/([_*`[\]])/g, '\\$1');
+    const typeLabel = { blocked: '🚫 Bloqueado', temporary: '⏱️ Temporário', unknown: '❓ Desconhecido' };
+
+    let msg = `⚠️ *FALHAS DE ENTREGA* (${failures.length})
+
+`;
+    const buttons = [];
+
+    for (const f of failures.slice(0, 10)) {
+      const nome = esc(f.user?.first_name || 'N/A');
+      const tipo = typeLabel[f.delivery_error_type] || f.delivery_error_type;
+      msg += `👤 ${nome} | 💵 R$ ${f.amount}
+`;
+      msg += `❌ ${tipo} | 🔁 ${f.delivery_attempts}x
+`;
+      msg += `🆔 \`${esc(f.txid?.substring(0, 12))}...\`
+──────────
+`;
+      if (f.delivery_error_type !== 'blocked') {
+        buttons.push([
+          { text: `🔄 ${f.txid.substring(0, 8)}`, callback_data: `retry_delivery:${f.txid}` },
+          { text: '✅ Manual', callback_data: `force_delivered:${f.txid}` }
+        ]);
+      } else {
+        buttons.push([{ text: `✅ Marcar entregue: ${f.txid.substring(0, 8)}`, callback_data: `force_delivered:${f.txid}` }]);
+      }
+    }
+
+    buttons.push([{ text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }]);
+
+    return ctx.reply(msg, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
   });
 
   bot.action(/^reject_(.+)$/, async (ctx) => {
