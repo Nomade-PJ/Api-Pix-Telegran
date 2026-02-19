@@ -665,46 +665,86 @@ module.exports = (req, res) => {
         async function validatePassword() {
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('loginError');
-            
-            if (password === 'valdirene2026') {
-                // Verificar se o contrato já foi assinado
-                try {
-                    const response = await fetch('/api/check-contract?clientName=VALDIRENE%20SOUZA%20DOS%20SANTOS');
-                    const data = await response.json();
+            const btn = document.querySelector('.btn');
 
-                    if (data.alreadySigned && !data.isExpired) {
-                        // Contrato já foi assinado e está ativo
-                        errorDiv.innerHTML = '<div style="color: #28a745; background: #d4edda; padding: 15px; border-radius: 8px; margin-top: 15px;">' +
-                            '<strong>✅ Contrato já foi assinado!</strong><br>' +
-                            'Este contrato foi assinado em ' + new Date(data.contract.signedAt).toLocaleDateString('pt-BR') + '.<br>' +
-                            'O contrato está ativo até ' + new Date(data.contract.endDate).toLocaleDateString('pt-BR') + '.<br>' +
-                            '<strong>ID do Contrato:</strong> ' + data.contract.id +
-                            '</div>';
-                        return;
-                    }
-
-                    if (data.alreadySigned && data.isExpired) {
-                        // Contrato expirou
-                        errorDiv.innerHTML = '<div style="color: #856404; background: #fff3cd; padding: 15px; border-radius: 8px; margin-top: 15px;">' +
-                            '<strong>⚠️ Contrato Expirado</strong><br>' +
-                            'Este contrato expirou em ' + new Date(data.contract.endDate).toLocaleDateString('pt-BR') + '.<br>' +
-                            'Entre em contato para renovação.' +
-                            '</div>';
-                        return;
-                    }
-
-                    // Contrato disponível para assinatura
-                    document.getElementById('loginSection').style.display = 'none';
-                    document.getElementById('contractContent').classList.add('active');
-                    errorDiv.textContent = '';
-
-                } catch (error) {
-                    console.error('Erro ao verificar status do contrato:', error);
-                    errorDiv.textContent = '❌ Erro ao verificar status. Por favor, tente novamente.';
-                }
-            } else {
-                errorDiv.textContent = '❌ Senha incorreta. Por favor, tente novamente.';
+            if (password !== 'valdirene2026') {
+                errorDiv.innerHTML = '<span style="color:#e74c3c;">❌ Senha incorreta. Por favor, tente novamente.</span>';
+                return;
             }
+
+            // Mostrar loading no botão
+            btn.disabled = true;
+            btn.textContent = '⏳ Verificando...';
+            errorDiv.textContent = '';
+
+            try {
+                const response = await fetch('/api/check-contract?clientName=VALDIRENE%20SOUZA%20DOS%20SANTOS');
+                const data = await response.json();
+
+                if (data.alreadySigned && data.isExpired) {
+                    // Contrato expirou
+                    errorDiv.innerHTML = '<div style="color:#856404;background:#fff3cd;padding:15px;border-radius:8px;margin-top:15px;">' +
+                        '<strong>⚠️ Contrato Expirado</strong><br>' +
+                        'Este contrato expirou em ' + new Date(data.contract.endDate).toLocaleDateString('pt-BR') + '.<br>' +
+                        'Entre em contato para renovação.' +
+                        '</div>';
+                    btn.disabled = false;
+                    btn.textContent = 'Acessar Contrato';
+                    return;
+                }
+
+                if (data.alreadySigned && !data.isExpired) {
+                    // ✅ Contrato já assinado e ativo — mostrar mensagem verde e depois entrar
+                    const signedDate = new Date(data.contract.signedAt).toLocaleDateString('pt-BR');
+                    const endDate   = new Date(data.contract.endDate).toLocaleDateString('pt-BR');
+
+                    errorDiv.innerHTML =
+                        '<div id="statusBox" style="color:#155724;background:#d4edda;padding:15px;border-radius:8px;margin-top:15px;text-align:center;">' +
+                            '<strong>✅ Contrato já foi assinado!</strong><br>' +
+                            'Este contrato foi assinado em ' + signedDate + '.<br>' +
+                            'O contrato está ativo até ' + endDate + '.<br>' +
+                            '<strong>ID do Contrato:</strong> ' + data.contract.id + '<br><br>' +
+                            '<span id="countdownText" style="font-size:0.9em;">Abrindo o contrato em <strong id="countNum">3</strong>s...</span>' +
+                            '<div style="margin-top:10px;height:6px;background:#c3e6cb;border-radius:3px;overflow:hidden;">' +
+                                '<div id="progressBar" style="height:100%;width:0%;background:#28a745;border-radius:3px;transition:width 3s linear;"></div>' +
+                            '</div>' +
+                        '</div>';
+
+                    // Iniciar barra de progresso
+                    setTimeout(() => {
+                        document.getElementById('progressBar').style.width = '100%';
+                    }, 50);
+
+                    // Countdown 3 → 2 → 1 → abre contrato
+                    let count = 3;
+                    const interval = setInterval(() => {
+                        count--;
+                        const el = document.getElementById('countNum');
+                        if (el) el.textContent = count;
+                        if (count <= 0) {
+                            clearInterval(interval);
+                            abrirContrato();
+                        }
+                    }, 1000);
+
+                    return;
+                }
+
+                // Contrato disponível para assinatura (ainda não assinou)
+                abrirContrato();
+
+            } catch (error) {
+                console.error('Erro ao verificar status do contrato:', error);
+                errorDiv.innerHTML = '<span style="color:#e74c3c;">❌ Erro ao verificar. Tente novamente.</span>';
+                btn.disabled = false;
+                btn.textContent = 'Acessar Contrato';
+            }
+        }
+
+        function abrirContrato() {
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('contractContent').classList.add('active');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         // Enter para validar senha
