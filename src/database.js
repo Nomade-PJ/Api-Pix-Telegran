@@ -771,21 +771,104 @@ async function markAsDelivered(txid) {
       .update({
         status: 'delivered',
         delivered_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        delivery_error: null,
+        delivery_error_type: null
       })
       .eq('txid', txid);
-    
+
     if (error) throw error;
     console.log('Transação marcada como entregue:', txid);
-    
-    // 🚀 CACHE: Invalidar cache de estatísticas quando transação é entregue
+
     cache.delete('stats_admin');
     cache.delete('stats_creator');
-    
+
     return true;
   } catch (err) {
     console.error('Erro ao marcar como entregue:', err);
     return false;
+  }
+}
+
+/**
+ * Registra falha de entrega e incrementa contador de tentativas.
+ * errorType: 'blocked' | 'temporary' | 'unknown'
+ */
+async function markDeliveryFailed(txid, errorMessage, errorType = 'unknown') {
+  try {
+    const { data: tx } = await supabase
+      .from('transactions')
+      .select('delivery_attempts')
+      .eq('txid', txid)
+      .single();
+
+    const attempts = (tx?.delivery_attempts || 0) + 1;
+
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        status: 'delivery_failed',
+        delivery_error: errorMessage,
+        delivery_error_type: errorType,
+        delivery_attempts: attempts,
+        last_delivery_attempt_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+
+    if (error) throw error;
+
+    console.log(`⚠️ [DB] Falha de entrega registrada: ${txid} | tipo: ${errorType} | tentativas: ${attempts}`);
+    cache.delete('stats_admin');
+    return true;
+  } catch (err) {
+    console.error('Erro ao registrar falha de entrega:', err);
+    return false;
+  }
+}
+
+/**
+ * Busca transações com falha temporária candidatas a reenvio automático
+ */
+async function getFailedDeliveries() {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*, user:user_id (first_name, username, telegram_id)')
+      .eq('status', 'delivery_failed')
+      .neq('delivery_error_type', 'blocked')
+      .lt('delivery_attempts', 5)
+      .order('last_delivery_attempt_at', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar entregas com falha:', err);
+    return [];
+  }
+}
+
+/**
+ * Busca TODAS as falhas de entrega para exibir no painel admin
+ */
+async function getAllDeliveryFailures(limit = 20) {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select(`
+        txid, telegram_id, amount, delivery_error, delivery_error_type,
+        delivery_attempts, last_delivery_attempt_at, product_id, media_pack_id, group_id,
+        user:user_id (first_name, username)
+      `)
+      .eq('status', 'delivery_failed')
+      .order('last_delivery_attempt_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar falhas de entrega:', err);
+    return [];
   }
 }
 
@@ -3744,6 +3827,9 @@ module.exports = {
   updateTransactionProof,
   validateTransaction,
   markAsDelivered,
+  markDeliveryFailed,
+  getFailedDeliveries,
+  getAllDeliveryFailures,
   cancelTransaction,
   reverseTransaction,
   getPendingTransactions,
