@@ -10,6 +10,7 @@ const { startExpirationJob } = require('./jobs/expireTransactions');
 const { startBotDescriptionJob } = require('./jobs/updateBotDescription');
 const { startBackupJob } = require('./jobs/backupDatabase');
 const { startReminderJob } = require('./jobs/sendPaymentReminders');
+const { startRetryJob } = require('./jobs/retryDeliveries');
 
 // Helper para formatar valores monetários (remover .00)
 function formatAmount(value) {
@@ -40,6 +41,7 @@ function createBot(token) {
   
   // Iniciar job de lembretes de pagamento (15 minutos)
   startReminderJob(bot);
+  startRetryJob(bot);
   console.log('✅ [BOT-INIT] Job de lembretes de pagamento iniciado');
   
   // 🆕 REGISTRAR COMANDO /criador PRIMEIRO (antes de tudo, para garantir prioridade)
@@ -3573,4 +3575,3 @@ _Cancelar: /cancelar`, {
 }
 
 module.exports = { createBot };
-
