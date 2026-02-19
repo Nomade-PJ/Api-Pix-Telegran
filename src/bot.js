@@ -51,19 +51,21 @@ function createBot(token) {
   // Configurar usuário criador automaticamente (se ainda não estiver configurado)
   // IDs dos criadores carregados do banco (tabela settings)
   // Para alterar: atualize a tabela settings — sem precisar de novo deploy
-  let CREATOR_TELEGRAM_ID = 7147424680; // fallback hardcoded
-  let SECOND_CREATOR_ID = 6668959779;   // fallback hardcoded
-  try {
-    const creatorSetting  = await db.getSetting('creator_telegram_id');
-    const creator2Setting = await db.getSetting('creator2_telegram_id');
-    if (creatorSetting)  CREATOR_TELEGRAM_ID = parseInt(creatorSetting);
-    if (creator2Setting) SECOND_CREATOR_ID   = parseInt(creator2Setting);
-    console.log(`✅ [BOT-INIT] IDs de criadores carregados do banco: ${CREATOR_TELEGRAM_ID}, ${SECOND_CREATOR_ID}`);
-  } catch (e) {
-    console.warn('⚠️ [BOT-INIT] Não foi possível carregar IDs do banco, usando fallback:', e.message);
-  }
+  let CREATOR_TELEGRAM_ID = 7147424680; // fallback — atualizado dinamicamente abaixo
+  let SECOND_CREATOR_ID = 6668959779;   // fallback — atualizado dinamicamente abaixo
   (async () => {
     try {
+      // Carregar IDs dos criadores do banco (sem precisar de novo deploy para alterar)
+      try {
+        const creatorSetting  = await db.getSetting('creator_telegram_id');
+        const creator2Setting = await db.getSetting('creator2_telegram_id');
+        if (creatorSetting)  CREATOR_TELEGRAM_ID = parseInt(creatorSetting);
+        if (creator2Setting) SECOND_CREATOR_ID   = parseInt(creator2Setting);
+        console.log(`✅ [BOT-INIT] IDs de criadores carregados do banco: ${CREATOR_TELEGRAM_ID}, ${SECOND_CREATOR_ID}`);
+      } catch (e) {
+        console.warn('⚠️ [BOT-INIT] Usando IDs de criadores em fallback:', e.message);
+      }
+
       const { data: creatorUser } = await db.supabase
         .from('users')
         .select('is_creator')
