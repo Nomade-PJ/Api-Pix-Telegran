@@ -3058,56 +3058,62 @@ Digite /setpix seguido da nova chave
     await ctx.answerCbQuery('👥 Carregando usuários e transações...');
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) return;
-    
+
+    // Função local para escapar caracteres especiais do Markdown v1
+    const esc = (str) => String(str || '').replace(/([_*`\[\]])/g, '\\$1');
+
     try {
       const [usersResult, pendingResult] = await Promise.all([
         db.getRecentUsers(10, 0),
         db.getPendingTransactions(10, 0)
       ]);
-      
+
       const users = usersResult.data || [];
       const pending = pendingResult.data || [];
-      
+
       let message = `👥 *GERENCIAR USUÁRIOS E TRANSAÇÕES*\n\n`;
-      
+
       // Seção de transações pendentes
       if (pending && pending.length > 0) {
         message += `⏳ *TRANSAÇÕES PENDENTES: ${pendingResult.total}* (mostrando ${pending.length})\n\n`;
-        
+
         for (const tx of pending) {
           const user = tx.user || {};
-          message += `🆔 TXID: ${tx.txid}\n`;
-          message += `👤 ${user.first_name || 'N/A'} (@${user.username || 'N/A'})\n`;
-          message += `📦 ${tx.product?.name || tx.product_id}\n`;
+          const productName = esc(tx.product?.name || tx.media_pack?.name || tx.product_id || tx.media_pack_id || 'N/A');
+          message += `🆔 TXID: \`${esc(tx.txid)}\`\n`;
+          message += `👤 ${esc(user.first_name || 'N/A')} (${user.username ? '@' + esc(user.username) : 'sem @'})\n`;
+          message += `📦 ${productName}\n`;
           message += `💵 R$ ${tx.amount}\n`;
           message += `📅 ${tx.proof_received_at ? new Date(tx.proof_received_at).toLocaleString('pt-BR') : 'Aguardando'}\n`;
           message += `\n`;
         }
-        
+
         message += `\n*Use os botões abaixo para aprovar/rejeitar:*\n\n`;
       } else {
         message += `✅ Nenhuma transação pendente no momento.\n\n`;
       }
-      
+
       // Seção de usuários
       message += `👥 *ÚLTIMOS USUÁRIOS: ${usersResult.total}* (mostrando ${users.length})\n\n`;
-      
+
       if (users && users.length > 0) {
         for (const user of users) {
-          message += `👤 ${user.first_name || 'Sem nome'}\n`;
-          message += `🆔 @${user.username || 'Sem username'}\n`;
-          message += `🔢 ID: ${user.telegram_id}\n`;
+          const blockedTag = user.is_blocked ? ' 🚫' : '';
+          const adminTag = user.is_admin ? ' 👑' : '';
+          message += `👤 ${esc(user.first_name || 'Sem nome')}${adminTag}${blockedTag}\n`;
+          message += `🆔 ${user.username ? '@' + esc(user.username) : 'Sem username'}\n`;
+          message += `🔢 ID: \`${user.telegram_id}\`\n`;
           message += `📅 ${new Date(user.created_at).toLocaleDateString('pt-BR')}\n`;
           message += `——————————\n\n`;
         }
       } else {
         message += `📦 Nenhum usuário cadastrado ainda.\n\n`;
       }
-      
+
       // Criar botões para transações pendentes
       const buttons = [];
       if (pending && pending.length > 0) {
-        for (const tx of pending.slice(0, 5)) { // Máximo 5 botões
+        for (const tx of pending.slice(0, 5)) {
           buttons.push([
             Markup.button.callback(
               `✅ Aprovar ${tx.txid.substring(0, 8)}`,
@@ -3120,16 +3126,17 @@ Digite /setpix seguido da nova chave
           ]);
         }
       }
-      
+
       buttons.push([Markup.button.callback('🔄 Atualizar', 'admin_users')]);
-      
+      buttons.push([Markup.button.callback('🔙 Voltar ao Painel', 'admin_refresh')]);
+
       return ctx.reply(message, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard(buttons)
       });
     } catch (err) {
       console.error('Erro ao buscar usuários:', err);
-      return ctx.reply('❌ Erro ao buscar usuários.');
+      return ctx.reply('❌ Erro ao buscar usuários. Tente novamente.');
     }
   });
 
