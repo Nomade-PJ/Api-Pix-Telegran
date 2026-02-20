@@ -1,66 +1,29 @@
 {
   "version": 2,
   "builds": [
-    {
-      "src": "api/telegram-webhook.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "api/sign-contract.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "api/check-contract.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "api/contrato.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "api/jobs/expire-members.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "api/jobs/cleanup-expired.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "api/jobs/broadcast.js",
-      "use": "@vercel/node"
-    }
+    { "src": "api/telegram-webhook.js", "use": "@vercel/node" },
+    { "src": "api/sign-contract.js", "use": "@vercel/node" },
+    { "src": "api/check-contract.js", "use": "@vercel/node" },
+    { "src": "api/contrato.js", "use": "@vercel/node" },
+    { "src": "api/jobs/expire-members.js", "use": "@vercel/node" },
+    { "src": "api/jobs/cleanup-expired.js", "use": "@vercel/node" },
+    { "src": "api/jobs/broadcast.js", "use": "@vercel/node" },
+    { "src": "api/login.js", "use": "@vercel/node" },
+    { "src": "api/painel.js", "use": "@vercel/node" },
+    { "src": "api/panel/auth.js", "use": "@vercel/node" },
+    { "src": "api/panel/data.js", "use": "@vercel/node" }
   ],
   "routes": [
-    {
-      "src": "/webhook-secreto-aleatorio",
-      "dest": "/api/telegram-webhook.js"
-    },
-    {
-      "src": "/contrato",
-      "dest": "/api/contrato.js"
-    },
-    {
-      "src": "/api/sign-contract",
-      "dest": "/api/sign-contract.js"
-    },
-    {
-      "src": "/api/check-contract",
-      "dest": "/api/check-contract.js"
-    },
-    {
-      "src": "/api/jobs/expire-members",
-      "dest": "/api/jobs/expire-members.js",
-      "methods": ["POST", "GET"]
-    },
-    {
-      "src": "/api/jobs/cleanup-expired",
-      "dest": "/api/jobs/cleanup-expired.js",
-      "methods": ["POST"]
-    },
-    {
-      "src": "/api/jobs/broadcast",
-      "dest": "/api/jobs/broadcast.js",
-      "methods": ["POST", "GET"]
-    }
+    { "src": "/webhook-secreto-aleatorio", "dest": "/api/telegram-webhook.js" },
+    { "src": "/contrato", "dest": "/api/contrato.js" },
+    { "src": "/api/sign-contract", "dest": "/api/sign-contract.js" },
+    { "src": "/api/check-contract", "dest": "/api/check-contract.js" },
+    { "src": "/api/jobs/expire-members", "dest": "/api/jobs/expire-members.js", "methods": ["POST", "GET"] },
+    { "src": "/api/jobs/cleanup-expired", "dest": "/api/jobs/cleanup-expired.js", "methods": ["POST"] },
+    { "src": "/api/jobs/broadcast", "dest": "/api/jobs/broadcast.js", "methods": ["POST", "GET"] },
+    { "src": "/api/panel/auth", "dest": "/api/panel/auth.js", "methods": ["GET", "POST", "OPTIONS"] },
+    { "src": "/api/panel/data", "dest": "/api/panel/data.js", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"] },
+    { "src": "/login", "dest": "/api/login.js" },
+    { "src": "/painel", "dest": "/api/painel.js" }
   ]
 }
