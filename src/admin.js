@@ -384,7 +384,7 @@ Registros de broadcasts com mais de 30 dias foram excluídos.`, {
     try {
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) {
-        return ctx.reply('❌ Acesso negado.');
+        return ctx.reply('🔐 *Acesso Restrito*\n\nEste painel é exclusivo para administradores da plataforma.\n\n💬 Precisa de ajuda? Use /suporte', { parse_mode: 'Markdown' });
       }
       
       const stats = await db.getStats();
