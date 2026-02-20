@@ -103,12 +103,19 @@ module.exports = async function handler(req, res) {
       } catch (err) {
         failed++;
         const msg = err.message || '';
-        const isExpected =
+        const userBlocked =
           msg.includes('bot was blocked') ||
           msg.includes('user is deactivated') ||
           msg.includes('chat not found') ||
           msg.includes('user not found');
-        if (!isExpected) {
+
+        if (userBlocked) {
+          // Marcar como bloqueado no banco para não enviar nas próximas campanhas
+          await supabase
+            .from('users')
+            .update({ is_blocked: true })
+            .eq('telegram_id', user.telegram_id);
+        } else {
           console.error(`❌ [BROADCAST-JOB] Erro inesperado para ${user.telegram_id}:`, msg);
         }
       }
