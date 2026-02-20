@@ -103,10 +103,17 @@ function createBot(token) {
     console.warn('⚠️ [MENU-BUTTON] Erro ao configurar botão Menu:', err.message);
   });
 
-  // Registrar comandos visíveis no Menu
+  // Registrar comandos visíveis no Menu (chat privado)
   bot.telegram.setMyCommands([
-    { command: 'start', description: '🏠 Menu principal' }
-  ]).then(() => {
+    { command: 'start',         description: '🏠 Exibir menu principal' },
+    { command: 'planos',        description: '📋 Ver planos disponíveis' },
+    { command: 'status',        description: '✅ Ver minha assinatura' },
+    { command: 'meusconteudos', description: '📦 Conteúdos que já comprei' },
+    { command: 'suporte',       description: '💬 Precisa de ajuda?' },
+    { command: 'sobre',         description: 'ℹ️ Sobre a plataforma' },
+    { command: 'criador',       description: '🎛️ Painel do criador' },
+    { command: 'admin',         description: '🔐 Painel administrativo' },
+  ], { scope: { type: 'all_private_chats' } }).then(() => {
     console.log('✅ [MENU-BUTTON] Comandos registrados no Menu');
   }).catch(err => {
     console.warn('⚠️ [MENU-BUTTON] Erro ao registrar comandos:', err.message);
@@ -2576,7 +2583,167 @@ Esta transação foi cancelada automaticamente.
 
   // ===== COMANDO /suporte (Sistema de Tickets) =====
   console.log('✅ [BOT-INIT] Registrando comando /suporte...');
-  bot.command('suporte', async (ctx) => {
+  // ============================================================
+  // /planos — mostra grupos ativos cadastrados
+  // ============================================================
+  bot.command('planos', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck?.is_blocked) return ctx.reply('⚠️ Serviço temporariamente indisponível.');
+
+      const grupos = await db.getAllGroups();
+      const ativos = grupos.filter(g => g.is_active !== false);
+
+      if (ativos.length === 0) {
+        return ctx.reply('📋 *PLANOS DISPONÍVEIS*\n\nNenhum plano disponível no momento.\nVolte em breve! 🙏', { parse_mode: 'Markdown' });
+      }
+
+      let msg = '📋 *PLANOS DISPONÍVEIS*\n\n';
+      for (const g of ativos) {
+        msg += `👥 *${g.group_name}*
+`;
+        msg += `💰 Valor: R$ ${parseFloat(g.subscription_price).toFixed(2)}
+`;
+        msg += `📅 Duração: ${g.subscription_days} dias
+
+`;
+      }
+      msg += '💳 Para assinar, acesse o menu principal com /start';
+
+      return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ [PLANOS]', err.message);
+      return ctx.reply('❌ Erro ao carregar planos. Tente novamente.');
+    }
+  });
+
+  // ============================================================
+  // /status — mostra assinatura ativa do usuário
+  // ============================================================
+  bot.command('status', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck?.is_blocked) return ctx.reply('⚠️ Serviço temporariamente indisponível.');
+
+      // Buscar assinaturas ativas do usuário
+      const { data: memberships, error } = await db.supabase
+        .from('group_members')
+        .select('*, group:group_id(group_name, group_link, subscription_price)')
+        .eq('telegram_id', ctx.from.id)
+        .eq('status', 'active')
+        .order('expires_at', { ascending: true });
+
+      if (error) throw error;
+
+      if (!memberships || memberships.length === 0) {
+        return ctx.reply(
+          '✅ *MINHA ASSINATURA*\n\n' +
+          '📭 Você não possui nenhuma assinatura ativa no momento.\n\n' +
+          '📋 Veja os planos disponíveis com /planos',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      let msg = '✅ *MINHA ASSINATURA*\n\n';
+      for (const m of memberships) {
+        const expires = new Date(m.expires_at);
+        const now = new Date();
+        const diasRestantes = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
+        const emoji = diasRestantes <= 3 ? '🔴' : diasRestantes <= 7 ? '🟡' : '🟢';
+
+        msg += `${emoji} *${m.group?.group_name || 'Grupo'}*
+`;
+        msg += `📅 Expira em: ${expires.toLocaleDateString('pt-BR')}
+`;
+        msg += `⏳ ${diasRestantes} dia(s) restante(s)
+
+`;
+      }
+
+      return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ [STATUS]', err.message);
+      return ctx.reply('❌ Erro ao buscar assinatura. Tente novamente.');
+    }
+  });
+
+  // ============================================================
+  // /meusconteudos — mostra compras aprovadas e entregues
+  // ============================================================
+  bot.command('meusconteudos', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck?.is_blocked) return ctx.reply('⚠️ Serviço temporariamente indisponível.');
+
+      const { data: compras, error } = await db.supabase
+        .from('transactions')
+        .select('txid, amount, delivered_at, product_id, media_pack_id, group_id')
+        .eq('telegram_id', ctx.from.id)
+        .eq('status', 'delivered')
+        .order('delivered_at', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+
+      if (!compras || compras.length === 0) {
+        return ctx.reply(
+          '📦 *MEUS CONTEÚDOS*\n\n' +
+          'Você ainda não possui compras aprovadas.\n\n' +
+          '📋 Veja o que temos disponível com /start',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      let msg = '📦 *MEUS CONTEÚDOS*\n\n';
+      msg += `✅ Você tem *${compras.length}* compra(s) aprovada(s):\n\n`;
+
+      for (const c of compras) {
+        const data = c.delivered_at ? new Date(c.delivered_at).toLocaleDateString('pt-BR') : 'N/A';
+        const tipo = c.media_pack_id ? '📸 Pack de mídia'
+                   : c.group_id ? '👥 Acesso a grupo'
+                   : '📦 Produto digital';
+        msg += `${tipo}
+💰 R$ ${parseFloat(c.amount).toFixed(2)} — 📅 ${data}
+`;
+        msg += `🆔 \`${c.txid?.substring(0, 16)}...\`
+
+`;
+      }
+
+      msg += '💡 Para rever conteúdos de mídia, entre em contato com /suporte';
+
+      return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ [MEUSCONTEUDOS]', err.message);
+      return ctx.reply('❌ Erro ao buscar seus conteúdos. Tente novamente.');
+    }
+  });
+
+  // ============================================================
+  // /sobre — informações sobre a plataforma
+  // ============================================================
+  bot.command('sobre', async (ctx) => {
+    const msg =
+      'ℹ️ *SOBRE A PLATAFORMA*\n\n' +
+      'Somos uma plataforma de vendas automatizada via Telegram, ' +
+      'especializada em entrega digital de conteúdos exclusivos.\n\n' +
+      '🔒 *Como funciona?*\n' +
+      'Você escolhe um plano, realiza o pagamento via PIX e recebe ' +
+      'acesso imediato ao conteúdo — tudo de forma automática e segura.\n\n' +
+      '📦 *O que oferecemos?*\n' +
+      '• Grupos VIP com conteúdo exclusivo\n' +
+      '• Packs de mídia personalizados\n' +
+      '• Produtos digitais com entrega automática\n\n' +
+      '💬 *Precisa de ajuda?*\n' +
+      'Use o comando /suporte para abrir um ticket e nossa equipe ' +
+      'irá te atender o mais rápido possível.\n\n' +
+      '🤖 _Plataforma operada com tecnologia Bot PIX_';
+
+    return ctx.reply(msg, { parse_mode: 'Markdown' });
+  });
+
+
+    bot.command('suporte', async (ctx) => {
     try {
       const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
       if (userCheck && userCheck.is_blocked === true) {
