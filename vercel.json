@@ -24,6 +24,10 @@
     {
       "src": "api/jobs/cleanup-expired.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "api/jobs/broadcast.js",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
@@ -52,6 +56,11 @@
       "src": "/api/jobs/cleanup-expired",
       "dest": "/api/jobs/cleanup-expired.js",
       "methods": ["POST"]
+    },
+    {
+      "src": "/api/jobs/broadcast",
+      "dest": "/api/jobs/broadcast.js",
+      "methods": ["POST", "GET"]
     }
   ]
 }
