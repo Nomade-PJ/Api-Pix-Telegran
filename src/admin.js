@@ -2327,10 +2327,18 @@ Selecione uma opção abaixo:`;
       ],
       [
         Markup.button.callback('👥 Gerenciar Grupos', 'admin_groups'),
+        Markup.button.callback('⚠️ Falhas de Entrega', 'admin_delivery_failures'),
         Markup.button.callback('🔑 Alterar PIX', 'admin_setpix')
       ],
       [
         Markup.button.callback('💬 Configurar Suporte', 'admin_support')
+      ],
+      [
+        Markup.button.callback('🎫 Tickets de Suporte', 'admin_tickets')
+      ],
+      [
+        Markup.button.callback('⭐ Usuários Confiáveis', 'admin_trusted_users'),
+        Markup.button.callback('🤖 Respostas Automáticas', 'admin_auto_responses')
       ],
       [
         Markup.button.callback('👤 Usuários', 'admin_users'),
