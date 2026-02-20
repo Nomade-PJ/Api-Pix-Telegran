@@ -1787,8 +1787,7 @@ Selecione uma opção abaixo:`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Estatísticas', 'creator_stats')],
-        [Markup.button.callback('📢 Broadcast', 'creator_broadcast')],
-        [Markup.button.callback('🎟️ Cupons', 'creator_coupons')],
+        [Markup.button.callback('📢 CastCupom', 'creator_broadcast')],
         [Markup.button.callback('🔄 Atualizar', 'creator_refresh')]
       ]);
       
