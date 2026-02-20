@@ -703,7 +703,7 @@ _Cancelar: /cancelar_`, {
       const user = await db.getOrCreateUser(ctx.from);
       
       // Buscar apenas usuários que já compraram e estão desbloqueados
-      const users = await db.getActiveBuyers();
+      const users = await db.getAllUnblockedUsers();
       
       if (users.length === 0) {
         delete global._SESSIONS[ctx.from.id];
@@ -731,9 +731,9 @@ _Cancelar: /cancelar_`, {
       
       await ctx.editMessageText(`📢 *ENVIANDO BROADCAST...*
 
-📨 Mensagem sendo enviada para ${users.length} compradores ativos...
+📨 Mensagem sendo enviada para ${users.length} usuários...
 
-✅ Apenas usuários que já compraram e estão desbloqueados
+✅ Todos os usuários desbloqueados da plataforma
 
 ⏳ Aguarde...`, {
         parse_mode: 'Markdown'
@@ -809,9 +809,9 @@ _Cancelar: /cancelar_`, {
 📊 *Estatísticas:*
 ✅ Enviados: ${success}
 ❌ Falhas: ${failed}
-📝 Total de compradores ativos: ${users.length}
+📝 Total de usuários: ${users.length}
 
-💡 *Nota:* Enviado apenas para usuários que já compraram e estão desbloqueados.`;
+💡 *Nota:* Enviado para todos os usuários desbloqueados da plataforma.`;
 
       if (session.broadcastType === 'product' && session.productName) {
         resultMessage += `\n\n📦 *Produto divulgado:* ${session.productName}`;
