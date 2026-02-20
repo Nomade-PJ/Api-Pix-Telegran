@@ -22,7 +22,7 @@ function registerCreatorCommands(bot) {
       
       if (!isCreator) {
         console.log(`❌ [CREATOR] Acesso negado para ${ctx.from.id}`);
-        return ctx.reply('❌ Acesso negado. Você não tem permissão para acessar o painel do criador.');
+        return ctx.reply('🔐 *Acesso Restrito*\n\nEste painel é exclusivo para criadores da plataforma.\n\n💬 Precisa de ajuda? Use /suporte', { parse_mode: 'Markdown' });
       }
       
       console.log(`✅ [CREATOR] Acesso permitido para ${ctx.from.id}`);
