@@ -701,137 +701,71 @@ _Cancelar: /cancelar_`, {
     try {
       const message = session.data.message;
       const user = await db.getOrCreateUser(ctx.from);
-      
-      // Buscar apenas usuários que já compraram e estão desbloqueados
-      const users = await db.getAllUnblockedUsers();
-      
-      if (users.length === 0) {
-        delete global._SESSIONS[ctx.from.id];
-        return ctx.reply('❌ Nenhum comprador ativo encontrado para enviar o broadcast.');
+
+      // Montar botões se houver produto/pack
+      let buttonsJson = null;
+      if (session.broadcastType === 'product' && session.productId) {
+        buttonsJson = [[{ text: `🛍️ Comprar ${session.productName}`, callback_data: `buy:${session.productId}` }]];
+      } else if (session.broadcastType === 'media_pack' && session.mediaPackId) {
+        buttonsJson = [[{ text: `📸 Comprar ${session.packName}`, callback_data: `buy_media:${session.mediaPackId}` }]];
       }
-      
-      // Salvar campanha de broadcast no banco
+
+      // Salvar campanha como PENDING — o cron-job processa em lotes
       const { data: campaign, error: campaignError } = await db.supabase
         .from('broadcast_campaigns')
         .insert([{
-          name: `Broadcast ${new Date().toLocaleDateString('pt-BR')}`,
+          name: `CastCupom ${new Date().toLocaleDateString('pt-BR')}`,
           message: message,
           product_id: session.productId || null,
           media_pack_id: session.mediaPackId || null,
+          image_file_id: session.imageFileId || null,
+          buttons_json: buttonsJson,
+          creator_telegram_id: ctx.from.id,
           target_audience: 'all',
-          status: 'sending',
+          status: 'pending',
           created_by: user.id
         }])
         .select()
         .single();
-      
+
       if (campaignError) {
         console.error('Erro ao salvar campanha:', campaignError);
+        throw campaignError;
       }
-      
-      await ctx.editMessageText(`📢 *ENVIANDO BROADCAST...*
 
-📨 Mensagem sendo enviada para ${users.length} usuários...
+      delete global._SESSIONS[ctx.from.id];
 
-✅ Todos os usuários desbloqueados da plataforma
+      // Buscar total para informar o criador
+      const { count: totalUsers } = await db.supabase
+        .from('users')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_blocked', false);
 
-⏳ Aguarde...`, {
-        parse_mode: 'Markdown'
-      });
-      
-      let success = 0;
-      let failed = 0;
-      
-      // Adicionar botão com link para o produto (se houver)
-      let replyMarkup = undefined;
-      if (session.broadcastType === 'product' && session.productId) {
-        replyMarkup = {
-          inline_keyboard: [
-            [{ text: `🛍️ Comprar ${session.productName}`, callback_data: `buy:${session.productId}` }]
-          ]
-        };
-      } else if (session.broadcastType === 'media_pack' && session.mediaPackId) {
-        replyMarkup = {
-          inline_keyboard: [
-            [{ text: `📸 Comprar ${session.packName}`, callback_data: `buy_media:${session.mediaPackId}` }]
-          ]
-        };
-      }
-      
-      for (const user of users) {
-        try {
-          await ctx.telegram.sendMessage(user.telegram_id, message, {
-            parse_mode: 'Markdown',
-            reply_markup: replyMarkup
-          });
-          success++;
-          
-          // Delay para evitar flood
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
-        } catch (err) {
-          failed++;
-          // Não logar como erro se for um caso esperado (comportamento normal)
-          const errorMessage = err.message || '';
-          const isExpectedError = 
-            errorMessage.includes('bot was blocked by the user') ||
-            errorMessage.includes('user is deactivated') ||
-            errorMessage.includes('chat not found') ||
-            errorMessage.includes('user not found') ||
-            errorMessage.includes('chat_id is empty');
-          
-          if (isExpectedError) {
-            // Silencioso - apenas contar como falha (comportamento esperado)
-          } else {
-            // Logar apenas erros reais (não relacionados a usuários inativos)
-            console.error(`❌ [CREATOR-BROADCAST] Erro ao enviar para ${user.telegram_id}:`, err.message);
-          }
+      return ctx.editMessageText(
+        `✅ *CASTCUPOM AGENDADO!*
+
+` +
+        `📨 Sua mensagem será enviada para *${totalUsers}* usuários.
+
+` +
+        `⏱️ O envio acontece em lotes a cada 2 minutos.
+` +
+        `🔔 Você receberá uma notificação quando concluir.
+
+` +
+        `🆔 Campanha: \`${campaign.id.substring(0, 8)}...\``,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Voltar ao Painel', 'creator_refresh')]
+          ])
         }
-      }
-      
-      // Atualizar campanha com resultado
-      if (campaign) {
-        await db.supabase
-          .from('broadcast_campaigns')
-          .update({
-            sent_count: success,
-            failed_count: failed,
-            status: 'sent',
-            sent_at: new Date().toISOString()
-          })
-          .eq('id', campaign.id);
-      }
-      
-      delete global._SESSIONS[ctx.from.id];
-      
-      let resultMessage = `✅ *BROADCAST CONCLUÍDO!*
+      );
 
-📊 *Estatísticas:*
-✅ Enviados: ${success}
-❌ Falhas: ${failed}
-📝 Total de usuários: ${users.length}
-
-💡 *Nota:* Enviado para todos os usuários desbloqueados da plataforma.`;
-
-      if (session.broadcastType === 'product' && session.productName) {
-        resultMessage += `\n\n📦 *Produto divulgado:* ${session.productName}`;
-      } else if (session.broadcastType === 'media_pack' && session.packName) {
-        resultMessage += `\n\n📸 *Pack divulgado:* ${session.packName}`;
-      }
-
-      resultMessage += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n_Mensagem enviada com sucesso!_`;
-      
-      return ctx.editMessageText(resultMessage, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('🔙 Voltar ao Painel', 'creator_refresh')]
-        ])
-      });
-      
     } catch (err) {
-      console.error('Erro no broadcast:', err);
+      console.error('Erro ao agendar broadcast:', err);
       delete global._SESSIONS[ctx.from.id];
-      return ctx.reply('❌ Erro ao enviar broadcast.');
+      return ctx.reply('❌ Erro ao agendar CastCupom. Tente novamente.');
     }
   });
   
@@ -1554,202 +1488,73 @@ A promoção foi completamente removida do sistema.`, {
         broadcastCouponIds.push(autoCoupon.id);
       }
       
-      // Registrar usuários que receberão o broadcast
-      const broadcastRecipients = [];
-      for (const recipient of users) {
-        broadcastRecipients.push({
-          telegram_id: recipient.telegram_id,
-          broadcast_campaign_id: campaign?.id || null
-        });
-      }
-      
-      if (broadcastRecipients.length > 0) {
-        const { error: recipientsError } = await db.supabase
-          .from('broadcast_recipients')
-          .insert(broadcastRecipients);
-        
-        if (recipientsError) {
-          console.error('Erro ao registrar destinatários:', recipientsError);
-        }
-      }
-      
-      // Preparar mensagem com produtos em botões
+      // Preparar botões com produtos e descontos
       const productButtons = [];
       for (const product of session.selectedProducts) {
         const key = `${product.type}_${product.id}`;
         const discPercent = session.productDiscounts[key];
         const discValue = session.productDiscountValues?.[key] || (parseFloat(product.price) * discPercent / 100);
-        const originalPrice = parseFloat(product.price);
-        const discountedPrice = originalPrice - discValue;
-        
-        // Formatar desconto como número inteiro seguido de % OFF
+        const discountedPrice = parseFloat(product.price) - discValue;
         const discountDisplay = Math.round(discPercent);
-        
         if (product.type === 'product') {
-          productButtons.push([Markup.button.callback(
-            `🛍️ ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}% OFF)`,
-            `buy:${product.id}`
-          )]);
+          productButtons.push([{ text: `🛍️ ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}% OFF)`, callback_data: `buy:${product.id}` }]);
         } else {
-          productButtons.push([Markup.button.callback(
-            `📸 ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}% OFF)`,
-            `buy_media:${product.id}`
-          )]);
+          productButtons.push([{ text: `📸 ${product.name} - R$ ${discountedPrice.toFixed(2)} (${discountDisplay}% OFF)`, callback_data: `buy_media:${product.id}` }]);
         }
       }
-      
-      // Responder ao usuário imediatamente
-      await ctx.editMessageText(`✅ *PROMOÇÃO INICIADA!*
 
-📨 O broadcast está sendo enviado para ${users.length} usuários...
+      // Atualizar campanha como PENDING com imagem e botões — cron-job processa em lotes
+      await db.supabase
+        .from('broadcast_campaigns')
+        .update({
+          status: 'pending',
+          image_file_id: session.imageFileId || null,
+          buttons_json: productButtons.length > 0 ? productButtons : null,
+          creator_telegram_id: ctx.from.id
+        })
+        .eq('id', campaign.id);
 
-⏳ Este processo pode levar alguns minutos.
+      delete global._SESSIONS[ctx.from.id];
 
-🔔 Você receberá uma notificação quando concluir.`, {
-        parse_mode: 'Markdown'
-      });
-      
-      // Salvar referências necessárias antes do setImmediate
-      const telegram = ctx.telegram;
-      const creatorId = ctx.from.id;
-      
-      // Processar broadcast em background (não bloqueia webhook)
-      setImmediate(async () => {
-        let success = 0;
-        let failed = 0;
-        
-        try {
-          for (const recipient of users) {
-            try {
-              // Enviar imagem primeiro (se houver)
-              if (session.imageFileId) {
-                await telegram.sendPhoto(recipient.telegram_id, session.imageFileId, {
-                  caption: message,
-                  parse_mode: 'Markdown',
-                  reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
-                });
-              } else {
-                // Se não tiver imagem, enviar apenas mensagem com produtos
-                await telegram.sendMessage(recipient.telegram_id, message, {
-                  parse_mode: 'Markdown',
-                  reply_markup: Markup.inlineKeyboard(productButtons).reply_markup
-                });
-              }
-              success++;
+      // Buscar total para informar
+      const { count: totalUsers } = await db.supabase
+        .from('users')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_blocked', false);
 
-              // Rate limit seguro: máx ~3 msgs/s por usuário diferente (Telegram permite 30/s no total)
-              // 350ms garante ~2.8 msgs/s — bem abaixo do limite de ban
-              await new Promise(resolve => setTimeout(resolve, 350));
+      let agendadoMsg =
+        `✅ *CASTCUPOM AGENDADO!*
 
-              // Progresso a cada 100 envios
-              if ((success + failed) % 100 === 0) {
-                console.log(`📊 [BROADCAST] Progresso: ${success + failed}/${users.length} (✅ ${success} ❌ ${failed})`);
-              }
+` +
+        `📨 Sua promoção será enviada para *${totalUsers}* usuários.
 
-            } catch (err) {
-              failed++;
-              // Não logar como erro se for um caso esperado (comportamento normal)
-              const errorMessage = err.message || '';
-              const isExpectedError = 
-                errorMessage.includes('bot was blocked by the user') ||
-                errorMessage.includes('user is deactivated') ||
-                errorMessage.includes('chat not found') ||
-                errorMessage.includes('user not found') ||
-                errorMessage.includes('chat_id is empty') ||
-                errorMessage.includes('bot was blocked') ||
-                errorMessage.includes('chat_not_found');
-              
-              if (!isExpectedError) {
-                // Logar apenas erros reais (não relacionados a usuários inativos)
-                console.error(`❌ [BPC-BROADCAST] Erro inesperado ao enviar para ${recipient.telegram_id}:`, err.message);
-                console.error(`❌ [BPC-BROADCAST] Código de erro:`, err.code);
-              }
-            }
-          }
-          
-          // Atualizar campanha
-          if (campaign) {
-            await db.supabase
-              .from('broadcast_campaigns')
-              .update({
-                sent_count: success,
-                failed_count: failed,
-                status: 'sent',
-                sent_at: new Date().toISOString()
-              })
-              .eq('id', campaign.id);
-          }
-          
-          // Notificar criador do resultado
-          try {
-            await telegram.sendMessage(creatorId, `✅ *BROADCAST CONCLUÍDO!*
-
-📊 *Resultado:*
-✅ Enviados: ${success}
-❌ Falhas: ${failed}
-
-📨 Total processado: ${users.length} usuários
-
-🎉 Promoção enviada com sucesso!`, {
-              parse_mode: 'Markdown'
-            });
-          } catch (notifyErr) {
-            console.error('Erro ao notificar criador:', notifyErr.message);
-          }
-          
-          delete global._SESSIONS[creatorId];
-        } catch (backgroundErr) {
-          console.error('❌ [BPC-BROADCAST] Erro no processamento em background:', backgroundErr);
-          try {
-            await telegram.sendMessage(creatorId, `❌ *ERRO NO BROADCAST*
-
-⚠️ Ocorreu um erro durante o envio.
-
-Tente novamente ou verifique os logs.`, {
-              parse_mode: 'Markdown'
-            });
-          } catch (notifyErr) {
-            console.error('Erro ao notificar criador do erro:', notifyErr.message);
-          }
-        }
-      });
-      
-      let resultMessage = `✅ *PROMOÇÃO ENVIADA COM SUCESSO!*
-
-📊 *Estatísticas:*
-✅ Enviados: ${success}
-❌ Falhas: ${failed}
-📝 Total: ${users.length}
-
-📦 *Produtos com desconto:*
-
+` +
+        `📦 *Produtos com desconto:*
 `;
-      
+
       for (const product of session.selectedProducts) {
         const key = `${product.type}_${product.id}`;
-        const disc = session.productDiscounts[key];
-        resultMessage += `• ${product.name} - ${disc}% OFF\n`;
+        agendadoMsg += `• ${product.name} - ${session.productDiscounts[key]}% OFF
+`;
       }
-      
-      resultMessage += `
 
-━━━━━━━━━━━━━━━━━━━━━━━━
+      agendadoMsg +=
+        `
+⏱️ O envio acontece em lotes a cada 2 minutos.
+` +
+        `🔔 Você receberá uma notificação quando concluir.`;
 
-✅ *Usuários que receberam:* Verão o preço com desconto automaticamente ao clicar no produto
-
-_Promoção enviada com sucesso!_`;
-      
-      return ctx.editMessageText(resultMessage, {
+      return ctx.editMessageText(agendadoMsg, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
           [Markup.button.callback('🔙 Voltar ao Painel', 'creator_refresh')]
         ])
       });
-      
+
     } catch (err) {
       console.error('Erro no broadcast + cupom:', err);
       delete global._SESSIONS[ctx.from.id];
-      return ctx.reply('❌ Erro ao enviar broadcast.');
+      return ctx.reply('❌ Erro ao agendar CastCupom.');
     }
   });
   
