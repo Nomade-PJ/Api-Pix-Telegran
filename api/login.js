@@ -1,259 +1,130 @@
-// api/login.js — serve o HTML de login (HTML embutido)
+// api/login.js — Nexus Panel Login
 module.exports = function handler(req, res) {
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Login — Painel VIPs da Val</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>Nexus Panel — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07070f;--surface:#0e0e1a;--surface2:#141424;--border:#ffffff0a;--border2:#ffffff18;
+  --purple:#a855f7;--purple2:#c084fc;--purple-glow:#a855f730;--pink:#ec4899;
+  --text:#f1f0ff;--text2:#9090b0;--muted:#4a4a6a;--danger:#f43f5e;
+  --grad:linear-gradient(135deg,#a855f7,#ec4899);
+}
+body{font-family:'Space Grotesk',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
 
-  :root {
-    --bg: #0a0a0f;
-    --surface: #111118;
-    --surface2: #1a1a24;
-    --border: #ffffff0f;
-    --accent: #f97316;
-    --accent2: #fb923c;
-    --text: #f0f0f5;
-    --muted: #6b6b7e;
-    --danger: #ef4444;
-    --success: #22c55e;
-  }
+/* BG */
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 70% 60% at 20% 10%,#a855f712,transparent 60%),radial-gradient(ellipse 60% 50% at 80% 90%,#ec489910,transparent 60%);pointer-events:none}
 
-  body {
-    font-family: 'Syne', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
+/* GRID */
+.bg-grid{position:fixed;inset:0;background-image:linear-gradient(#ffffff05 1px,transparent 1px),linear-gradient(90deg,#ffffff05 1px,transparent 1px);background-size:40px 40px;mask-image:radial-gradient(ellipse 80% 80% at 50% 50%,black 30%,transparent 100%);pointer-events:none}
 
-  .bg-grid {
-    position: fixed; inset: 0; z-index: 0;
-    background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
-    background-size: 40px 40px;
-    mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
-  }
+/* GLOW ORB */
+.orb{position:fixed;width:500px;height:500px;background:radial-gradient(circle,#a855f718 0%,transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:breathe 5s ease-in-out infinite}
+@keyframes breathe{0%,100%{transform:translate(-50%,-50%) scale(1);opacity:.6}50%{transform:translate(-50%,-50%) scale(1.15);opacity:1}}
 
-  .glow {
-    position: fixed;
-    width: 600px; height: 600px;
-    background: radial-gradient(circle, #f9731620 0%, transparent 70%);
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none; z-index: 0;
-    animation: pulse 4s ease-in-out infinite;
-  }
+.wrap{position:relative;z-index:1;width:100%;max-width:400px;padding:16px}
 
-  @keyframes pulse {
-    0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
-    50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
-  }
+/* CARD */
+.card{background:var(--surface);border:1px solid var(--border2);border-radius:20px;padding:40px;box-shadow:0 0 60px #a855f710,0 32px 80px #00000050;animation:slideUp .5s cubic-bezier(.16,1,.3,1) both}
+@keyframes slideUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
 
-  .login-card {
-    position: relative; z-index: 1;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 48px;
-    width: 100%;
-    max-width: 420px;
-    box-shadow: 0 0 80px #f9731610, 0 32px 64px #00000060;
-    animation: slideUp .5s cubic-bezier(.16,1,.3,1) both;
-  }
+/* LOGO */
+.logo{text-align:center;margin-bottom:32px}
+.logo-icon{width:56px;height:56px;background:var(--grad);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 14px;box-shadow:0 0 30px var(--purple-glow);animation:float 3s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+.logo-title{font-size:22px;font-weight:700;letter-spacing:-.5px}
+.logo-title span{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo-sub{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:5px;letter-spacing:1px}
 
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(30px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
+/* FORM */
+.field{margin-bottom:18px}
+.field label{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px}
+.field input{width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:11px;padding:13px 16px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:14px;outline:none;transition:all .2s}
+.field input:focus{border-color:var(--purple);box-shadow:0 0 0 3px var(--purple-glow)}
+.field input::placeholder{color:var(--muted)}
 
-  .logo {
-    text-align: center;
-    margin-bottom: 36px;
-  }
+.btn-login{width:100%;background:var(--grad);border:none;border-radius:11px;padding:15px;color:#fff;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:700;cursor:pointer;transition:all .2s;margin-top:6px;box-shadow:0 4px 24px var(--purple-glow);letter-spacing:.3px}
+.btn-login:hover{opacity:.92;transform:translateY(-2px);box-shadow:0 8px 32px var(--purple-glow)}
+.btn-login:active{transform:translateY(0)}
+.btn-login:disabled{opacity:.5;cursor:not-allowed;transform:none}
 
-  .logo-icon {
-    font-size: 48px;
-    display: block;
-    margin-bottom: 12px;
-    animation: bounce 2s ease-in-out infinite;
-  }
+.err{background:#f43f5e12;border:1px solid #f43f5e35;border-radius:10px;padding:11px 16px;font-size:13px;color:var(--danger);margin-top:14px;display:none;animation:fadeIn .2s ease}
+.err.show{display:block}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
 
-  @keyframes bounce {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
-  }
-
-  .logo h1 {
-    font-size: 22px;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-    color: var(--text);
-  }
-
-  .logo span {
-    color: var(--accent);
-  }
-
-  .logo p {
-    font-size: 13px;
-    color: var(--muted);
-    margin-top: 4px;
-    font-family: 'JetBrains Mono', monospace;
-  }
-
-  .form-group {
-    margin-bottom: 20px;
-  }
-
-  label {
-    display: block;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-  }
-
-  input {
-    width: 100%;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
-    color: var(--text);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 14px;
-    outline: none;
-    transition: all .2s;
-  }
-
-  input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px #f9731615;
-  }
-
-  input::placeholder { color: var(--muted); }
-
-  .btn-login {
-    width: 100%;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border: none;
-    border-radius: 10px;
-    padding: 16px;
-    color: #fff;
-    font-family: 'Syne', sans-serif;
-    font-size: 15px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all .2s;
-    margin-top: 8px;
-    letter-spacing: 0.5px;
-  }
-
-  .btn-login:hover { transform: translateY(-2px); box-shadow: 0 8px 24px #f9731640; }
-  .btn-login:active { transform: translateY(0); }
-  .btn-login:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-
-  .error-msg {
-    background: #ef444415;
-    border: 1px solid #ef444440;
-    border-radius: 8px;
-    padding: 12px 16px;
-    font-size: 13px;
-    color: var(--danger);
-    margin-top: 16px;
-    display: none;
-  }
-
-  .error-msg.show { display: block; }
+/* FOOTER */
+.card-footer{text-align:center;margin-top:20px}
+.card-footer p{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace}
 </style>
 </head>
 <body>
 <div class="bg-grid"></div>
-<div class="glow"></div>
+<div class="orb"></div>
 
-<div class="login-card">
-  <div class="logo">
-    <span class="logo-icon">🔥</span>
-    <h1>VIPs da <span>Val</span></h1>
-    <p>// painel de controle</p>
+<div class="wrap">
+  <div class="card">
+    <div class="logo">
+      <div class="logo-icon">⬡</div>
+      <div class="logo-title"><span>Nexus</span> Panel</div>
+      <div class="logo-sub">// sistema de gestão</div>
+    </div>
+
+    <div class="field">
+      <label>E-mail</label>
+      <input type="email" id="email" placeholder="seu@email.com" autocomplete="email">
+    </div>
+
+    <div class="field">
+      <label>Senha</label>
+      <input type="password" id="password" placeholder="••••••••••" autocomplete="current-password">
+    </div>
+
+    <button class="btn-login" id="btnLogin" onclick="login()">Entrar no Sistema</button>
+    <div class="err" id="errMsg"></div>
+
+    <div class="card-footer">
+      <p>acesso restrito // autorizado apenas</p>
+    </div>
   </div>
-
-  <div class="form-group">
-    <label>E-mail</label>
-    <input type="email" id="email" placeholder="seu@email.com" autocomplete="email">
-  </div>
-
-  <div class="form-group">
-    <label>Senha</label>
-    <input type="password" id="password" placeholder="••••••••••" autocomplete="current-password">
-  </div>
-
-  <button class="btn-login" id="btnLogin" onclick="login()">Entrar no Painel</button>
-
-  <div class="error-msg" id="errorMsg"></div>
 </div>
 
 <script>
-  const BASE = '';
+document.getElementById('password').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 
-  document.getElementById('password').addEventListener('keydown', e => {
-    if (e.key === 'Enter') login();
-  });
-
-  async function login() {
-    const email = document.getElementById('email').value.trim();
-    const password = document.getElementById('password').value;
-    const btn = document.getElementById('btnLogin');
-    const err = document.getElementById('errorMsg');
-
-    if (!email || !password) {
-      err.textContent = 'Preencha e-mail e senha.';
+async function login() {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const btn = document.getElementById('btnLogin');
+  const err = document.getElementById('errMsg');
+  err.classList.remove('show');
+  if (!email || !password) { err.textContent = 'Preencha e-mail e senha.'; err.classList.add('show'); return; }
+  btn.disabled = true; btn.textContent = 'Autenticando...';
+  try {
+    const r = await fetch('/api/panel/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) });
+    const d = await r.json();
+    if (d.ok && d.token) {
+      localStorage.setItem('panel_token', d.token);
+      localStorage.setItem('panel_user', JSON.stringify({ name: d.name, email: d.email }));
+      window.location.href = '/painel';
+    } else {
+      err.textContent = d.error || 'Credenciais inválidas.';
       err.classList.add('show');
-      return;
+      btn.disabled = false; btn.textContent = 'Entrar no Sistema';
     }
-
-    btn.disabled = true;
-    btn.textContent = 'Entrando...';
-    err.classList.remove('show');
-
-    try {
-      const res = await fetch('/api/panel/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await res.json();
-
-      if (data.ok && data.token) {
-        localStorage.setItem('panel_token', data.token);
-        localStorage.setItem('panel_user', JSON.stringify({ name: data.name, email: data.email }));
-        window.location.href = '/painel';
-      } else {
-        err.textContent = data.error || 'Erro ao fazer login.';
-        err.classList.add('show');
-        btn.disabled = false;
-        btn.textContent = 'Entrar no Painel';
-      }
-    } catch (e) {
-      err.textContent = 'Erro de conexão. Tente novamente.';
-      err.classList.add('show');
-      btn.disabled = false;
-      btn.textContent = 'Entrar no Painel';
-    }
+  } catch(e) {
+    err.textContent = 'Erro de conexão. Tente novamente.';
+    err.classList.add('show');
+    btn.disabled = false; btn.textContent = 'Entrar no Sistema';
   }
+}
 </script>
 </body>
-</html>
-`;
+</html>`;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(html);
 };
