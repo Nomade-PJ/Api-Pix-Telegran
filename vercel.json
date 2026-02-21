@@ -24,6 +24,7 @@
     { "src": "/api/panel/auth", "dest": "/api/panel/auth.js", "methods": ["GET", "POST", "OPTIONS"] },
     { "src": "/api/panel/data", "dest": "/api/panel/data.js", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"] },
     { "src": "/login", "dest": "/api/login.js" },
-    { "src": "/painel", "dest": "/api/painel.js" }
+    { "src": "/painel", "dest": "/api/painel.js" },
+    { "src": "/", "headers": { "Location": "/login" }, "status": 302 }
   ]
 }
