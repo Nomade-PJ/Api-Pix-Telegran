@@ -1,4 +1,4 @@
-// api/painel.js — Nexus Panel v2
+// api/painel.js — Nexus Panel v3.1 — build limpo, paridade total bot Telegram
 module.exports = function handler(req, res) {
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -222,6 +222,20 @@ td b,td strong{color:var(--fg);font-weight:500}
 .empty-ic{font-size:32px;opacity:.3}
 .empty-txt{font-size:13px}
 
+/* ── USER CARD (scroll infinito) ─────────── */
+.user-card{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);transition:background .08s}
+.user-card:hover{background:var(--s2)}
+.user-card:last-child{border-bottom:none}
+.uc-av{width:34px;height:34px;border-radius:8px;background:var(--s4);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--fg2);flex-shrink:0;border:1px solid var(--line2)}
+.uc-info{flex:1;min-width:0}
+.uc-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uc-sub{font-size:11px;color:var(--fg3);font-family:'Geist Mono',monospace;margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.uc-phone{color:var(--violet-ll);text-decoration:none}
+.uc-phone:hover{text-decoration:underline}
+.uc-badges{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.uc-actions{display:flex;gap:4px;flex-shrink:0}
+.end-msg{text-align:center;padding:16px;font-size:11px;font-family:'Geist Mono',monospace;color:var(--fg3)}
+
 /* ── TOAST ─────────────────────────────── */
 .toasts{position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
 .toast{background:var(--s3);border:1px solid var(--line3);border-radius:8px;padding:10px 14px;font-size:13px;display:flex;align-items:center;gap:8px;box-shadow:0 8px 32px #00000060;animation:tin .25s cubic-bezier(.16,1,.3,1);pointer-events:auto;min-width:220px}
@@ -294,11 +308,13 @@ td b,td strong{color:var(--fg);font-weight:500}
 
     <div class="nav-section">Catálogo</div>
     <div class="nav-item" onclick="go('products',this)"><i class="nav-ico">▣</i>Produtos</div>
-    <div class="nav-item" onclick="go('groups',this)"><i class="nav-ico">▤</i>Grupos VIP</div>
+    <div class="nav-item" onclick="go('mediapacks',this)"><i class="nav-ico">▤</i>Media Packs</div>
+    <div class="nav-item" onclick="go('groups',this)"><i class="nav-ico">◎</i>Grupos VIP</div>
     <div class="nav-item" onclick="go('coupons',this)"><i class="nav-ico">◈</i>Cupons</div>
 
     <div class="nav-section">Usuários</div>
     <div class="nav-item" onclick="go('users',this)"><i class="nav-ico">◯</i>Usuários</div>
+    <div class="nav-item" onclick="go('topclientes',this)"><i class="nav-ico">★</i>Top Clientes</div>
     <div class="nav-item" onclick="go('trusted',this)"><i class="nav-ico">◎</i>Confiáveis</div>
     <div class="nav-item" onclick="go('tickets',this)"><i class="nav-ico">▧</i>Tickets<span class="nav-cnt violet" id="cnt-tick">0</span></div>
 
@@ -308,6 +324,7 @@ td b,td strong{color:var(--fg);font-weight:500}
 
     <div class="nav-section">Sistema</div>
     <div class="nav-item" onclick="go('settings',this)"><i class="nav-ico">◎</i>Configurações</div>
+    <div class="nav-item" onclick="go('deliver',this)"><i class="nav-ico">↓</i>Entrega Manual</div>
     <div class="nav-item" onclick="go('ddds',this)"><i class="nav-ico">◬</i>DDDs Bloqueados</div>
   </nav>
 
@@ -381,7 +398,7 @@ td b,td strong{color:var(--fg);font-weight:500}
     <div id="s-failures" class="sec">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <span style="font-size:13px;font-weight:500">Falhas de entrega</span>
-        <button class="btn btn-default btn-xs" onclick="loadFailures()">↺ Atualizar</button>
+        <button class="btn btn-default btn-xs" onclick="loadFail()">↺ Atualizar</button>
       </div>
       <div class="card" id="failTable"><div class="loader"><div class="spin"></div></div></div>
     </div>
@@ -390,9 +407,21 @@ td b,td strong{color:var(--fg);font-weight:500}
     <div id="s-products" class="sec">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <span style="font-size:13px;font-weight:500">Produtos</span>
-        <button class="btn btn-primary btn-xs" onclick="openM('mProd')">+ Novo produto</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-default btn-xs" onclick="loadProd(true)">+ inativos</button>
+          <button class="btn btn-primary btn-xs" onclick="openM('mProd')">+ Novo produto</button>
+        </div>
       </div>
       <div class="card" id="prodTable"><div class="loader"><div class="spin"></div></div></div>
+    </div>
+
+    <!-- MEDIA PACKS -->
+    <div id="s-mediapacks" class="sec">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span style="font-size:13px;font-weight:500">Media Packs</span>
+        <button class="btn btn-primary btn-xs" onclick="openM('mMP')">+ Novo pack</button>
+      </div>
+      <div class="card" id="mpTable"><div class="loader"><div class="spin"></div></div></div>
     </div>
 
     <!-- GRUPOS -->
@@ -413,19 +442,32 @@ td b,td strong{color:var(--fg);font-weight:500}
       <div class="card" id="couponTable"><div class="loader"><div class="spin"></div></div></div>
     </div>
 
-    <!-- USUÁRIOS -->
+    <!-- USUÁRIOS (SCROLL INFINITO) -->
     <div id="s-users" class="sec">
       <div class="filters">
-        <input class="fi fi-sm" style="width:220px" id="userQ" placeholder="Nome, username ou ID..." oninput="dbounce(loadUsers,400)()">
-        <select class="fi fi-sm" id="userBl" onchange="loadUsers()">
+        <input class="fi fi-sm" style="width:220px" id="userQ" placeholder="Nome, username ou ID..." oninput="dbounce('resetUserScroll',300)">
+        <select class="fi fi-sm" id="userBl" onchange="resetUserScroll()">
           <option value="">Todos</option>
           <option value="false">Ativos</option>
           <option value="true">Bloqueados</option>
         </select>
-        <button class="btn btn-default btn-xs" onclick="loadUsers()">↺</button>
+        <button class="btn btn-default btn-xs" onclick="resetUserScroll()">↺</button>
+        <span id="userCount" style="font-size:11px;font-family:'Geist Mono',monospace;color:var(--fg3);margin-left:4px"></span>
       </div>
-      <div class="card" id="usersTable"><div class="loader"><div class="spin"></div></div></div>
-      <div class="pager" id="usersPager"></div>
+      <div class="card" id="usersWrap">
+        <div id="usersList"></div>
+        <div id="usersLoader" class="loader" style="display:none"><div class="spin"></div><span class="loader-txt">carregando...</span></div>
+        <div id="usersEnd" class="end-msg" style="display:none">— fim da lista —</div>
+      </div>
+    </div>
+
+    <!-- TOP CLIENTES -->
+    <div id="s-topclientes" class="sec">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span style="font-size:13px;font-weight:500">Top Clientes</span>
+        <button class="btn btn-default btn-xs" onclick="loadStats()">↺</button>
+      </div>
+      <div class="card" id="topTable"><div class="loader"><div class="spin"></div></div></div>
     </div>
 
     <!-- CONFIÁVEIS -->
@@ -456,7 +498,7 @@ td b,td strong{color:var(--fg);font-weight:500}
     <div id="s-broadcast" class="sec">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <span style="font-size:13px;font-weight:500">Campanhas broadcast</span>
-        <button class="btn btn-default btn-xs" onclick="loadBroadcast()">↺</button>
+        <button class="btn btn-default btn-xs" onclick="loadBC()">↺</button>
       </div>
       <div id="bcList"><div class="loader"><div class="spin"></div></div></div>
     </div>
@@ -471,6 +513,29 @@ td b,td strong{color:var(--fg);font-weight:500}
     </div>
 
     <!-- SETTINGS -->
+    <div id="s-deliver" class="sec">
+      <div style="max-width:500px">
+        <div class="set-block">
+          <h3>Entrega manual de produto</h3>
+          <p>Entregue qualquer produto a qualquer usuário, independente de transação.</p>
+          <div class="frow"><label>Telegram ID do usuário *</label><input class="fi" id="delUserId" placeholder="Ex: 6224210204" type="number"></div>
+          <div class="frow"><label>Tipo *</label>
+            <select class="fi" id="delType" onchange="updateDelProduct()">
+              <option value="product">Produto</option>
+              <option value="mediapack">Media Pack</option>
+              <option value="group">Grupo VIP</option>
+            </select>
+          </div>
+          <div class="frow"><label>Item *</label><select class="fi" id="delProduct"><option>Carregando...</option></select></div>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button class="btn btn-default" onclick="lookupDelUser()">🔍 Verificar usuário</button>
+            <button class="btn btn-primary" onclick="doManualDeliver()">↓ Entregar agora</button>
+          </div>
+          <div id="delUserInfo" style="margin-top:12px;padding:10px;background:var(--s2);border:1px solid var(--line);border-radius:8px;font-size:12px;display:none"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="s-settings" class="sec">
       <div style="font-size:13px;font-weight:500;margin-bottom:18px">Configurações do sistema</div>
       <div class="set-block">
@@ -484,6 +549,12 @@ td b,td strong{color:var(--fg);font-weight:500}
         <p>Link do canal ou usuário de suporte</p>
         <div class="frow"><label>Link (ex: https://t.me/usuario)</label><input class="fi" id="supportLink" placeholder="Carregando..."></div>
         <button class="btn btn-primary btn-xs" onclick="saveSetting('support_contact',document.getElementById('supportLink').value,'Suporte atualizado.')">Salvar</button>
+      </div>
+      <div class="set-block">
+        <h3>Recalcular total de vendas</h3>
+        <p>Força recálculo do valor total com base nas transações entregues</p>
+        <button class="btn btn-warn btn-xs" onclick="recalcValues()">↺ Recalcular agora</button>
+        <span id="recalcResult" style="font-size:12px;color:var(--fg3);margin-left:10px"></span>
       </div>
     </div>
 
@@ -499,7 +570,22 @@ td b,td strong{color:var(--fg);font-weight:500}
   </div>
 </div>
 
-<!-- MODAIS -->
+<div class="overlay" id="mMP"><div class="modal">
+  <div class="modal-title">Novo Media Pack</div>
+  <div class="frow"><label>ID único *</label><input class="fi" id="mp_id" placeholder="pack_premium"></div>
+  <div class="frow"><label>Nome *</label><input class="fi" id="mp_name" placeholder="Premium Pack"></div>
+  <div class="frow"><label>Descrição</label><textarea class="fi" id="mp_desc" placeholder="..."></textarea></div>
+  <div class="frow"><label>Preço R$ *</label><input class="fi" type="number" id="mp_price" step="0.01" placeholder="29.90"></div>
+  <div class="frow"><label>Itens por entrega</label><input class="fi" type="number" id="mp_items" placeholder="3" value="3" min="1"></div>
+  <div class="modal-foot"><button class="btn btn-ghost" onclick="closeM('mMP')">Cancelar</button><button class="btn btn-primary" onclick="closeM('mMP')">Criar pack</button></div>
+</div></div>
+
+<div class="overlay" id="mMPItems"><div class="modal lg">
+  <div class="modal-title" id="mMPItemsTitle">Itens do Pack</div>
+  <div id="mMPItemsList" style="max-height:360px;overflow-y:auto;padding:4px 0"></div>
+  <div class="modal-foot"><button class="btn btn-ghost" onclick="closeM('mMPItems')">Fechar</button></div>
+</div></div>
+
 <div class="overlay" id="mProd"><div class="modal">
   <div class="modal-title">Novo produto</div>
   <div class="frow"><label>ID *</label><input class="fi" id="p_id" placeholder="pack_vip_01"></div>
@@ -550,15 +636,20 @@ td b,td strong{color:var(--fg);font-weight:500}
 <div class="overlay" id="mTicket"><div class="modal lg">
   <div class="modal-title" id="mTickTitle">Ticket</div>
   <div class="msg-thread" id="mTickMsgs"></div>
+  <div style="margin-top:12px">
+    <div class="frow"><label>Responder como admin</label><textarea class="fi" id="tickReplyTxt" placeholder="Digite sua resposta..." style="min-height:64px;margin-top:4px"></textarea></div>
+  </div>
   <div class="modal-foot">
     <button class="btn btn-ghost" onclick="closeM('mTicket')">Fechar</button>
     <button class="btn btn-default btn-xs" id="btnCloseT">Fechar ticket</button>
+    <button class="btn btn-default btn-xs" id="btnReplyT">Enviar resposta</button>
     <button class="btn btn-success btn-xs" id="btnResolveT">✓ Resolver</button>
   </div>
 </div></div>
 
 <div class="overlay" id="mUser"><div class="modal">
-  <div class="ud-head"><div class="ud-av">👤</div><div id="udInfo"></div></div>
+  <div class="ud-head"><div class="ud-av" id="udAv">👤</div><div id="udInfo"></div></div>
+  <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap" id="udActions"></div>
   <div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Transações recentes</div>
   <div id="udTx"></div>
   <div class="modal-foot"><button class="btn btn-ghost" onclick="closeM('mUser')">Fechar</button></div>
@@ -606,7 +697,7 @@ function dbounce(fn,ms){
 
 // NAV
 const meta={dashboard:'dashboard',stats:'analytics',transactions:'transactions',failures:'falhas',products:'produtos',groups:'grupos',coupons:'cupons',users:'usuários',trusted:'confiáveis',tickets:'tickets',broadcast:'broadcast',autoresponses:'respostas auto',settings:'configurações',ddds:'ddds bloqueados'};
-const loads={dashboard:loadDash,stats:loadStats,transactions:loadTx,failures:loadFail,products:loadProd,groups:loadGroups,coupons:loadCoupons,users:loadUsers,trusted:loadTrusted,tickets:loadTickets,broadcast:loadBC,autoresponses:loadAR,settings:loadSettings,ddds:loadDDDs};
+const loads={dashboard:loadDash,stats:loadStats,transactions:loadTx,failures:loadFail,products:loadProd,groups:loadGroups,coupons:loadCoupons,users:initUsers,trusted:loadTrusted,tickets:loadTickets,broadcast:loadBC,autoresponses:loadAR,settings:loadSettings,ddds:loadDDDs,deliver:loadDeliver,mediapacks:loadMP};
 
 function go(sec,el){
   document.querySelectorAll('.sec').forEach(s=>s.classList.remove('on'));
@@ -620,6 +711,7 @@ function go(sec,el){
 // HELPERS
 function fmt(v){return parseFloat(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtD(d){if(!d)return'—';const dt=new Date(d);return dt.toLocaleDateString('pt-BR')+' '+dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+function fmtDs(d){if(!d)return'—';return new Date(d).toLocaleDateString('pt-BR');}
 
 function tag(st){
   const m={pending:['t-pending','pending'],approved:['t-approved','approved'],delivered:['t-delivered','delivered'],rejected:['t-rejected','rejected'],delivery_failed:['t-failed','failed'],reversed:['t-reversed','reversed'],active:['t-active','active'],inactive:['t-inactive','inactive'],blocked:['t-blocked','blocked'],open:['t-open','open'],resolved:['t-resolved','resolved'],closed:['t-closed','closed'],sending:['t-sending','sending'],pending_broadcast:['t-sending','pending'],sent:['t-sent','sent'],cancelled:['t-inactive','cancelled'],admin:['t-admin','admin'],creator:['t-creator','creator']};
@@ -872,6 +964,7 @@ async function viewTicket(id,subject,status){
 }
 async function resolveT(id){await api('resolveTicket',{method:'POST',body:{ticket_id:id}});toast('Ticket resolvido.');loadTickets();}
 async function closeT(id){await api('closeTicket',{method:'POST',body:{ticket_id:id}});toast('Ticket fechado.','warn');loadTickets();}
+async function progressT(id){await api('progressTicket',{method:'POST',body:{ticket_id:id}});toast('Em andamento.','warn');loadTickets();}
 
 // BROADCAST
 async function loadBC(){
@@ -914,14 +1007,7 @@ async function loadAR(){
 async function saveAR(){const body={keyword:document.getElementById('ar_kw').value,response:document.getElementById('ar_resp').value,priority:document.getElementById('ar_pri').value};const d=await api('createAutoResponse',{method:'POST',body});if(d.ok){closeM('mAR');toast('Resposta criada.');loadAR();}else toast(d.error||'Erro','err');}
 async function delAR(id){if(!confirm('Remover resposta?'))return;await api('deleteAutoResponse',{method:'DELETE',params:{id}});toast('Removida.','warn');loadAR();}
 
-// SETTINGS
-async function loadSettings(){
-  const d=await api('settings');
-  const s=d.settings||{};
-  document.getElementById('pixKey').value=s.pix_key||'';
-  document.getElementById('supportLink').value=s.support_contact||'';
-}
-async function saveSetting(key,value,msg){if(!value){toast('Valor não pode ser vazio','err');return;}await api('saveSetting',{method:'POST',body:{key,value}});toast(msg||'Salvo.');}
+// SETTINGS - ver abaixo
 
 // DDDs
 async function loadDDDs(){
@@ -933,13 +1019,142 @@ async function loadDDDs(){
 async function addDDD(){const body={area_code:document.getElementById('ddd_c').value,state:document.getElementById('ddd_s').value,reason:document.getElementById('ddd_r').value};const d=await api('addDDD',{method:'POST',body});if(d.ok){closeM('mDDD');toast('DDD bloqueado.','warn');loadDDDs();}else toast(d.error||'Erro','err');}
 async function remDDD(code){if(!confirm('Desbloquear DDD '+code+'?'))return;await api('removeDDD',{method:'DELETE',params:{area_code:code}});toast('DDD desbloqueado.');loadDDDs();}
 
+
+// MEDIA PACKS
+async function loadMP(){
+  const d=await api('mediaPacks');
+  if(!d.data?.length){document.getElementById('mpTable').innerHTML='<div class=\\"empty\\"><div class=\\"empty-ic\\">▤</div><div class=\\"empty-txt\\">nenhum media pack</div></div>';return;}
+  const rows=d.data.map(p=>'<tr><td><b>'+p.name+'</b></td><td class=\\"mono\\">'+p.pack_id+'</td><td class=\\"mono\\">R$ '+fmt(p.price)+'</td><td class=\\"mono\\">'+(p.items_per_delivery||3)+' itens/entrega</td><td>'+tag(p.is_active?'active':'inactive')+'</td><td><button class=\\"btn btn-default btn-xs\\" onclick=\\"viewMP(\\'' +p.pack_id+'\\',\\''+p.name.replace(/'/g,'\\\\\\'')+'\\')\\" >Ver itens</button></td></tr>').join('');
+  document.getElementById('mpTable').innerHTML='<table><thead><tr><th>Nome</th><th>Pack ID</th><th>Preço</th><th>Entrega</th><th>Status</th><th>Ação</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+async function viewMP(packId,name){
+  document.getElementById('mMPTitle').textContent=name;document.getElementById('mMPItems').innerHTML='<div class=\\"loader\\"><div class=\\"spin\\"></div></div>';openM('mMP');
+  const d=await api('mediaItems',{params:{pack_id:packId}});const items=d.data||[];
+  document.getElementById('mMPCount').textContent='('+items.length+' itens)';
+  document.getElementById('mMPInfo').textContent='Pack ID: '+packId+' · '+items.length+' arquivos';
+  document.getElementById('mMPItems').innerHTML=items.map(i=>{const isImg=i.file_type&&(i.file_type.includes('image')||i.file_type.includes('photo'));return'<div class=\\"media-thumb\\" title=\\"'+i.file_name+'\\">'+(isImg&&i.file_url?'<img src=\\"'+i.file_url+'\\" loading=\\"lazy\\">':'<span>'+(i.file_type||'file')+'</span>')+'</div>';}).join('')||'<div style=\\"grid-column:1/-1;color:var(--fg3);text-align:center;padding:20px;font-size:12px\\">sem itens</div>';
+}
+
+// USUÁRIOS INFINITE SCROLL
+let uState={loading:false,done:false,offset:0,limit:30,q:'',bl:''};
+function initUsers(){
+  uState={loading:false,done:false,offset:0,limit:30,q:document.getElementById('userQ').value,bl:document.getElementById('userBl').value};
+  document.getElementById('usersBody').innerHTML='';
+  document.getElementById('usersEnd').style.display='none';
+  loadMoreUsers();
+}
+function resetUserScroll(){
+  uState.offset=0;uState.done=false;uState.q=document.getElementById('userQ').value;uState.bl=document.getElementById('userBl').value;
+  document.getElementById('usersBody').innerHTML='';document.getElementById('usersEnd').style.display='none';
+  loadMoreUsers();
+}
+function searchUsers(){resetUserScroll();}
+async function loadMoreUsers(){
+  if(uState.loading||uState.done)return;
+  uState.loading=true;
+  document.getElementById('usersLoader').style.display='flex';
+  const d=await api('usersScroll',{params:{offset:uState.offset,limit:uState.limit,search:uState.q,blocked:uState.bl}});
+  document.getElementById('usersLoader').style.display='none';
+  const items=d.data||[];
+  if(d.total!==undefined)document.getElementById('userCountLbl').textContent=d.total.toLocaleString()+' usuários';
+  const tbody=document.getElementById('usersBody');
+  items.forEach(u=>{
+    const tr=document.createElement('tr');
+    const tgLink=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
+    const phoneLink=u.phone_number?'https://t.me/+'+u.phone_number.replace(/\\D/g,''):'';
+    tr.innerHTML='<td><b>'+(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'')+'</b></td>'
+      +'<td>'+(u.username?'<a href=\\"https://t.me/'+u.username+'\\" target=\\"_blank\\" class=\\"mono\\" style=\\"color:var(--violet-ll);font-size:12px;text-decoration:none\\">@'+u.username+'</a>':'<span style=\\"color:var(--fg3)\\">—</span>')+'</td>'
+      +'<td><a href=\\"'+tgLink+'\\" target=\\"_blank\\" class=\\"mono\\" style=\\"color:var(--violet-ll);font-size:12px\\">'+u.telegram_id+'</a></td>'
+      +'<td>'+(u.phone_number?'<a href=\\"'+phoneLink+'\\" target=\\"_blank\\" class=\\"mono\\" style=\\"color:var(--fg2);font-size:12px\\">'+u.phone_number+'</a>':'<span style=\\"color:var(--fg3)\\">—</span>')+'</td>'
+      +'<td><div style=\\"display:flex;gap:3px;flex-wrap:wrap\\">'+tag(u.is_blocked?'blocked':'active')+(u.is_admin?tag('admin'):'')+(u.is_creator?tag('creator'):'')+'</div></td>'
+      +'<td style=\\"font-size:10px;color:var(--fg3);font-family:\\'Geist Mono\\',monospace\\">'+fmtDs(u.created_at)+'</td>'
+      +'<td><div style=\\"display:flex;gap:3px\\"><button class=\\"btn btn-default btn-xs\\" onclick=\\"viewUser('+u.telegram_id+')\\">Ver</button>'+(u.is_blocked?'<button class=\\"btn btn-success btn-xs\\" onclick=\\"unblockUser('+u.telegram_id+')\\">↑</button>':'<button class=\\"btn btn-danger btn-xs\\" onclick=\\"blockUser('+u.telegram_id+')\\">Bloquear</button>')+'</div></td>';
+    tbody.appendChild(tr);
+  });
+  uState.offset+=items.length;uState.loading=false;
+  if(items.length<uState.limit){uState.done=true;document.getElementById('usersEnd').style.display='block';}
+}
+
+// BROADCAST DETAIL
+async function viewBC(id){
+  const d=await api('broadcasts');const c=(d.data||[]).find(x=>x.id===id)||{};
+  document.getElementById('mBCTitle').textContent=c.name||'Campanha';
+  document.getElementById('mBCBody').innerHTML='<div style=\\"display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px\\"><div><div style=\\"font-size:10px;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px\\">Status</div>'+tag(c.status)+'</div><div><div style=\\"font-size:10px;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px\\">Público</div><span class=\\"mono\\" style=\\"font-size:12px\\">'+(c.target_audience||'all')+'</span></div><div><div style=\\"font-size:10px;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px\\">Sucesso / Falha</div><span class=\\"mono\\" style=\\"font-size:12px\\">✓'+(c.success_count||0)+' / ✗'+(c.failed_count||0)+'</span></div><div><div style=\\"font-size:10px;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px\\">Cupom</div><span class=\\"mono\\" style=\\"font-size:12px\\">'+(c.coupon_code||'—')+'</span></div></div>'+(c.message?'<div style=\\"font-size:10px;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px\\">Mensagem</div><div style=\\"background:var(--s3);border:1px solid var(--line);border-radius:6px;padding:10px;font-size:12px;color:var(--fg2);white-space:pre-wrap;max-height:160px;overflow:auto\\">'+c.message+'</div>':'');
+  const running=c.status==='sending'||c.status==='pending_broadcast';
+  document.getElementById('btnCancelBC').style.display=running?'':'none';
+  document.getElementById('btnCancelBC').onclick=()=>{cancelBC(id);closeM('mBC');};
+  openM('mBC');
+}
+
+// CONFIGURAÇÕES COMPLETAS
+async function loadSettings(){
+  const d=await api('settings');const s=d.settings||{};
+  document.getElementById('pixKey').value=s.pix_key||'';
+  document.getElementById('supportLink').value=s.support_contact||'';
+  document.getElementById('creatorId').value=s.creator_telegram_id||'';
+  document.getElementById('creator2Id').value=s.creator2_telegram_id||'';
+  document.getElementById('bcCouponEnabled').checked=s.broadcast_coupon_enabled==='true';
+}
+async function saveSetting(key,value,msg){await api('saveSetting',{method:'POST',body:{key,value}});toast(msg||'Salvo.');}
+async function saveCreatorIds(){
+  await Promise.all([
+    api('saveSetting',{method:'POST',body:{key:'creator_telegram_id',value:document.getElementById('creatorId').value}}),
+    api('saveSetting',{method:'POST',body:{key:'creator2_telegram_id',value:document.getElementById('creator2Id').value}})
+  ]);
+  toast('IDs de criador salvos.');
+}
+
+// ANALYTICS - recalcular
+async function recalcValues(){toast('Recalculando...','warn');const d=await api('recalculateValues',{method:'POST'});if(d.ok)toast('Recalculado. Correções: '+(d.fixed||0));else toast(d.error||'Erro ao recalcular','err');}
+
+// ENTREGA MANUAL
+let delProds={product:[],mediapack:[],group:[]};
+async function loadDeliver(){
+  const[pd,mp,gp]=await Promise.all([api('products'),api('mediaPacks'),api('groups')]);
+  delProds.product=(pd.data||[]).filter(p=>p.is_active);
+  delProds.mediapack=(mp.data||[]).filter(p=>p.is_active);
+  delProds.group=(gp.data||[]).filter(g=>g.is_active);
+  updateDelProduct();
+}
+function updateDelProduct(){
+  const type=document.getElementById('delType').value;
+  const items=delProds[type]||[];
+  const kId=type==='product'?'product_id':type==='mediapack'?'pack_id':'group_id';
+  const kName=type==='product'?'name':type==='mediapack'?'name':'group_name';
+  document.getElementById('delProduct').innerHTML=items.map(p=>'<option value="'+p[kId]+'">'+(p[kName]||p[kId])+'</option>').join('')||'<option>Nenhum ativo disponível</option>';
+}
+async function lookupDelUser(){
+  const tid=document.getElementById('delUserId').value;if(!tid)return;
+  const d=await api('userDetail',{params:{telegram_id:tid}});const u=d.user;
+  const div=document.getElementById('delUserInfo');
+  if(!u){div.innerHTML='<span style="color:var(--danger)">Usuário não encontrado</span>';div.style.display='block';return;}
+  div.innerHTML='<b>'+(u.first_name||'N/A')+' '+(u.last_name||'')+'</b> &nbsp;<span class="mono" style="color:var(--fg3)">@'+(u.username||u.telegram_id)+'</span>'+(u.is_blocked?'&nbsp;<span style="color:var(--danger)">🔴 BLOQUEADO</span>':'&nbsp;<span style="color:var(--success)">● ativo</span>');
+  div.style.display='block';
+}
+async function doManualDeliver(){
+  const telegram_id=document.getElementById('delUserId').value;
+  const type=document.getElementById('delType').value;
+  const product_id=document.getElementById('delProduct').value;
+  if(!telegram_id||!product_id){toast('Preencha todos os campos','err');return;}
+  if(!confirm('Entregar para usuário '+telegram_id+'?'))return;
+  const d=await api('manualDeliver',{method:'POST',body:{telegram_id,type,product_id}});
+  if(d.ok)toast('Entregue com sucesso!');else toast(d.error||'Erro na entrega','err');
+}
+
+// SCROLL INFINITO USUÁRIOS
+document.getElementById('mainContent').addEventListener('scroll',function(){
+  if(currentSec!=='users')return;
+  if(this.scrollHeight-this.scrollTop-this.clientHeight<250)loadMoreUsers();
+},{passive:true});
+
 // INIT
 checkAuth().then(()=>loadDash());
-setInterval(()=>{const a=document.querySelector('.sec.on');if(a?.id==='s-dashboard')loadDash();},60000);
+setInterval(()=>{if(currentSec==='dashboard')loadDash();},60000);
 </script>
 </body>
 </html>
 `;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
   res.status(200).send(html);
 };
