@@ -87,6 +87,12 @@ function registerAdminCommands(bot) {
   });
   
   // ===== FUNÇÃO PARA BUSCAR E EXIBIR INFORMAÇÕES DO USUÁRIO =====
+  // Escapa caracteres especiais do Markdown v1 em valores dinâmicos
+  function escMd(val) {
+    if (val == null) return 'N/A';
+    return String(val).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
+  }
+
   async function buscarUsuarioInfo(ctx, telegramId) {
     try {
       // Buscar usuário
@@ -98,52 +104,58 @@ function registerAdminCommands(bot) {
       // Buscar transações
       const transactions = await db.getUserTransactions(telegramId, 50);
       
-      // Construir mensagem sem Markdown problemático
+      // Montar mensagem — valores dinâmicos SEM parse_mode para evitar quebra
+      // Usamos MarkdownV2 com escape correto em todos os campos variáveis
+      const nome     = escMd(user.first_name);
+      const username = user.username ? `@${escMd(user.username)}` : 'sem username';
+      const bloq     = user.is_blocked ? '🚫 Sim' : '✅ Não';
+      const cadData  = escMd(new Date(user.created_at).toLocaleString('pt-BR'));
+
       let message = `👤 *USUÁRIO ENCONTRADO:*\n\n`;
-      message += `Nome: ${user.first_name || 'N/A'}\n`;
+      message += `Nome: ${nome}\n`;
       message += `ID: ${telegramId}\n`;
-      message += `Username: @${user.username || 'N/A'}\n`;
-      message += `Bloqueado: ${user.is_blocked ? 'Sim' : 'Não'}\n`;
-      message += `Cadastrado em: ${new Date(user.created_at).toLocaleString('pt-BR')}\n`;
-      
-      if (transactions.length === 0) {
-        message += `\n❌ Nenhuma transação encontrada.`;
-        return ctx.reply(message, { parse_mode: 'Markdown' });
-      }
-      
-      message += `\n📊 *TRANSAÇÕES (${transactions.length}):*\n\n`;
+      message += `Username: ${username}\n`;
+      message += `Bloqueado: ${bloq}\n`;
+      message += `Cadastrado em: ${cadData}\n`;
       
       const keyboard = [];
-      
-      for (const tx of transactions.slice(0, 5)) {
-        message += `🆔 TXID: ${tx.txid}\n`;
-        message += `💰 Valor: R$ ${tx.amount}\n`;
-        message += `📊 Status: ${tx.status}\n`;
-        message += `📅 Data: ${new Date(tx.created_at).toLocaleString('pt-BR')}\n`;
-        
-        if (tx.proof_file_id) {
-          message += `📸 Comprovante: ✅ Disponível\n`;
+
+      if (transactions.length === 0) {
+        message += `\n❌ Nenhuma transação encontrada\\.`;
+      } else {
+        message += `\n📊 *TRANSAÇÕES \\(${transactions.length}\\):*\n\n`;
+
+        for (const tx of transactions.slice(0, 5)) {
+          const txid   = escMd(tx.txid);
+          const valor  = escMd(parseFloat(tx.amount || 0).toFixed(2));
+          const status = escMd(tx.status);
+          const data   = escMd(new Date(tx.created_at).toLocaleString('pt-BR'));
+
+          message += `🆔 TXID: \`${txid}\`\n`;
+          message += `💰 Valor: R$ ${valor}\n`;
+          message += `📊 Status: ${status}\n`;
+          message += `📅 Data: ${data}\n`;
+          if (tx.proof_file_id) {
+            message += `📸 Comprovante: ✅ Disponível\n`;
+          }
+          message += `\n`;
+
+          keyboard.push([
+            { text: `📋 Ver TXID: ${tx.txid.substring(0, 10)}...`, callback_data: `details_${tx.txid}` }
+          ]);
         }
-        
-        // Adicionar botão para ver detalhes
-        keyboard.push([
-          { text: `📋 Ver TXID: ${tx.txid.substring(0, 10)}...`, callback_data: `details_${tx.txid}` }
-        ]);
-        
-        message += `\n`;
+
+        if (transactions.length > 5) {
+          message += `\n\\.\\.\\. e mais ${transactions.length - 5} transação\\(ões\\)\\.`;
+        }
       }
-      
-      if (transactions.length > 5) {
-        message += `\n... e mais ${transactions.length - 5} transação(ões).`;
-      }
-      
-      // Adicionar botão para voltar
+
       keyboard.push([
         { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
       ]);
       
       return ctx.reply(message, { 
-        parse_mode: 'Markdown',
+        parse_mode: 'MarkdownV2',
         reply_markup: { inline_keyboard: keyboard }
       });
     } catch (err) {
