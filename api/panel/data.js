@@ -720,6 +720,162 @@ module.exports = async function handler(req, res) {
       return res.json({ ok: true, total, fixed: 0 });
     }
 
+    // ═══════════════════════════════════════════════
+    // 🔍 RASTREAR CLIENTE — BUSCA POR ID
+    // ═══════════════════════════════════════════════
+    if (action === 'searchById') {
+      const rawId = (req.query.id || '').trim();
+      if (!rawId) return res.status(400).json({ error: 'ID obrigatório' });
+
+      // Aceita tanto telegram_id (numérico) quanto UUID interno
+      const isNumeric = /^\d+$/.test(rawId);
+      let user = null;
+
+      if (isNumeric) {
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .eq('telegram_id', parseInt(rawId))
+          .single();
+        user = data;
+      }
+
+      // Se não achou por telegram_id, tenta UUID
+      if (!user) {
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', rawId)
+          .maybeSingle();
+        user = data;
+      }
+
+      if (!user) return res.status(404).json({ error: 'Cliente não encontrado' });
+
+      const ddd = extractDDD(user.phone_number);
+
+      // Verifica se DDD está bloqueado
+      let dddStatus = 'sem_telefone';
+      if (ddd) {
+        const { data: blocked } = await supabase
+          .from('blocked_area_codes')
+          .select('area_code')
+          .eq('area_code', ddd)
+          .maybeSingle();
+        dddStatus = blocked ? 'bloqueado' : 'liberado';
+      }
+
+      // Última transação (qualquer status)
+      const { data: lastTx } = await supabase
+        .from('transactions')
+        .select('txid, amount, status, created_at, pix_payload')
+        .eq('telegram_id', user.telegram_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // Totais do cliente
+      const { data: txSummary } = await supabase
+        .from('transactions')
+        .select('amount, status')
+        .eq('telegram_id', user.telegram_id);
+
+      const totalGasto = txSummary
+        ?.filter(t => t.status === 'delivered')
+        .reduce((a, t) => a + parseFloat(t.amount || 0), 0) || 0;
+
+      return res.json({
+        user: { ...user, ddd },
+        ddd_status: dddStatus,
+        last_transaction: lastTx || null,
+        total_gasto: totalGasto,
+        total_transacoes: txSummary?.length || 0,
+        telegram_link: user.username
+          ? `https://t.me/${user.username}`
+          : `tg://user?id=${user.telegram_id}`
+      });
+    }
+
+    // ═══════════════════════════════════════════════
+    // 💳 RASTREAR CLIENTE — BUSCA POR CÓDIGO PIX
+    // ═══════════════════════════════════════════════
+    if (action === 'searchByPix' && req.method === 'POST') {
+      const { pix_code } = req.body || {};
+      if (!pix_code || pix_code.trim().length < 10)
+        return res.status(400).json({ error: 'Código Pix inválido ou muito curto' });
+
+      const code = pix_code.trim();
+
+      // Busca nos campos possíveis: pix_payload (copia-e-cola) e txid
+      const { data: txList } = await supabase
+        .from('transactions')
+        .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key, product_id, media_pack_id, group_id')
+        .or(`pix_payload.ilike.%${code}%,txid.eq.${code}`)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      // Se não achou, tenta match parcial pelo txid ou pelo payload completo
+      let tx = txList?.[0] || null;
+
+      // Tenta extração do txid do próprio payload Pix (campo 05 do BR Code)
+      if (!tx && code.length > 20) {
+        const txidMatch = code.match(/05(\d{2})([A-Z0-9]{10,25})/);
+        if (txidMatch) {
+          const extractedTxid = txidMatch[2];
+          const { data: byTxid } = await supabase
+            .from('transactions')
+            .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key, product_id')
+            .eq('txid', extractedTxid)
+            .maybeSingle();
+          tx = byTxid;
+        }
+      }
+
+      if (!tx) return res.status(404).json({ error: 'Nenhuma transação encontrada para este código Pix' });
+      if (!tx.telegram_id) return res.status(404).json({ error: 'Transação encontrada mas sem usuário vinculado' });
+
+      // Busca dados completos do usuário
+      const { data: user } = await supabase
+        .from('users')
+        .select('*')
+        .eq('telegram_id', tx.telegram_id)
+        .maybeSingle();
+
+      if (!user) return res.status(404).json({ error: 'Transação encontrada mas cliente não existe no banco' });
+
+      const ddd = extractDDD(user.phone_number);
+
+      let dddStatus = 'sem_telefone';
+      if (ddd) {
+        const { data: blocked } = await supabase
+          .from('blocked_area_codes')
+          .select('area_code')
+          .eq('area_code', ddd)
+          .maybeSingle();
+        dddStatus = blocked ? 'bloqueado' : 'liberado';
+      }
+
+      const { data: txSummary } = await supabase
+        .from('transactions')
+        .select('amount, status')
+        .eq('telegram_id', user.telegram_id);
+
+      const totalGasto = txSummary
+        ?.filter(t => t.status === 'delivered')
+        .reduce((a, t) => a + parseFloat(t.amount || 0), 0) || 0;
+
+      return res.json({
+        user: { ...user, ddd },
+        ddd_status: dddStatus,
+        transaction: tx,
+        total_gasto: totalGasto,
+        total_transacoes: txSummary?.length || 0,
+        telegram_link: user.username
+          ? `https://t.me/${user.username}`
+          : `tg://user?id=${user.telegram_id}`
+      });
+    }
+
     return res.status(404).json({ error: 'Action not found: ' + action });
 
   } catch (err) {
