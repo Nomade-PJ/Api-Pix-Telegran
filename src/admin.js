@@ -1,4 +1,4 @@
-// src/admin.js
+ // src/admin.js
 const { Markup } = require('telegraf');
 const db = require('./database');
 const deliver = require('./deliver');
@@ -2519,21 +2519,29 @@ Selecione uma opção abaixo:`;
   async function renderClienteRastreado(ctx, user, tx, origem) {
     try {
       const ddd = db.extractAreaCode(user.phone_number);
-      let dddStatus = '\u{1F4F5} Sem telefone';
+      let dddStatus = '📵 Sem telefone';
       if (ddd) {
         const bloqueado = await db.isAreaCodeBlocked(ddd);
-        dddStatus = bloqueado ? '\u{1F6AB} DDD Bloqueado' : '\u2705 DDD Liberado';
+        dddStatus = bloqueado ? '🚫 DDD Bloqueado' : '✅ DDD Liberado';
       }
 
-      const nome      = escV2(user.first_name || 'Usu\u00e1rio');
-      const telefone  = escV2(user.phone_number || 'N\u00e3o informado');
-      const username  = escV2(user.username ? '@' + user.username : 'sem username');
-      const bloqLabel = escV2(user.is_blocked ? '\u{1F6AB} Bloqueado' : '\u2705 Ativo');
-      const dddEsc    = escV2(ddd || '\u2014');
-      const dddStEsc  = escV2(dddStatus);
+      // Escapa apenas os caracteres que Markdown v1 interpreta: _ * ` [
+      function esc(val) {
+        if (val == null) return 'N/A';
+        return String(val)
+          .replace(/\\/g, '\\\\')
+          .replace(/\*/g, '\\*')
+          .replace(/_/g, '\\_')
+          .replace(/`/g, '\\`')
+          .replace(/\[/g, '\\[');
+      }
 
-      // Link de conversa: botão URL só funciona com username
-      // Se não tiver username, adiciona o link como texto na mensagem
+      const nome      = esc(user.first_name || 'Usuário');
+      const telefone  = user.phone_number || 'Não informado';
+      const usernameStr = user.username ? '@' + esc(user.username) : 'sem username';
+      const bloqLabel = user.is_blocked ? '🚫 Bloqueado' : '✅ Ativo';
+      const dddStr    = ddd || '—';
+
       const hasUsername = !!user.username;
       const chatLink = hasUsername ? 'https://t.me/' + user.username : null;
 
@@ -2544,30 +2552,28 @@ Selecione uma opção abaixo:`;
       const totalTx = txList.length;
 
       let msg = '🕵️ *RASTREAR CLIENTE*\n\n';
-      msg += '👤 *' + nome + '*  \\(' + bloqLabel + '\\)\n';
+      msg += '👤 *' + nome + '* — ' + bloqLabel + '\n';
       msg += '🆔 ID: `' + user.telegram_id + '`\n';
-      msg += '📱 Username: ' + username + '\n';
-      msg += '📞 Telefone: `' + telefone + '`\n';
-      msg += '📍 DDD: *' + dddEsc + '* — ' + dddStEsc + '\n';
-      msg += '💰 Total gasto: *R\\$ ' + escV2(totalGasto.toFixed(2)) + '*\n';
+      msg += '📱 Username: ' + usernameStr + '\n';
+      msg += '📞 Telefone: ' + telefone + '\n';
+      msg += '📍 DDD: *' + dddStr + '* — ' + dddStatus + '\n';
+      msg += '💰 Total gasto: *R$ ' + totalGasto.toFixed(2) + '*\n';
       msg += '📊 Transações: ' + totalTx + '\n';
 
-      // Se não tem username, inclui instrução para abrir conversa pelo ID
       if (!hasUsername) {
         msg += '\n💬 *Para abrir conversa:*\n';
-        msg += 'Pesquise o ID `' + user.telegram_id + '` no Telegram\.\n';
+        msg += 'Pesquise o ID `' + user.telegram_id + '` no Telegram\n';
       }
 
       if (tx) {
-        const txLabel = escV2(origem === 'pix' ? 'Transação encontrada:' : 'Última transação:');
+        const txLabel = origem === 'pix' ? 'Transação encontrada:' : 'Última transação:';
         msg += '\n📋 *' + txLabel + '*\n';
-        msg += '🆔 TXID: `' + escV2(tx.txid) + '`\n';
-        msg += '💵 Valor: R\\$ ' + escV2(parseFloat(tx.amount || 0).toFixed(2)) + '\n';
-        msg += '📊 Status: ' + escV2(tx.status) + '\n';
-        msg += '📅 Data: ' + escV2(new Date(tx.created_at).toLocaleString('pt-BR')) + '\n';
+        msg += '🆔 TXID: `' + esc(tx.txid) + '`\n';
+        msg += '💵 Valor: R$ ' + parseFloat(tx.amount || 0).toFixed(2) + '\n';
+        msg += '📊 Status: ' + esc(tx.status) + '\n';
+        msg += '📅 Data: ' + new Date(tx.created_at).toLocaleString('pt-BR') + '\n';
       }
 
-      // Monta teclado: botão 'Abrir Conversa' só aparece se tiver username
       const keyboard = [];
       if (hasUsername) {
         keyboard.push([{ text: '💬 Abrir Conversa', url: chatLink }]);
@@ -2576,15 +2582,15 @@ Selecione uma opção abaixo:`;
         { text: '📋 Copiar ID', callback_data: 'copiar_id_' + user.telegram_id },
         { text: '📞 Copiar Telefone', callback_data: 'copiar_tel_' + user.telegram_id }
       ]);
-      keyboard.push([{ text: '🔙 Voltar ao Painél', callback_data: 'admin_refresh' }]);
+      keyboard.push([{ text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }]);
 
       return ctx.reply(msg, {
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: keyboard }
       });
     } catch (err) {
-      console.error('\u274c [RASTREAR] Erro ao renderizar:', err.message);
-      return ctx.reply('\u274c Erro ao exibir dados do cliente.');
+      console.error('❌ [RASTREAR] Erro ao renderizar:', err.message);
+      return ctx.reply('❌ Erro ao exibir dados do cliente. Tente novamente.');
     }
   }
 
