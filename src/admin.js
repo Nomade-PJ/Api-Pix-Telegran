@@ -2532,9 +2532,10 @@ Selecione uma opção abaixo:`;
       const dddEsc    = escV2(ddd || '\u2014');
       const dddStEsc  = escV2(dddStatus);
 
-      const chatLink = user.username
-        ? 'https://t.me/' + user.username
-        : 'tg://user?id=' + user.telegram_id;
+      // Link de conversa: botão URL só funciona com username
+      // Se não tiver username, adiciona o link como texto na mensagem
+      const hasUsername = !!user.username;
+      const chatLink = hasUsername ? 'https://t.me/' + user.username : null;
 
       const txList = await db.getUserTransactions(user.telegram_id, 100);
       const totalGasto = txList
@@ -2542,32 +2543,40 @@ Selecione uma opção abaixo:`;
         .reduce((a, t) => a + parseFloat(t.amount || 0), 0);
       const totalTx = txList.length;
 
-      let msg = '\u{1F575}\ufe0f *RASTREAR CLIENTE*\n\n';
-      msg += '\u{1F464} *' + nome + '*  \\(' + bloqLabel + '\\)\n';
-      msg += '\u{1F194} ID: `' + user.telegram_id + '`\n';
-      msg += '\u{1F4F1} Username: ' + username + '\n';
-      msg += '\u{1F4DE} Telefone: `' + telefone + '`\n';
-      msg += '\u{1F4CD} DDD: *' + dddEsc + '* \u2014 ' + dddStEsc + '\n';
-      msg += '\u{1F4B0} Total gasto: *R\\$ ' + escV2(totalGasto.toFixed(2)) + '*\n';
-      msg += '\u{1F4CA} Transa\u00e7\u00f5es: ' + totalTx + '\n';
+      let msg = '🕵️ *RASTREAR CLIENTE*\n\n';
+      msg += '👤 *' + nome + '*  \\(' + bloqLabel + '\\)\n';
+      msg += '🆔 ID: `' + user.telegram_id + '`\n';
+      msg += '📱 Username: ' + username + '\n';
+      msg += '📞 Telefone: `' + telefone + '`\n';
+      msg += '📍 DDD: *' + dddEsc + '* — ' + dddStEsc + '\n';
+      msg += '💰 Total gasto: *R\\$ ' + escV2(totalGasto.toFixed(2)) + '*\n';
+      msg += '📊 Transações: ' + totalTx + '\n';
 
-      if (tx) {
-        const txLabel = escV2(origem === 'pix' ? 'Transa\u00e7\u00e3o encontrada:' : '\u00daltima transa\u00e7\u00e3o:');
-        msg += '\n\u{1F4CB} *' + txLabel + '*\n';
-        msg += '\u{1F194} TXID: `' + escV2(tx.txid) + '`\n';
-        msg += '\u{1F4B5} Valor: R\\$ ' + escV2(parseFloat(tx.amount || 0).toFixed(2)) + '\n';
-        msg += '\u{1F4CA} Status: ' + escV2(tx.status) + '\n';
-        msg += '\u{1F4C5} Data: ' + escV2(new Date(tx.created_at).toLocaleString('pt-BR')) + '\n';
+      // Se não tem username, inclui instrução para abrir conversa pelo ID
+      if (!hasUsername) {
+        msg += '\n💬 *Para abrir conversa:*\n';
+        msg += 'Pesquise o ID `' + user.telegram_id + '` no Telegram\.\n';
       }
 
-      const keyboard = [
-        [{ text: '\u{1F4AC} Abrir Conversa', url: chatLink }],
-        [
-          { text: '\u{1F4CB} Copiar ID', callback_data: 'copiar_id_' + user.telegram_id },
-          { text: '\u{1F4DE} Copiar Telefone', callback_data: 'copiar_tel_' + user.telegram_id }
-        ],
-        [{ text: '\u{1F519} Voltar ao Pain\u00e9l', callback_data: 'admin_refresh' }]
-      ];
+      if (tx) {
+        const txLabel = escV2(origem === 'pix' ? 'Transação encontrada:' : 'Última transação:');
+        msg += '\n📋 *' + txLabel + '*\n';
+        msg += '🆔 TXID: `' + escV2(tx.txid) + '`\n';
+        msg += '💵 Valor: R\\$ ' + escV2(parseFloat(tx.amount || 0).toFixed(2)) + '\n';
+        msg += '📊 Status: ' + escV2(tx.status) + '\n';
+        msg += '📅 Data: ' + escV2(new Date(tx.created_at).toLocaleString('pt-BR')) + '\n';
+      }
+
+      // Monta teclado: botão 'Abrir Conversa' só aparece se tiver username
+      const keyboard = [];
+      if (hasUsername) {
+        keyboard.push([{ text: '💬 Abrir Conversa', url: chatLink }]);
+      }
+      keyboard.push([
+        { text: '📋 Copiar ID', callback_data: 'copiar_id_' + user.telegram_id },
+        { text: '📞 Copiar Telefone', callback_data: 'copiar_tel_' + user.telegram_id }
+      ]);
+      keyboard.push([{ text: '🔙 Voltar ao Painél', callback_data: 'admin_refresh' }]);
 
       return ctx.reply(msg, {
         parse_mode: 'MarkdownV2',
