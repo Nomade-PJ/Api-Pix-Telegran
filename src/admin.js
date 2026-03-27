@@ -446,6 +446,9 @@ Selecione uma opção abaixo:`;
           Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
         ],
       [
+        Markup.button.callback('🕵️ Rastrear Cliente', 'admin_rastrear_cliente')
+      ],
+      [
         Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
       ],
       [
@@ -1383,7 +1386,82 @@ Digite o ID do produto:
         // Buscar e exibir informações
         return await buscarUsuarioInfo(ctx, telegramId);
       }
-      
+
+      // ── RASTREAR CLIENTE — por ID ──────────────────────────────────────
+      if (session.type === 'rastrear_cliente' && session.step === 'aguardando_id') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) { delete global._SESSIONS[ctx.from.id]; return; }
+
+        const texto = ctx.message.text.trim();
+        if (!/^\d+$/.test(texto)) {
+          return ctx.reply(
+            '❌ ID inválido\\. Digite apenas números\\.\n\nEx: `6880815060`',
+            {
+              parse_mode: 'MarkdownV2',
+              reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancelar_rastrear' }]] }
+            }
+          );
+        }
+
+        delete global._SESSIONS[ctx.from.id];
+
+        const user = await db.getUserByTelegramId(parseInt(texto));
+        if (!user) return ctx.reply(`❌ Nenhum cliente com ID *${texto}* encontrado\.`, { parse_mode: 'MarkdownV2' });
+
+        // Última transação
+        const txList = await db.getUserTransactions(parseInt(texto), 1);
+        return renderClienteRastreado(ctx, user, txList?.[0] || null, 'id');
+      }
+
+      // ── RASTREAR CLIENTE — por código Pix ─────────────────────────────
+      if (session.type === 'rastrear_cliente' && session.step === 'aguardando_pix') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) { delete global._SESSIONS[ctx.from.id]; return; }
+
+        const pixCode = ctx.message.text.trim();
+        if (pixCode.length < 10) {
+          return ctx.reply('❌ Código Pix muito curto\. Cole o código completo\.', {
+            parse_mode: 'MarkdownV2',
+            reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancelar_rastrear' }]] }
+          });
+        }
+
+        delete global._SESSIONS[ctx.from.id];
+
+        // Buscar na tabela transactions (campo pix_payload = copia e cola)
+        let tx = null;
+        const { data: byPayload } = await db.supabase
+          .from('transactions')
+          .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+          .or(`pix_payload.ilike.%${pixCode}%,txid.eq.${pixCode}`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        tx = byPayload;
+
+        // Fallback: tentar extrair TXID do BR Code (campo 05 do payload EMV)
+        if (!tx && pixCode.length > 20) {
+          const match = pixCode.match(/05(\d{2})([A-Z0-9]{10,25})/);
+          if (match) {
+            const txidExtracted = match[2];
+            const { data: byTxid } = await db.supabase
+              .from('transactions')
+              .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+              .eq('txid', txidExtracted)
+              .maybeSingle();
+            tx = byTxid;
+          }
+        }
+
+        if (!tx) return ctx.reply('❌ Nenhuma transação encontrada para este código Pix\.', { parse_mode: 'MarkdownV2' });
+        if (!tx.telegram_id) return ctx.reply('❌ Transação encontrada mas sem cliente vinculado\.', { parse_mode: 'MarkdownV2' });
+
+        const user = await db.getUserByTelegramId(tx.telegram_id);
+        if (!user) return ctx.reply('❌ Cliente não encontrado no banco de dados\.', { parse_mode: 'MarkdownV2' });
+
+        return renderClienteRastreado(ctx, user, tx, 'pix');
+      }
+
       // Verificar se é broadcast do criador
       if (session.type === 'creator_broadcast' && session.step === 'message') {
         const isCreator = await db.isUserCreator(ctx.from.id);
@@ -2360,6 +2438,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('🔍 Buscar Usuário', 'admin_buscar_usuario')
       ],
       [
+        Markup.button.callback('🕵️ Rastrear Cliente', 'admin_rastrear_cliente')
+      ],
+      [
         Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
       ],
       [
@@ -2423,7 +2504,182 @@ Selecione uma opção abaixo:`;
     }
   });
 
-  // ===== ACTIONS DO PAINEL ADMIN =====
+
+  // ═══════════════════════════════════════════════════════════
+  // 🕵️ RASTREAR CLIENTE — busca por ID ou código Pix (TXT)
+  // ═══════════════════════════════════════════════════════════
+
+  // Escapa caracteres especiais do MarkdownV2
+  function escV2(val) {
+    if (val == null) return 'N/A';
+    return String(val).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
+  }
+
+  // Renderiza o card do cliente rastreado
+  async function renderClienteRastreado(ctx, user, tx, origem) {
+    try {
+      const ddd = db.extractAreaCode(user.phone_number);
+      let dddStatus = '\u{1F4F5} Sem telefone';
+      if (ddd) {
+        const bloqueado = await db.isAreaCodeBlocked(ddd);
+        dddStatus = bloqueado ? '\u{1F6AB} DDD Bloqueado' : '\u2705 DDD Liberado';
+      }
+
+      const nome      = escV2(user.first_name || 'Usu\u00e1rio');
+      const telefone  = escV2(user.phone_number || 'N\u00e3o informado');
+      const username  = escV2(user.username ? '@' + user.username : 'sem username');
+      const bloqLabel = escV2(user.is_blocked ? '\u{1F6AB} Bloqueado' : '\u2705 Ativo');
+      const dddEsc    = escV2(ddd || '\u2014');
+      const dddStEsc  = escV2(dddStatus);
+
+      const chatLink = user.username
+        ? 'https://t.me/' + user.username
+        : 'tg://user?id=' + user.telegram_id;
+
+      const txList = await db.getUserTransactions(user.telegram_id, 100);
+      const totalGasto = txList
+        .filter(t => t.status === 'delivered')
+        .reduce((a, t) => a + parseFloat(t.amount || 0), 0);
+      const totalTx = txList.length;
+
+      let msg = '\u{1F575}\ufe0f *RASTREAR CLIENTE*\n\n';
+      msg += '\u{1F464} *' + nome + '*  \\(' + bloqLabel + '\\)\n';
+      msg += '\u{1F194} ID: `' + user.telegram_id + '`\n';
+      msg += '\u{1F4F1} Username: ' + username + '\n';
+      msg += '\u{1F4DE} Telefone: `' + telefone + '`\n';
+      msg += '\u{1F4CD} DDD: *' + dddEsc + '* \u2014 ' + dddStEsc + '\n';
+      msg += '\u{1F4B0} Total gasto: *R\\$ ' + escV2(totalGasto.toFixed(2)) + '*\n';
+      msg += '\u{1F4CA} Transa\u00e7\u00f5es: ' + totalTx + '\n';
+
+      if (tx) {
+        const txLabel = escV2(origem === 'pix' ? 'Transa\u00e7\u00e3o encontrada:' : '\u00daltima transa\u00e7\u00e3o:');
+        msg += '\n\u{1F4CB} *' + txLabel + '*\n';
+        msg += '\u{1F194} TXID: `' + escV2(tx.txid) + '`\n';
+        msg += '\u{1F4B5} Valor: R\\$ ' + escV2(parseFloat(tx.amount || 0).toFixed(2)) + '\n';
+        msg += '\u{1F4CA} Status: ' + escV2(tx.status) + '\n';
+        msg += '\u{1F4C5} Data: ' + escV2(new Date(tx.created_at).toLocaleString('pt-BR')) + '\n';
+      }
+
+      const keyboard = [
+        [{ text: '\u{1F4AC} Abrir Conversa', url: chatLink }],
+        [
+          { text: '\u{1F4CB} Copiar ID', callback_data: 'copiar_id_' + user.telegram_id },
+          { text: '\u{1F4DE} Copiar Telefone', callback_data: 'copiar_tel_' + user.telegram_id }
+        ],
+        [{ text: '\u{1F519} Voltar ao Pain\u00e9l', callback_data: 'admin_refresh' }]
+      ];
+
+      return ctx.reply(msg, {
+        parse_mode: 'MarkdownV2',
+        reply_markup: { inline_keyboard: keyboard }
+      });
+    } catch (err) {
+      console.error('\u274c [RASTREAR] Erro ao renderizar:', err.message);
+      return ctx.reply('\u274c Erro ao exibir dados do cliente.');
+    }
+  }
+
+  // Bot\u00e3o principal \u2014 abre submenu
+  bot.action('admin_rastrear_cliente', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('\u{1F575}\ufe0f Rastrear Cliente...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      return ctx.reply(
+        '\u{1F575}\ufe0f *RASTREAR CLIENTE*\n\nEscolha como deseja buscar o cliente:',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '\u{1F194} Buscar por ID do Telegram', callback_data: 'rastrear_por_id' }],
+              [{ text: '\u{1F4B3} Buscar por C\u00f3digo Pix (TXT)', callback_data: 'rastrear_por_pix' }],
+              [{ text: '\u274c Cancelar', callback_data: 'admin_refresh' }]
+            ]
+          }
+        }
+      );
+    } catch (err) {
+      console.error('\u274c [RASTREAR] Erro:', err.message);
+      return ctx.reply('\u274c Erro ao abrir rastreio.');
+    }
+  });
+
+  // Op\u00e7\u00e3o 1 \u2014 aguardar ID
+  bot.action('rastrear_por_id', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'rastrear_cliente', step: 'aguardando_id' };
+
+      return ctx.reply(
+        '\u{1F194} *RASTREAR POR ID*\n\nDigite o *ID do Telegram* do cliente:\n\nEx: `6880815060`',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '\u274c Cancelar', callback_data: 'cancelar_rastrear' }]] }
+        }
+      );
+    } catch (err) {
+      console.error('\u274c [RASTREAR] Erro:', err.message);
+    }
+  });
+
+  // Op\u00e7\u00e3o 2 \u2014 aguardar c\u00f3digo Pix
+  bot.action('rastrear_por_pix', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'rastrear_cliente', step: 'aguardando_pix' };
+
+      return ctx.reply(
+        '\u{1F4B3} *RASTREAR POR C\u00d3DIGO PIX*\n\nCole o c\u00f3digo *copia e cola* do Pix recebido:',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '\u274c Cancelar', callback_data: 'cancelar_rastrear' }]] }
+        }
+      );
+    } catch (err) {
+      console.error('\u274c [RASTREAR] Erro:', err.message);
+    }
+  });
+
+  // Cancelar rastreio
+  bot.action('cancelar_rastrear', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('\u274c Cancelado');
+      global._SESSIONS = global._SESSIONS || {};
+      delete global._SESSIONS[ctx.from.id];
+      return ctx.reply('\u274c Rastreio cancelado.');
+    } catch (err) {
+      console.error('\u274c [RASTREAR] Erro ao cancelar:', err.message);
+    }
+  });
+
+  // Copiar ID \u2014 exibe em alerta pop-up no Telegram
+  bot.action(/^copiar_id_(\d+)$/, async (ctx) => {
+    try {
+      const tid = ctx.match[1];
+      await ctx.answerCbQuery('ID: ' + tid, { show_alert: true });
+    } catch (err) { /* silencioso */ }
+  });
+
+  // Copiar Telefone \u2014 exibe em alerta pop-up no Telegram
+  bot.action(/^copiar_tel_(\d+)$/, async (ctx) => {
+    try {
+      const tid = ctx.match[1];
+      const user = await db.getUserByTelegramId(parseInt(tid));
+      const tel = (user && user.phone_number) ? user.phone_number : 'N\u00e3o informado';
+      await ctx.answerCbQuery('Tel: ' + tel, { show_alert: true });
+    } catch (err) { /* silencioso */ }
+  });
+
+    // ===== ACTIONS DO PAINEL ADMIN =====
   
   bot.action('admin_pendentes', async (ctx) => {
     await ctx.answerCbQuery('⏳ Carregando pendentes...');
