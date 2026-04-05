@@ -452,6 +452,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
       ],
       [
+        Markup.button.callback('🏪 Controle da Loja', 'admin_shop_control')
+      ],
+      [
         Markup.button.callback('🔄 Atualizar', 'admin_refresh')
       ]
       ]);
@@ -2444,6 +2447,9 @@ Selecione uma opção abaixo:`;
         Markup.button.callback('🔄 Entregar por TXID', 'admin_entregar_txid')
       ],
       [
+        Markup.button.callback('🏪 Controle da Loja', 'admin_shop_control')
+      ],
+      [
         Markup.button.callback('🔄 Atualizar', 'admin_refresh')
       ]
     ]);
@@ -2692,6 +2698,87 @@ Selecione uma opção abaixo:`;
       const tel = (user && user.phone_number) ? user.phone_number : 'N\u00e3o informado';
       await ctx.answerCbQuery('Tel: ' + tel, { show_alert: true });
     } catch (err) { /* silencioso */ }
+  });
+
+    // ═══════════════════════════════════════════════════════════
+  // 🏪 CONTROLE DA LOJA (admin_shop_control)
+  // ═══════════════════════════════════════════════════════════
+
+  async function renderShopControl(ctx, editMsg = false) {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      const shopSetting = await db.getSetting('shop_enabled');
+      const isOpen = shopSetting !== 'false'; // default true se não configurado
+
+      const statusEmoji = isOpen ? '🟢' : '🔴';
+      const statusLabel = isOpen ? 'ABERTA' : 'FECHADA';
+      const toggleLabel = isOpen ? '🔒 Fechar Loja' : '🟢 Abrir Loja';
+      const toggleAction = isOpen ? 'shop_set_closed' : 'shop_set_open';
+
+      const msg =
+        '🏪 *CONTROLE DA LOJA*\n\n' +
+        'Status atual: ' + statusEmoji + ' *Loja ' + statusLabel + '*\n\n' +
+        (isOpen
+          ? '✅ Clientes podem ver e comprar produtos normalmente\.'
+          : '⛔ Loja fechada\. Nenhum cliente consegue comprar\.');
+
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: toggleLabel, callback_data: toggleAction }],
+          [{ text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }]
+        ]
+      };
+
+      if (editMsg) {
+        return ctx.editMessageText(msg, { parse_mode: 'Markdown', reply_markup: keyboard });
+      } else {
+        return ctx.reply(msg, { parse_mode: 'Markdown', reply_markup: keyboard });
+      }
+    } catch (err) {
+      console.error('❌ [SHOP-CONTROL] Erro:', err.message);
+      return ctx.reply('❌ Erro ao carregar controle da loja.');
+    }
+  }
+
+  bot.action('admin_shop_control', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🏪 Controle da Loja...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      return renderShopControl(ctx, false);
+    } catch (err) {
+      console.error('❌ [SHOP-CONTROL] Erro:', err.message);
+    }
+  });
+
+  bot.action('shop_set_open', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🟢 Abrindo loja...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      await db.setSetting('shop_enabled', 'true');
+      console.log('[SHOP] Loja ABERTA por admin:', ctx.from.id);
+      return renderShopControl(ctx, true);
+    } catch (err) {
+      console.error('❌ [SHOP-CONTROL] Erro ao abrir loja:', err.message);
+      return ctx.reply('❌ Erro ao abrir loja.');
+    }
+  });
+
+  bot.action('shop_set_closed', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔒 Fechando loja...');
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+      await db.setSetting('shop_enabled', 'false');
+      console.log('[SHOP] Loja FECHADA por admin:', ctx.from.id);
+      return renderShopControl(ctx, true);
+    } catch (err) {
+      console.error('❌ [SHOP-CONTROL] Erro ao fechar loja:', err.message);
+      return ctx.reply('❌ Erro ao fechar loja.');
+    }
   });
 
     // ===== ACTIONS DO PAINEL ADMIN =====
