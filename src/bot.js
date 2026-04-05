@@ -283,6 +283,21 @@ Selecione uma opção abaixo:`;
       }
       
       // Se não for criador, mostrar menu normal
+
+      // 🔒 VERIFICAÇÃO: Loja habilitada? (controlado pelo painel admin)
+      const shopEnabledSetting = await db.getSetting('shop_enabled');
+      const shopEnabled = shopEnabledSetting !== 'false'; // default true se não configurado
+      if (!shopEnabled) {
+        console.log(`🔒 [START] Loja FECHADA — usuário ${ctx.from.id} tentou acessar o menu de compras`);
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\n' +
+          'No momento não estamos aceitando novos pedidos.\n\n' +
+          'Tente novamente mais tarde ou entre em contato com o suporte.\n\n' +
+          '💬 Use /suporte para abrir um ticket.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
       // Paralelizar queries (OTIMIZAÇÃO #4)
       console.log('📦 [START] Buscando produtos, grupos e media packs...');
       const [products, groups, mediaPacks, supportLink] = await Promise.all([
@@ -1895,6 +1910,17 @@ Clique no botão abaixo para renovar:`, {
           { parse_mode: 'Markdown' }
         );
       }
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledBuy = await db.getSetting('shop_enabled');
+      if (shopEnabledBuy === 'false') {
+        console.log(`🔒 [BUY] Loja FECHADA — usuário ${ctx.from.id} tentou comprar ${productId}`);
+        await ctx.answerCbQuery('🔒 Loja fechada', { show_alert: true });
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde.',
+          { parse_mode: 'Markdown' }
+        );
+      }
       
       // OTIMIZAÇÃO #1: Responder imediatamente ao clique (feedback visual instantâneo)
       await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
@@ -2141,6 +2167,17 @@ Esta transação foi cancelada automaticamente.
         return ctx.reply(
           '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
           'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledMedia = await db.getSetting('shop_enabled');
+      if (shopEnabledMedia === 'false') {
+        console.log(`🔒 [BUY-MEDIA] Loja FECHADA — usuário ${ctx.from.id} tentou comprar pack ${packId}`);
+        await ctx.answerCbQuery('🔒 Loja fechada', { show_alert: true });
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde.',
           { parse_mode: 'Markdown' }
         );
       }
@@ -2402,6 +2439,17 @@ Esta transação foi cancelada automaticamente.
         return ctx.reply(
           '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
           'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledSub = await db.getSetting('shop_enabled');
+      if (shopEnabledSub === 'false') {
+        console.log(`🔒 [SUBSCRIBE] Loja FECHADA — usuário ${ctx.from.id} tentou assinar grupo ${groupId}`);
+        await ctx.answerCbQuery('🔒 Loja fechada', { show_alert: true });
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde.',
           { parse_mode: 'Markdown' }
         );
       }
@@ -3185,6 +3233,16 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
       }
       
       await ctx.answerCbQuery();
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledBack = await db.getSetting('shop_enabled');
+      if (shopEnabledBack === 'false') {
+        console.log(`🔒 [BACK-TO-START] Loja FECHADA — usuário ${ctx.from.id}`);
+        return ctx.editMessageText(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde ou use /suporte.',
+          { parse_mode: 'Markdown' }
+        );
+      }
       
       // Buscar dados novamente
       const [products, groups, mediaPacks] = await Promise.all([
