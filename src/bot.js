@@ -316,8 +316,7 @@ Selecione uma opção abaixo:`;
       
       // Gerar botões dinamicamente (sem logs pesados)
       const buttons = products.map(product => {
-        const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
-        const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+        const buttonText = `${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
         return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
       });
       
@@ -3253,8 +3252,7 @@ ${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso
       
       // Gerar botões
       const buttons = products.map(product => {
-        const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
-        const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+        const buttonText = `${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
         return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
       });
       
