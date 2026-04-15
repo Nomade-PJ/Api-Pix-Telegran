@@ -1,32 +1,34 @@
 // src/deliver.js
 const { Telegram } = require('telegraf');
+const { createClient } = require('@supabase/supabase-js');
 
 const tg = new Telegram(process.env.TELEGRAM_BOT_TOKEN);
+
+// Mapeamento: product_id → pasta no bucket media-packs
+const PRODUCT_FOLDER_MAP = {
+  'destaquesdasemana':    'semana',
+  'bastidoresexclusivos': 'bastidores',
+  'surpresapremium':      'surpresa',
+  'essencialpremium':     'essencial',
+  'mixespecialmaisescol': 'mix',
+  'conteudopersonalizad': 'personalizado',
+  'conteudovip':          'vip',
+  'pacotecompleto':       'completo',
+};
 
 // ============================================================
 // CLASSIFICAÇÃO DE ERROS DE ENTREGA
 // ============================================================
-
-/**
- * Classifica o erro do Telegram para determinar a ação correta
- * Retorna: 'blocked' | 'temporary' | 'unknown'
- */
 function classifyDeliveryError(err) {
   const msg = err.message || '';
   const code = err.code || err.status || 0;
-
-  // 403 = usuário bloqueou o bot ou conta deletada
   if (
     code === 403 ||
     msg.includes('403') ||
     msg.includes('bot was blocked') ||
     msg.includes('user is deactivated') ||
     msg.includes('Forbidden')
-  ) {
-    return 'blocked';
-  }
-
-  // Erros temporários de rede/timeout/rate limit
+  ) return 'blocked';
   if (
     msg.includes('ETIMEDOUT') ||
     msg.includes('ECONNRESET') ||
@@ -37,17 +39,10 @@ function classifyDeliveryError(err) {
     msg.includes('502') ||
     msg.includes('503') ||
     msg.includes('504')
-  ) {
-    return 'temporary';
-  }
-
+  ) return 'temporary';
   return 'unknown';
 }
 
-/**
- * Wrapper com retry automático para erros temporários.
- * Para erros 403 (bloqueado), falha imediatamente sem retry.
- */
 async function withDeliveryRetry(fn, maxRetries = 3) {
   let lastErr;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -56,12 +51,9 @@ async function withDeliveryRetry(fn, maxRetries = 3) {
     } catch (err) {
       lastErr = err;
       const type = classifyDeliveryError(err);
-
-      if (type === 'blocked') throw err; // não adianta tentar de novo
-
+      if (type === 'blocked') throw err;
       if (attempt === maxRetries) throw err;
-
-      const delay = attempt * 2000; // 2s depois 4s
+      const delay = attempt * 2000;
       console.warn(`⚠️ [DELIVER] Tentativa ${attempt}/${maxRetries} falhou (${type}): ${err.message} — aguardando ${delay}ms`);
       await new Promise(r => setTimeout(r, delay));
     }
@@ -70,7 +62,157 @@ async function withDeliveryRetry(fn, maxRetries = 3) {
 }
 
 // ============================================================
-// FUNÇÕES DE ENTREGA
+// ENTREGA DE PRODUTO VIA SUPABASE STORAGE (sendMediaGroup)
+// ============================================================
+
+/**
+ * Entrega todas as mídias da pasta do produto no Supabase Storage
+ * usando sendMediaGroup (máx 10 por lote).
+ */
+async function deliverProductFromStorage(chatId, productId, productName) {
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+  );
+
+  const folder = PRODUCT_FOLDER_MAP[productId];
+
+  if (!folder) {
+    console.warn(`⚠️ [DELIVER-STORAGE] product_id "${productId}" não tem pasta mapeada`);
+    // Fallback: avisar o usuário e encerrar
+    await withDeliveryRetry(() =>
+      tg.sendMessage(chatId,
+        `✅ *PAGAMENTO CONFIRMADO!*\n\n📦 *${productName}*\n\nSeu conteúdo será enviado em breve pelo suporte.\n\n💬 Use /suporte para solicitar seu material.`,
+        { parse_mode: 'Markdown' }
+      )
+    );
+    return { success: false, reason: 'no_folder_mapping' };
+  }
+
+  console.log(`📂 [DELIVER-STORAGE] Listando arquivos em "${folder}" para produto "${productId}"`);
+
+  // Listar arquivos da pasta no bucket
+  const { data: files, error: listError } = await supabase.storage
+    .from('media-packs')
+    .list(folder, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
+
+  if (listError) {
+    console.error(`❌ [DELIVER-STORAGE] Erro ao listar bucket:`, listError.message);
+    throw new Error(`Erro ao listar mídias: ${listError.message}`);
+  }
+
+  if (!files || files.length === 0) {
+    console.warn(`⚠️ [DELIVER-STORAGE] Nenhum arquivo encontrado em "${folder}"`);
+    await withDeliveryRetry(() =>
+      tg.sendMessage(chatId,
+        `✅ *PAGAMENTO CONFIRMADO!*\n\n📦 *${productName}*\n\nSeu conteúdo será enviado em breve pelo suporte.\n\n💬 Use /suporte para solicitar seu material.`,
+        { parse_mode: 'Markdown' }
+      )
+    );
+    return { success: false, reason: 'no_files' };
+  }
+
+  // Filtrar apenas arquivos de mídia (ignorar pastas e arquivos inválidos)
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const mediaFiles = files.filter(f =>
+    f.name && f.metadata && (
+      /\.(jpg|jpeg|png|gif|webp)$/i.test(f.name) ||
+      /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name)
+    )
+  );
+
+  if (mediaFiles.length === 0) {
+    console.warn(`⚠️ [DELIVER-STORAGE] Nenhum arquivo de mídia válido em "${folder}"`);
+    await withDeliveryRetry(() =>
+      tg.sendMessage(chatId,
+        `✅ *PAGAMENTO CONFIRMADO!*\n\n📦 *${productName}*\n\nSeu conteúdo será enviado em breve pelo suporte.`,
+        { parse_mode: 'Markdown' }
+      )
+    );
+    return { success: false, reason: 'no_valid_media' };
+  }
+
+  console.log(`📸 [DELIVER-STORAGE] ${mediaFiles.length} arquivo(s) encontrado(s) em "${folder}"`);
+
+  // Mensagem inicial
+  await withDeliveryRetry(() =>
+    tg.sendMessage(chatId,
+      `✅ *PAGAMENTO CONFIRMADO!*\n\n📦 *${productName}*\n\n🚀 Enviando *${mediaFiles.length}* ${mediaFiles.length > 1 ? 'arquivos' : 'arquivo'}...`,
+      { parse_mode: 'Markdown' }
+    )
+  );
+
+  // Montar URLs públicas
+  const mediaWithUrls = mediaFiles.map((file, idx) => {
+    const url = `${SUPABASE_URL}/storage/v1/object/public/media-packs/${folder}/${file.name}`;
+    const isVideo = /\.(mp4|mov|avi|mkv|webm)$/i.test(file.name);
+    return {
+      type: isVideo ? 'video' : 'photo',
+      media: url,
+      caption: idx === 0 ? `✨ *${productName}*` : undefined,
+      parse_mode: idx === 0 ? 'Markdown' : undefined,
+    };
+  });
+
+  // Enviar em lotes de 10 (limite do Telegram)
+  const BATCH_SIZE = 10;
+  let sentCount = 0;
+  let batchNum = 0;
+
+  for (let i = 0; i < mediaWithUrls.length; i += BATCH_SIZE) {
+    batchNum++;
+    const batch = mediaWithUrls.slice(i, i + BATCH_SIZE);
+
+    try {
+      console.log(`📤 [DELIVER-STORAGE] Enviando lote ${batchNum} (${batch.length} itens)...`);
+      await withDeliveryRetry(() =>
+        tg.sendMediaGroup(chatId, batch)
+      );
+      sentCount += batch.length;
+      console.log(`✅ [DELIVER-STORAGE] Lote ${batchNum} enviado (${sentCount}/${mediaWithUrls.length})`);
+    } catch (batchErr) {
+      console.error(`❌ [DELIVER-STORAGE] Erro no lote ${batchNum}:`, batchErr.message);
+      // Tentar enviar arquivo por arquivo como fallback
+      for (const item of batch) {
+        try {
+          if (item.type === 'video') {
+            await withDeliveryRetry(() =>
+              tg.sendVideo(chatId, { url: item.media }, item.caption ? { caption: item.caption, parse_mode: 'Markdown' } : {})
+            );
+          } else {
+            await withDeliveryRetry(() =>
+              tg.sendPhoto(chatId, { url: item.media }, item.caption ? { caption: item.caption, parse_mode: 'Markdown' } : {})
+            );
+          }
+          sentCount++;
+        } catch (itemErr) {
+          console.error(`❌ [DELIVER-STORAGE] Erro no item individual:`, itemErr.message);
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+
+    // Delay entre lotes para evitar rate limit
+    if (i + BATCH_SIZE < mediaWithUrls.length) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  console.log(`✅ [DELIVER-STORAGE] Entrega concluída: ${sentCount}/${mediaWithUrls.length} arquivos`);
+
+  // Mensagem final
+  await withDeliveryRetry(() =>
+    tg.sendMessage(chatId,
+      `🎉 *Entrega completa!*\n\n✅ ${sentCount} ${sentCount > 1 ? 'arquivos enviados' : 'arquivo enviado'} com sucesso!\n\nObrigado pela preferência! 💚`,
+      { parse_mode: 'Markdown' }
+    )
+  );
+
+  return { success: true, sent: sentCount, total: mediaWithUrls.length };
+}
+
+// ============================================================
+// FUNÇÕES DE ENTREGA EXISTENTES (mantidas sem alteração)
 // ============================================================
 
 async function deliverByLink(chatId, link, caption = 'Aqui está seu acesso:') {
@@ -156,7 +298,6 @@ async function deliverMediaPack(chatId, packId, userId, transactionId, db) {
     for (const item of randomItems) {
       try {
         console.log(`📤 [DELIVER] Enviando ${item.file_type}: ${item.file_name}`);
-
         if (item.file_type === 'photo') {
           await withDeliveryRetry(() =>
             tg.sendPhoto(chatId, { url: item.file_url }, { caption: `📸 ${item.file_name}` })
@@ -166,11 +307,9 @@ async function deliverMediaPack(chatId, packId, userId, transactionId, db) {
             tg.sendVideo(chatId, { url: item.file_url }, { caption: `🎥 ${item.file_name}` })
           );
         }
-
         await db.recordMediaDelivery({ transactionId, userId, packId, mediaItemId: item.id });
         successCount++;
         await new Promise(resolve => setTimeout(resolve, 800));
-
       } catch (itemErr) {
         console.error(`❌ [DELIVER] Erro ao enviar item ${item.id}:`, itemErr.message);
       }
@@ -207,9 +346,7 @@ async function addUserToGroup(telegram, userId, group) {
     const axios = require('axios');
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-    try {
-      await telegram.unbanChatMember(group.group_id, userId, { only_if_banned: true });
-    } catch (_) {}
+    try { await telegram.unbanChatMember(group.group_id, userId, { only_if_banned: true }); } catch (_) {}
 
     try {
       if (telegram.inviteUsers) {
@@ -242,11 +379,14 @@ async function addUserToGroup(telegram, userId, group) {
   }
 }
 
+// Exportar mapeamento para uso no admin.js
 module.exports = {
   deliverByLink,
   deliverFile,
   deliverContent,
   deliverMediaPack,
+  deliverProductFromStorage,
   addUserToGroup,
-  classifyDeliveryError
+  classifyDeliveryError,
+  PRODUCT_FOLDER_MAP,
 };
