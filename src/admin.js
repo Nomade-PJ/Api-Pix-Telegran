@@ -5206,30 +5206,24 @@ ${zwsp}${zwnj}${zwsp}`, {
           console.error(`❌ [ADMIN] Grupo não encontrado para transação ${txid}`);
         }
       } else if (transaction.product_id) {
-        // Entregar produto normal
+        // 🆕 Entregar produto via Supabase Storage (pastas por produto)
         const product = await db.getProduct(transaction.product_id, true);
-        if (product && product.delivery_url) {
+        const pName = product ? product.name : transaction.product_id;
+        try {
+          console.log(`📨 [ADMIN-APPROVE] Entregando "${pName}" via Storage para ${transaction.telegram_id}`);
+          const storageResult = await deliver.deliverProductFromStorage(
+            transaction.telegram_id,
+            transaction.product_id,
+            pName
+          );
+          console.log(`✅ [ADMIN-APPROVE] Storage entregue: ${JSON.stringify(storageResult)}`);
+        } catch (deliverErr) {
+          const errorType = deliver.classifyDeliveryError(deliverErr);
+          console.error(`❌ [ADMIN-APPROVE] Erro na entrega via Storage (${errorType}):`, deliverErr.message);
+          // Avisar usuário sobre erro
           try {
-            await deliver.deliverContent(
-              transaction.telegram_id,
-              product,
-              `✅ *PAGAMENTO APROVADO!*\n\n💰 Valor: R$ ${transaction.amount}\n🆔 TXID: ${txid}`
-            );
-            console.log(`✅ Produto entregue com sucesso para ${transaction.telegram_id}`);
-          } catch (deliverErr) {
-            const errorType = deliver.classifyDeliveryError(deliverErr);
-            console.error(`❌ [APPROVE] Erro na entrega (${errorType}):`, deliverErr.message);
-            await db.markDeliveryFailed(txid, deliverErr.message, errorType);
-            await notifyDeliveryFailure(ctx, transaction, txid, deliverErr.message, errorType);
-            await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: '⚠️ Aprovado (falha na entrega)', callback_data: 'approved' }]] });
-            return ctx.reply(`⚠️ *Pagamento aprovado, mas falha na entrega!*\n\n🆔 TXID: ${txid}\n❌ Motivo: ${deliverErr.message}\n\nO admin foi notificado com opções de ação.`, { parse_mode: 'Markdown' });
-          }
-        } else {
-          try {
-            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *PAGAMENTO APROVADO!*\n\n💰 Valor: R$ ${transaction.amount}\n⚠️ Aguarde instruções do suporte.\n\n🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
-          } catch (err) {
-            console.error('Erro ao notificar usuário:', err);
-          }
+            await ctx.telegram.sendMessage(transaction.telegram_id, `✅ *PAGAMENTO APROVADO!*\n\n📦 *${pName}*\n\nOcorreu um erro ao enviar automaticamente. Entre em contato com /suporte.\n\n🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+          } catch (_) {}
         }
       }
 
