@@ -1381,37 +1381,23 @@ Entre em contato com o suporte.
                   }
                 }
                 
-                if (product && product.delivery_url) {
-                  console.log(`📨 [AUTO-ANALYSIS] Entregando produto digital para cliente ${chatId}`);
-                  
+                // 🆕 ENTREGA VIA SUPABASE STORAGE (pastas por produto)
+                console.log(`📨 [AUTO-ANALYSIS] Entregando produto via Storage para cliente ${chatId}`);
+                try {
+                  const storageResult = await deliver.deliverProductFromStorage(
+                    chatId,
+                    transactionData.product_id,
+                    productName
+                  );
+                  await db.markAsDelivered(transactionData.txid);
+                  console.log(`✅ [AUTO-ANALYSIS] Produto entregue via Storage: ${JSON.stringify(storageResult)}`);
+                } catch (deliverErr) {
+                  console.error(`❌ [AUTO-ANALYSIS] Erro ao entregar produto via Storage:`, deliverErr.message);
+                  // Fallback: avisar usuário
                   try {
-                    await deliver.deliverContent(
-                      chatId, 
-                      product, 
-                      `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*\n\n🤖 Análise de IA: ${analysis.confidence}% de confiança\n💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}\n\n🆔 TXID: ${transactionData.txid}`
-                    );
-                    
-                    await db.markAsDelivered(transactionData.txid);
-                    console.log(`✅ [AUTO-ANALYSIS] Produto digital entregue`);
-                  } catch (deliverErr) {
-                    console.error(`❌ [AUTO-ANALYSIS] Erro ao entregar produto:`, deliverErr.message);
-                    // Fallback: enviar mensagem simples
-                    await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO AUTOMATICAMENTE!*
-
-🤖 Análise de IA: ${analysis.confidence}% de confiança
-💰 Valor confirmado: R$ ${analysis.details.amount || transactionData.amount}
-
-📦 *Produto:* ${productName}
-${product.delivery_type === 'file' ? '📄 Arquivo anexado acima' : `🔗 Link: ${product.delivery_url}`}
-
-✅ Produto entregue com sucesso!
-
-🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
-                    
-                    await db.markAsDelivered(transactionData.txid);
-                  }
-                } else {
-                  console.warn(`⚠️ [AUTO-ANALYSIS] Produto não encontrado ou sem delivery_url para TXID ${transactionData.txid}`);
+                    await telegram.sendMessage(chatId, `✅ *PAGAMENTO APROVADO!*\n\n📦 *${productName}*\n\nOcorreu um erro ao enviar automaticamente. Entre em contato com /suporte.\n\n🆔 TXID: ${transactionData.txid}`, { parse_mode: 'Markdown' });
+                  } catch (_) {}
+                  await db.markAsDelivered(transactionData.txid);
                 }
               }
               
