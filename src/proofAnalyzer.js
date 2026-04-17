@@ -50,18 +50,24 @@ async function analyzeProof(fileUrl, expectedAmount, pixKey, fileType = 'image')
 /**
  * Análise usando Google Cloud Vision API
  * Usa DOCUMENT_TEXT_DETECTION — ideal para comprovantes e documentos densos
+ *
+ * ✅ SEGURANÇA: chave enviada via header 'x-goog-api-key' (não na URL)
+ *    Isso evita que a chave apareça em logs de acesso e histórico do navegador.
  */
 async function analyzeWithGoogleVision(fileUrl, expectedAmount, pixKey, fileType) {
   const apiKey = process.env.GOOGLE_VISION_API_KEY;
 
   if (!apiKey) {
-    throw new Error('GOOGLE_VISION_API_KEY não configurada nas variáveis de ambiente');
+    throw new Error(
+      'GOOGLE_VISION_API_KEY não configurada nas variáveis de ambiente. ' +
+      'Adicione a chave em: Vercel → Settings → Environment Variables → GOOGLE_VISION_API_KEY'
+    );
   }
 
   console.log(`🔍 [VISION] Baixando arquivo do Telegram...`);
   console.log(`📎 [VISION] URL: ${fileUrl.substring(0, 80)}...`);
 
-  // Baixar o arquivo com retry (3 tentativas)
+  // ── Download com retry (3 tentativas) ────────────────────────────
   let fileBuffer = null;
   const maxRetries = 3;
 
@@ -76,16 +82,17 @@ async function analyzeWithGoogleVision(fileUrl, expectedAmount, pixKey, fileType
       console.log(`✅ [VISION] Arquivo baixado: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
       break;
     } catch (err) {
-      if (attempt === maxRetries) throw new Error(`Falha no download após ${maxRetries} tentativas: ${err.message}`);
+      if (attempt === maxRetries) {
+        throw new Error(`Falha no download após ${maxRetries} tentativas: ${err.message}`);
+      }
       console.warn(`⚠️ [VISION] Tentativa ${attempt} falhou, aguardando 2s...`);
       await new Promise(r => setTimeout(r, 2000));
     }
   }
 
-  // Converter para base64
+  // ── Preparar imagem ───────────────────────────────────────────────
   const base64Image = fileBuffer.toString('base64');
 
-  // Determinar o tipo MIME
   let mimeType = 'image/jpeg';
   if (fileType === 'pdf') {
     mimeType = 'application/pdf';
@@ -115,15 +122,61 @@ async function analyzeWithGoogleVision(fileUrl, expectedAmount, pixKey, fileType
     ]
   };
 
+  // ── Chamada à API ─────────────────────────────────────────────────
+  // ✅ BOAS PRÁTICAS: chave no HEADER (não na URL query string)
+  //    Evita que a chave apareça em logs de acesso do servidor
   const startTime = Date.now();
-  const visionResponse = await axios.post(
-    `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
-    requestBody,
-    {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 60000
+  let visionResponse;
+
+  try {
+    visionResponse = await axios.post(
+      'https://vision.googleapis.com/v1/images:annotate',
+      requestBody,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey   // ← header seguro em vez de ?key= na URL
+        },
+        timeout: 60000
+      }
+    );
+  } catch (axiosErr) {
+    // ── Diagnóstico detalhado do erro 403 ────────────────────────────
+    if (axiosErr.response?.status === 403) {
+      const errBody = axiosErr.response?.data;
+      const errMsg  = errBody?.error?.message || JSON.stringify(errBody);
+      const errCode = errBody?.error?.status  || '';
+
+      console.error(`❌ [VISION] ERRO 403 — Acesso negado à Cloud Vision API`);
+      console.error(`❌ [VISION] Mensagem: ${errMsg}`);
+      console.error(`❌ [VISION] Status code: ${errCode}`);
+
+      // Ajuda contextual com base na mensagem retornada pelo Google
+      if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid')) {
+        console.error('💡 [VISION] CAUSA: Chave de API inválida ou expirada.');
+        console.error('💡 [VISION] SOLUÇÃO: Gere uma nova chave em console.cloud.google.com → APIs & Services → Credentials');
+      } else if (errMsg.includes('disabled') || errMsg.includes('not been used') || errMsg.includes('PROJECT_NOT_FOUND')) {
+        console.error('💡 [VISION] CAUSA: Cloud Vision API não está habilitada no projeto Google Cloud.');
+        console.error('💡 [VISION] SOLUÇÃO: Acesse console.cloud.google.com → APIs & Services → Library → "Cloud Vision API" → Enable');
+      } else if (errMsg.includes('billing') || errMsg.includes('BILLING')) {
+        console.error('💡 [VISION] CAUSA: Cobrança (Billing) não está habilitada no projeto Google Cloud.');
+        console.error('💡 [VISION] SOLUÇÃO: Acesse console.cloud.google.com → Billing e vincule um método de pagamento');
+      } else if (errCode === 'PERMISSION_DENIED') {
+        console.error('💡 [VISION] CAUSA: Chave sem permissão para usar a Cloud Vision API.');
+        console.error('💡 [VISION] SOLUÇÃO: Vá em APIs & Services → Credentials → sua chave → API restrictions → Selecione "Cloud Vision API"');
+      } else {
+        console.error('💡 [VISION] Verifique no Google Cloud Console:');
+        console.error('💡 [VISION]  1. Cloud Vision API está habilitada?');
+        console.error('💡 [VISION]  2. Billing está ativo?');
+        console.error('💡 [VISION]  3. A chave GOOGLE_VISION_API_KEY está correta na Vercel?');
+      }
+
+      throw new Error(`Google Vision API retornou 403: ${errMsg}`);
     }
-  );
+
+    // Outros erros de rede
+    throw axiosErr;
+  }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
   console.log(`✅ [VISION] Resposta recebida em ${elapsed}s`);
@@ -188,13 +241,21 @@ function analyzeExtractedText(text, expectedAmount, pixKey, fileType) {
     if (!isNaN(v) && v >= 1 && v <= 50000) foundValues.push(v);
   }
 
+  // Padrão 3: valores sem centavos (ex: "R$ 30" ou "30,00" com OCR ruim)
+  const valorRegex3 = /(?:R\$|rs)\s*(\d{1,5})\b/gi;
+  while ((match = valorRegex3.exec(text)) !== null) {
+    const v = parseFloat(match[1]);
+    if (!isNaN(v) && v >= 1 && v <= 50000) foundValues.push(v);
+  }
+
   // Remover duplicatas
   foundValues = [...new Set(foundValues)];
   console.log(`💰 [VISION] Valores encontrados:`, foundValues);
   console.log(`💰 [VISION] Valor esperado: ${expectedAmount}`);
 
   const expectedFloat = parseFloat(expectedAmount);
-  const margem = expectedFloat * 0.10; // 10% de tolerância
+  // Tolerância: 10% ou R$1,00 (o que for maior) — cobre arredondamentos de OCR
+  const margem = Math.max(expectedFloat * 0.10, 1.00);
   const matchingValue = foundValues.find(v => v >= expectedFloat - margem && v <= expectedFloat + margem);
   const hasCorrectValue = !!matchingValue;
 
@@ -231,10 +292,9 @@ function analyzeExtractedText(text, expectedAmount, pixKey, fileType) {
     hasPixKey = text.includes(pixKey) || textLower.includes(pixKey.toLowerCase());
   }
 
-  // Para chaves UUID — buscar partes do UUID
+  // Para chaves UUID — buscar partes do UUID (pelo menos 2 segmentos com 4+ chars)
   if (!hasPixKey && pixKey.includes('-')) {
     const uuidParts = pixKey.split('-');
-    // Se pelo menos 2 partes do UUID aparecem, considera encontrado
     const partsFound = uuidParts.filter(part => part.length >= 4 && text.includes(part));
     hasPixKey = partsFound.length >= 2;
   }
@@ -245,7 +305,8 @@ function analyzeExtractedText(text, expectedAmount, pixKey, fileType) {
 
   const palavrasChave = [
     'pix', 'aprovad', 'concluí', 'concluido', 'efetua', 'realizada',
-    'transferência', 'transferencia', 'pagamento', 'comprovante', 'recebido'
+    'transferência', 'transferencia', 'pagamento', 'comprovante', 'recebido',
+    'enviado', 'sucesso', 'confirmad'
   ];
   const hasKeywords = palavrasChave.some(p => textLower.includes(p));
   console.log(`${hasKeywords ? '✅' : '⚠️'} [VISION] Palavras-chave ${hasKeywords ? 'encontradas' : 'não encontradas'}`);
@@ -253,8 +314,8 @@ function analyzeExtractedText(text, expectedAmount, pixKey, fileType) {
   // ── 4. CALCULAR CONFIANÇA ────────────────────────────────────────────────────
 
   let confidence = 0;
-  if (hasCorrectValue) confidence += 50;  // valor correto = peso maior
-  if (hasPixKey)       confidence += 30;  // chave PIX
+  if (hasCorrectValue) confidence += 50;  // valor correto = maior peso
+  if (hasPixKey)       confidence += 30;  // chave PIX presente
   if (hasKeywords)     confidence += 20;  // palavras de confirmação
 
   let isValid;
