@@ -739,7 +739,8 @@ Para confirmar, responda: /confirmar_reverter_${txid}`, {
           return ctx.reply(`❌ Produto não encontrado: ${transaction.product_id}\n\nO produto pode ter sido removido após a transação.`);
         }
         
-        await deliver.deliverContent(transaction.telegram_id, product);
+        const productName = product.name || transaction.product_id;
+        await deliver.deliverProductFromStorage(transaction.telegram_id, transaction.product_id, productName);
         await db.markAsDelivered(txid);
         
         return ctx.reply(`✅ Transação validada e entregue!\n\n🆔 TXID: ${txid}\n👤 Cliente: ${transaction.user?.first_name}\n💰 Valor: R$ ${transaction.amount}`, {
@@ -4517,8 +4518,8 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
         return ctx.reply('❌ Produto não encontrado.');
       }
       
-      // Entregar produto diretamente
-      await deliver.deliverContent(targetUserId, product);
+      // Entregar produto via Storage (mesmo fluxo do automático)
+      await deliver.deliverProductFromStorage(targetUserId, productId, product.name);
       
       // Mensagem de sucesso
       return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
@@ -4868,7 +4869,7 @@ Obrigado pela preferência! 💚`, {
             throw new Error(`Produto "${transaction.product_id}" não encontrado`);
           }
           
-          await deliver.deliverContent(transaction.telegram_id, product);
+          await deliver.deliverProductFromStorage(transaction.telegram_id, transaction.product_id, product.name);
           await db.markAsDelivered(txid);
           entregaRealizada = true;
           mensagemEntrega = `📦 Produto "${product.name}" entregue com sucesso!`;
@@ -5288,7 +5289,7 @@ ${zwsp}${zwnj}${zwsp}`, {
       if (transaction.product_id && !transaction.product_id.startsWith('group_')) {
         const product = await db.getProduct(transaction.product_id, true);
         if (!product) throw new Error('Produto não encontrado');
-        await deliver.deliverContent(transaction.telegram_id, product);
+        await deliver.deliverProductFromStorage(transaction.telegram_id, transaction.product_id, product.name);
       } else if (transaction.media_pack_id) {
         const { data: transData } = await db.supabase.from('transactions').select('id').eq('txid', txid).single();
         await deliver.deliverMediaPack(transaction.telegram_id, transaction.media_pack_id, transaction.user_id, transData.id, db);
