@@ -123,7 +123,68 @@ function createBot(token) {
   bot.start(async (ctx) => {
     try {
       console.log('🎯 [START] Comando /start recebido de:', ctx.from.id);
-      
+
+      // ── DEEP LINK: /start produto_PRODUCTID (vindo do broadcast) ──────────
+      const payload = ctx.startPayload; // ex: "produto_conteudovip"
+      if (payload && payload.startsWith('produto_')) {
+        const productId = payload.replace('produto_', '');
+        console.log(`🔗 [DEEPLINK] Produto solicitado via deep link: ${productId}`);
+
+        // Verificar bloqueio
+        const { data: existingUser } = await db.supabase
+          .from('users')
+          .select('*')
+          .eq('telegram_id', ctx.from.id)
+          .single()
+          .catch(() => ({ data: null }));
+
+        if (existingUser && existingUser.is_blocked === true) {
+          return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*', { parse_mode: 'Markdown' });
+        }
+
+        // Buscar produto
+        const product = await db.getProduct(productId, false);
+        if (!product) {
+          return ctx.reply('❌ Produto não encontrado. Use /start para ver o menu.');
+        }
+
+        // Garantir usuário criado
+        const user = await db.getOrCreateUser(ctx.from);
+
+        // Gerar PIX
+        const amount = product.price.toString();
+        const resp = await manualPix.createManualCharge({ amount, productId });
+        const charge = resp.charge;
+        const txid = charge.txid;
+
+        // Salvar transação
+        db.createTransaction({
+          txid,
+          userId: user.id,
+          telegramId: ctx.chat.id,
+          productId,
+          amount,
+          pixKey: charge.key,
+          pixPayload: charge.copiaCola
+        }).catch(err => console.error('Erro ao salvar transação deep link:', err));
+
+        const expirationStr = new Date(Date.now() + 30 * 60 * 1000)
+          .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+
+        // Enviar QR Code
+        await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: `✅ *${product.name}*\n\n💰 Pague R$ ${parseFloat(amount).toFixed(2)} usando PIX\n\n🔑 Chave: \`${charge.key}\`\n\n📋 *Cópia & Cola:*\n\`${charge.copiaCola}\`\n\n⏰ *Expira às:* ${expirationStr}\n⚠️ Prazo: 30 minutos\n\n📸 Após pagar, envie o comprovante aqui.\n\n🆔 TXID: ${txid}`,
+            parse_mode: 'Markdown'
+          }
+        );
+
+        console.log(`✅ [DEEPLINK] PIX gerado via deep link: ${txid} para ${ctx.from.id}`);
+        return;
+      }
+      // ── FIM DEEP LINK ──────────────────────────────────────────────────────
+
       // 🚫 VERIFICAÇÃO DE BLOQUEIO INDIVIDUAL (PRIORIDADE MÁXIMA)
       // Primeiro, verificar se o usuário já existe no banco
       console.log('🔍 [START] Verificando usuário no banco...');
