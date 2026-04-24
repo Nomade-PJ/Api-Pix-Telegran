@@ -1175,59 +1175,96 @@ function getTodayStartBrasil() {
   return utcMidnight.toISOString();
 }
 
-// Função para obter início do mês atual em Brasília
+// Função para obter início do período atual em Brasília
+// Regra de negócio: período vai do dia 17 ao dia 17 do mês seguinte
 function getMonthStartBrasil() {
   const now = new Date();
-  
+
   // Obter componentes da data atual no timezone de Brasília
-  const brasilDateStr = now.toLocaleString('pt-BR', { 
+  const brasilDateStr = now.toLocaleString('pt-BR', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
   });
-  
+
   // Formato: "DD/MM/YYYY"
   const [day, month, year] = brasilDateStr.split('/');
-  
-  // Criar data no início do mês (dia 01) em Brasília (00:00:00)
-  const brasilMonthStart = `${year}-${month}-01T00:00:00`;
-  const utcMonthStart = new Date(`${year}-${month}-01T03:00:00Z`);
-  
-  return utcMonthStart.toISOString();
+  const dayInt   = parseInt(day);
+  const monthInt = parseInt(month);
+  const yearInt  = parseInt(year);
+
+  // Se hoje >= dia 17 → período começa no dia 17 deste mês
+  // Se hoje < dia 17  → período começa no dia 17 do mês anterior
+  let periodYear, periodMonth;
+  if (dayInt >= 17) {
+    periodYear  = yearInt;
+    periodMonth = monthInt;
+  } else {
+    periodMonth = monthInt - 1;
+    periodYear  = yearInt;
+    if (periodMonth < 1) {
+      periodMonth = 12;
+      periodYear--;
+    }
+  }
+
+  const periodMonthStr = String(periodMonth).padStart(2, '0');
+
+  // Início do período: dia 17 às 00:00:00 Brasília = 03:00:00 UTC
+  const utcPeriodStart = new Date(`${periodYear}-${periodMonthStr}-17T03:00:00Z`);
+
+  return utcPeriodStart.toISOString();
 }
 
-// Função para obter início do mês anterior em Brasília
+// Função para obter início do período ANTERIOR em Brasília
+// Regra de negócio: período vai do dia 17 ao dia 17 do mês seguinte
+// Período anterior = um mês antes do início do período atual
 function getPreviousMonthStartBrasil() {
   const now = new Date();
-  
+
   // Obter componentes da data atual no timezone de Brasília
-  const brasilDateStr = now.toLocaleString('pt-BR', { 
+  const brasilDateStr = now.toLocaleString('pt-BR', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
   });
-  
+
   // Formato: "DD/MM/YYYY"
   const [day, month, year] = brasilDateStr.split('/');
-  
-  // Calcular mês anterior
-  let prevMonth = parseInt(month) - 1;
-  let prevYear = parseInt(year);
-  
+  const dayInt   = parseInt(day);
+  const monthInt = parseInt(month);
+  const yearInt  = parseInt(year);
+
+  // Primeiro: calcular início do período atual (dia 17)
+  let currentPeriodMonth, currentPeriodYear;
+  if (dayInt >= 17) {
+    currentPeriodMonth = monthInt;
+    currentPeriodYear  = yearInt;
+  } else {
+    currentPeriodMonth = monthInt - 1;
+    currentPeriodYear  = yearInt;
+    if (currentPeriodMonth < 1) {
+      currentPeriodMonth = 12;
+      currentPeriodYear--;
+    }
+  }
+
+  // Período anterior = um mês antes do período atual
+  let prevMonth = currentPeriodMonth - 1;
+  let prevYear  = currentPeriodYear;
   if (prevMonth < 1) {
     prevMonth = 12;
     prevYear--;
   }
-  
+
   const prevMonthStr = String(prevMonth).padStart(2, '0');
-  
-  // Criar data no início do mês anterior (dia 01) em Brasília (00:00:00)
-  const brasilPrevMonthStart = `${prevYear}-${prevMonthStr}-01T00:00:00`;
-  const utcPrevMonthStart = new Date(`${prevYear}-${prevMonthStr}-01T03:00:00Z`);
-  
-  return utcPrevMonthStart.toISOString();
+
+  // Início do período anterior: dia 17 às 00:00:00 Brasília = 03:00:00 UTC
+  const utcPrevStart = new Date(`${prevYear}-${prevMonthStr}-17T03:00:00Z`);
+
+  return utcPrevStart.toISOString();
 }
 
 async function getStats(useCache = true) {
