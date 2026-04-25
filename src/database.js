@@ -1279,84 +1279,42 @@ async function getStats(useCache = true) {
       }
     }
     
-    // Total de usuários
-    const { count: totalUsers } = await supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true });
-    
-    // Total de transações
-    const { count: totalTransactions } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true });
-    
-    // Transações pendentes
-    const { count: pendingTransactions } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'proof_sent');
-    
-    // Total em vendas (entregues) - SEMPRE calcula automaticamente pelas transações
-    // Atualização automática em tempo real - não usa valores manuais
-    const { data: sales } = await supabase
-      .from('transactions')
-      .select('amount')
-      .eq('status', 'delivered');
-    
-    const totalSales = sales?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
-    console.log('💰 [STATS] Valor calculado automaticamente pelas transações:', totalSales.toFixed(2));
-    
-    // Transações validadas (apenas status validated)
-    const { count: validatedTransactions } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'validated');
-    
-    // Transações entregues (apenas status delivered)
-    const { count: deliveredTransactions } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'delivered');
-    
-    // Transações aprovadas (validated + delivered)
-    const { count: approvedTransactions } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .in('status', ['validated', 'delivered']);
-    
-    // Transações rejeitadas
-    const { count: rejectedTransactions } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'rejected');
-    
-    // Calcular ticket médio (valor médio por transação entregue)
-    const avgTicket = deliveredTransactions > 0 
-      ? (totalSales / deliveredTransactions).toFixed(2)
-      : '0.00';
-    
-    // Vendas de HOJE (usando delivered_at no horário de Brasília)
-    // Atualiza automaticamente em tempo real a cada chamada
-    const todayStartISO = getTodayStartBrasil();
-    
-    const { data: todaySalesData } = await supabase
-      .from('transactions')
-      .select('amount, delivered_at')
-      .eq('status', 'delivered')
-      .gte('delivered_at', todayStartISO);
-    
-    const todaySales = todaySalesData?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-    const todayTransactions = todaySalesData?.length || 0;
-    
+    // ── Buscar stats admin direto da view do banco (regra desde 17/04) ──────
+    const { data: sv, error: svErr } = await supabase
+      .from('stats_periodo')
+      .select('*')
+      .single();
+
+    if (svErr) {
+      console.error('❌ [STATS] Erro ao buscar stats_periodo:', svErr.message);
+      throw svErr;
+    }
+
+    const totalUsers           = parseInt(sv.usuarios_desde_17)        || 0;
+    const totalTransactions    = parseInt(sv.transacoes_desde_17)       || 0;
+    const pendingTransactions  = 0; // zerado por regra de negócio
+    const deliveredTransactions= parseInt(sv.total_aprovadas)           || 0;
+    const approvedTransactions = deliveredTransactions;
+    const validatedTransactions= 0;
+    const rejectedTransactions = 0;
+    const totalSales           = parseFloat(sv.total_vendas)            || 0;
+    const todaySales           = parseFloat(sv.hoje_vendas)             || 0;
+    const todayTransactions    = parseInt(sv.hoje_aprovadas)            || 0;
+    const avgTicket            = deliveredTransactions > 0
+      ? (totalSales / deliveredTransactions).toFixed(2) : '0.00';
+
+    console.log('💰 [STATS] Via view banco (desde 17/04) — Usuários:', totalUsers, '| Transações:', totalTransactions, '| Vendas: R$', totalSales.toFixed(2));
+
     return {
-      totalUsers: totalUsers || 0,
-      totalTransactions: totalTransactions || 0,
-      pendingTransactions: pendingTransactions || 0,
-      validatedTransactions: validatedTransactions || 0,
-      deliveredTransactions: deliveredTransactions || 0,
+      totalUsers,
+      totalTransactions,
+      pendingTransactions,
+      validatedTransactions,
+      deliveredTransactions,
       totalSales: totalSales.toFixed(2),
-      avgTicket: avgTicket,
-      approvedTransactions: approvedTransactions || 0,
-      rejectedTransactions: rejectedTransactions || 0,
+      avgTicket,
+      approvedTransactions,
+      rejectedTransactions,
       todaySales: todaySales.toFixed(2),
       todayTransactions: todayTransactions || 0
     };
