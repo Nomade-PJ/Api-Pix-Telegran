@@ -1391,66 +1391,32 @@ async function getCreatorStats(useCache = true) {
       }
     }
     
-    // Apenas transações entregues (delivered) - mesmo padrão do painel administrativo
-    const { count: approvedCount } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'delivered');
-    
-    // Total em vendas (apenas entregues) - SEMPRE calcula automaticamente pelas transações
-    // Atualização automática em tempo real - não usa valores manuais
-    const { data: approvedSales } = await supabase
-      .from('transactions')
-      .select('amount')
-      .eq('status', 'delivered');
-    
-    const totalSales = approvedSales?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
-    console.log('💰 [CREATOR-STATS] Valor calculado automaticamente pelas transações:', totalSales.toFixed(2));
-    
-    // Vendas de HOJE (usando delivered_at no horário de Brasília)
-    // Atualiza automaticamente em tempo real a cada chamada
-    const todayStartISO = getTodayStartBrasil();
-    
-    const { data: todaySalesData } = await supabase
-      .from('transactions')
-      .select('amount, delivered_at')
-      .eq('status', 'delivered')
-      .gte('delivered_at', todayStartISO);
-    
-    const todaySales = todaySalesData?.reduce((sum, t) => sum + parseFloat(t.amount), 0) || 0;
-    const todayTransactions = todaySalesData?.length || 0;
-    
-    // Transações pendentes (para mostrar)
-    const { count: pendingCount } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'proof_sent');
-    
-    // Vendas do mês atual (usando delivered_at no horário de Brasília)
-    const monthStartISO = getMonthStartBrasil();
-    
-    const { data: monthSalesData } = await supabase
-      .from('transactions')
-      .select('amount, delivered_at')
-      .eq('status', 'delivered')
-      .gte('delivered_at', monthStartISO);
-    
-    const monthSales = monthSalesData?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
-    const monthTransactions = monthSalesData?.length || 0;
-    
-    // Vendas do mês anterior
-    const prevMonthStartISO = getPreviousMonthStartBrasil();
-    
-    // Fim do mês anterior = início do mês atual
-    const { data: prevMonthSalesData } = await supabase
-      .from('transactions')
-      .select('amount, delivered_at')
-      .eq('status', 'delivered')
-      .gte('delivered_at', prevMonthStartISO)
-      .lt('delivered_at', monthStartISO);
-    
-    const prevMonthSales = prevMonthSalesData?.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0) || 0;
-    const prevMonthTransactions = prevMonthSalesData?.length || 0;
+    // ── Buscar estatísticas direto da view do banco (regra dia 17) ──────────
+    // A view stats_periodo usa get_period_start() que aplica a regra dia 17
+    // Sem depender de lógica JavaScript — calculado 100% no Supabase
+    const { data: statsView, error: statsError } = await supabase
+      .from('stats_periodo')
+      .select('*')
+      .single();
+
+    if (statsError) {
+      console.error('❌ [CREATOR-STATS] Erro ao buscar stats_periodo:', statsError.message);
+      throw statsError;
+    }
+
+    const approvedCount        = parseInt(statsView.total_aprovadas)         || 0;
+    const pendingCount         = parseInt(statsView.total_pendentes)         || 0;
+    const totalSales           = parseFloat(statsView.total_vendas)          || 0;
+    const monthSales           = parseFloat(statsView.periodo_vendas)        || 0;
+    const monthTransactions    = parseInt(statsView.periodo_aprovadas)       || 0;
+    const prevMonthSales       = parseFloat(statsView.periodo_anterior_vendas) || 0;
+    const prevMonthTransactions= parseInt(statsView.periodo_anterior_aprovadas) || 0;
+    const todaySales           = parseFloat(statsView.hoje_vendas)           || 0;
+    const todayTransactions    = parseInt(statsView.hoje_aprovadas)          || 0;
+
+    console.log('💰 [CREATOR-STATS] Via view banco — Período:', statsView.periodo_inicio);
+    console.log('💰 [CREATOR-STATS] Este período: R$', monthSales.toFixed(2));
+    console.log('💰 [CREATOR-STATS] Total geral: R$', totalSales.toFixed(2));
     
     return {
       totalTransactions: approvedCount || 0, // Apenas aprovadas
