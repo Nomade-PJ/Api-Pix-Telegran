@@ -3587,34 +3587,35 @@ async function recalculateTotalSales() {
       };
     }
     
-    // Calcular total
-    const totalSales = sales.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
-    const totalTransactions = sales.length;
-    
-    // Calcular por período
-    const todayStartISO = getTodayStartBrasil();
-    const todaySales = sales
-      .filter(t => t.delivered_at && new Date(t.delivered_at) >= new Date(todayStartISO))
-      .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
-    const todayTransactions = sales.filter(t => t.delivered_at && new Date(t.delivered_at) >= new Date(todayStartISO)).length;
-    
+    // ── Buscar totais via view (regra desde 17/04) ────────────────────────
+    const { data: sv, error: svErr } = await supabase
+      .from('stats_periodo')
+      .select('*')
+      .single();
+
+    if (svErr) throw svErr;
+
+    const totalSales        = parseFloat(sv.total_vendas)    || 0;
+    const totalTransactions = parseInt(sv.total_aprovadas)   || 0;
+    const todaySales        = parseFloat(sv.hoje_vendas)     || 0;
+    const todayTransactions = parseInt(sv.hoje_aprovadas)    || 0;
     const fixedCount = (validatedWithDelivered?.length || 0) + (validatedWithoutDelivered?.length || 0);
-    
-    console.log(`✅ [RECALC] Recalculado com sucesso:`);
+
+    console.log(`✅ [RECALC] Recalculado com sucesso (desde 17/04):`);
     console.log(`   📊 Total de vendas: R$ ${totalSales.toFixed(2)}`);
     console.log(`   📦 Total de transações: ${totalTransactions}`);
     console.log(`   📅 Vendas de hoje: R$ ${todaySales.toFixed(2)} (${todayTransactions} transações)`);
     if (fixedCount > 0) {
       console.log(`   🔧 Transações corrigidas: ${fixedCount}`);
     }
-    
+
     return {
       totalSales: totalSales.toFixed(2),
       totalTransactions,
       todaySales: todaySales.toFixed(2),
       todayTransactions,
       fixed: fixedCount,
-      message: `Recalculado: R$ ${totalSales.toFixed(2)} em ${totalTransactions} transações${fixedCount > 0 ? ` (${fixedCount} corrigidas)` : ''}`
+      message: `Recalculado desde 17/04: R$ ${totalSales.toFixed(2)} em ${totalTransactions} transações${fixedCount > 0 ? ` (${fixedCount} corrigidas)` : ''}`
     };
   } catch (err) {
     console.error('❌ [RECALC] Erro ao recalcular vendas:', err);
