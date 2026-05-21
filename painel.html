@@ -435,6 +435,7 @@ td strong { color: var(--text); font-weight: 600; }
       <select id="p_type"><option value="link">Link</option><option value="media_pack">Pack de Mídia</option><option value="group">Grupo</option></select>
     </div>
     <div class="form-row"><label>URL de Entrega</label><input type="text" id="p_url" placeholder="https://..."></div>
+    <div class="form-row"><label>Pasta no Storage (Supabase)</label><input type="text" id="p_storage" placeholder="ex: semana (Opcional se usar link/arquivo)"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modalProduct')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveProduct()">Criar Produto</button>
@@ -626,7 +627,7 @@ async function loadProducts() {
 
 function openProductModal() { document.getElementById('modalProduct').classList.add('show'); }
 async function saveProduct() {
-  const body = { product_id: document.getElementById('p_id').value, name: document.getElementById('p_name').value, description: document.getElementById('p_desc').value, price: document.getElementById('p_price').value, delivery_type: document.getElementById('p_type').value, delivery_url: document.getElementById('p_url').value };
+  const body = { product_id: document.getElementById('p_id').value, name: document.getElementById('p_name').value, description: document.getElementById('p_desc').value, price: document.getElementById('p_price').value, delivery_type: document.getElementById('p_type').value, delivery_url: document.getElementById('p_url').value, storage_folder: document.getElementById('p_storage').value };
   const d = await api('createProduct', { method: 'POST', body });
   if (d.ok) { toast('✅ Produto criado!', 'success'); closeModal('modalProduct'); loadProducts(); }
   else toast('❌ ' + (d.error || 'Erro'), 'error');

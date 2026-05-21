@@ -390,8 +390,15 @@ module.exports = async function handler(req, res) {
       return res.json({ data: data || [] });
     }
     if (action === 'createProduct' && req.method === 'POST') {
-      const { product_id, name, description, price, delivery_type, delivery_url } = req.body;
-      const { data, error } = await supabase.from('products').insert([{ product_id, name, description, price: parseFloat(price), delivery_type: delivery_type || 'link', delivery_url, is_active: true }]).select().single();
+      const { product_id, name, description, price, delivery_type, delivery_url, storage_folder } = req.body;
+      const { data, error } = await supabase.from('products').insert([{
+        product_id, name, description,
+        price: parseFloat(price),
+        delivery_type: delivery_type || 'link',
+        delivery_url,
+        storage_folder: storage_folder || null,
+        is_active: true
+      }]).select().single();
       if (error) return res.status(400).json({ error: error.message });
       return res.json({ ok: true, data });
     }

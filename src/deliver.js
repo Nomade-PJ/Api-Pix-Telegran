@@ -4,17 +4,10 @@ const { createClient } = require('@supabase/supabase-js');
 
 const tg = new Telegram(process.env.TELEGRAM_BOT_TOKEN);
 
-// Mapeamento: product_id → pasta no bucket media-packs
-const PRODUCT_FOLDER_MAP = {
-  'destaquesdasemana':    'semana',
-  'bastidoresexclusivos': 'bastidores',
-  'surpresapremium':      'surpresa',
-  'essencialpremium':     'essencial',
-  'mixespecialmaisescol': 'mix',
-  'conteudopersonalizad': 'personalizado',
-  'conteudovip':          'vip',
-  'pacotecompleto':       'completo',
-};
+// ⚠️ PRODUCT_FOLDER_MAP removido — pasta agora é lida dinamicamente
+// do campo storage_folder na tabela products do banco de dados.
+// Para criar um novo produto com entrega via storage, basta preencher
+// o campo 'Pasta no Storage' no painel de administração.
 
 // ============================================================
 // RASTREAMENTO DE MENSAGENS (antifraude)
@@ -101,10 +94,48 @@ async function deliverProductFromStorage(chatId, productId, productName, opts = 
     process.env.SUPABASE_SERVICE_KEY
   );
 
-  const folder = PRODUCT_FOLDER_MAP[productId];
+  // Buscar produto e sua pasta do storage dinamicamente no banco de dados
+  let folder = null;
+  let productData = null;
+  try {
+    const { data } = await supabase
+      .from('products')
+      .select('*')
+      .eq('product_id', productId)
+      .single();
+    productData = data;
+    folder = productData?.storage_folder || null;
+    if (folder) {
+      console.log(`📂 [DELIVER-STORAGE] Pasta "${folder}" carregada do banco para produto "${productId}"`);
+    }
+  } catch (dbErr) {
+    console.warn(`⚠️ [DELIVER-STORAGE] Erro ao buscar produto do banco:`, dbErr.message);
+  }
 
   if (!folder) {
-    console.warn(`⚠️ [DELIVER-STORAGE] product_id "${productId}" não tem pasta mapeada`);
+    if (productData && productData.delivery_url) {
+      console.log(`🔗 [DELIVER-STORAGE] Redirecionando para entrega legada via link/arquivo (delivery_type: ${productData.delivery_type})`);
+      try {
+        const sent = await deliverContent(chatId, productData);
+        if (sent && sent.message_id) {
+          await saveMessageSent({
+            telegramId: chatId,
+            userId,
+            messageId: sent.message_id,
+            transactionId,
+            productTag: productId,
+            mediaType: productData.delivery_type === 'file' ? 'document' : 'text',
+            fileUrl: productData.delivery_url
+          });
+        }
+        return { success: true, method: 'legacy_deliver_content' };
+      } catch (legacyErr) {
+        console.error(`❌ [DELIVER-STORAGE] Erro na entrega do conteúdo legado:`, legacyErr.message);
+        throw legacyErr;
+      }
+    }
+
+    console.warn(`⚠️ [DELIVER-STORAGE] product_id "${productId}" não tem storage_folder nem delivery_url cadastrado no banco`);
     const sent = await withDeliveryRetry(() =>
       tg.sendMessage(chatId,
         `✅ *PAGAMENTO CONFIRMADO!*\n\n📦 *${productName}*\n\nSeu conteúdo será enviado em breve pelo suporte.\n\n💬 Use /suporte para solicitar seu material.`,
@@ -112,7 +143,7 @@ async function deliverProductFromStorage(chatId, productId, productName, opts = 
       )
     );
     await saveMessageSent({ telegramId: chatId, userId, messageId: sent.message_id, transactionId, productTag: productId, mediaType: 'text' });
-    return { success: false, reason: 'no_folder_mapping' };
+    return { success: false, reason: 'no_folder_mapping_or_url' };
   }
 
   console.log(`📂 [DELIVER-STORAGE] Listando arquivos em "${folder}" para produto "${productId}"`);
@@ -459,5 +490,4 @@ module.exports = {
   addUserToGroup,
   classifyDeliveryError,
   saveMessageSent,
-  PRODUCT_FOLDER_MAP,
 };

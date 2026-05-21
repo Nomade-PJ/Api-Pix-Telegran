@@ -962,6 +962,7 @@ td b{color:var(--fg);font-weight:500}
     <div class="frow"><label>Preço R$ *</label><input class="fi" type="number" id="p_price" placeholder="29.90" step="0.01"></div>
     <div class="frow"><label>Tipo entrega</label><select class="fi" id="p_type"><option value="link">Link</option><option value="media_pack">Media Pack</option><option value="group">Grupo</option></select></div>
     <div class="frow" style="grid-column:1/-1"><label>URL de entrega</label><input class="fi" id="p_url" placeholder="https://..."></div>
+    <div class="frow" style="grid-column:1/-1"><label>Pasta no Storage (Supabase)</label><input class="fi" id="p_storage" placeholder="ex: semana (Opcional se usar link/arquivo)"></div>
     <div class="frow" style="grid-column:1/-1"><label>Descrição</label><textarea class="fi" id="p_desc" placeholder="Opcional..."></textarea></div>
   </div>
   <div class="mfoot"><button class="btn bgh" onclick="closeM('mProd')">Cancelar</button><button class="btn bp" onclick="saveProd()">Criar produto</button></div>
@@ -1345,7 +1346,7 @@ async function loadProd(){
   document.getElementById('prodTable').innerHTML='<table><thead><tr><th>Nome</th><th class="hm">ID</th><th>Preço</th><th>Status</th><th>Ações</th></tr></thead><tbody>'
     +d.data.map(p=>'<tr><td><b>'+p.name+'</b></td><td class="hm mono">'+p.product_id+'</td><td class="mono">'+fmtR(p.price)+'</td><td>'+tag(p.is_active?'active':'inactive')+'</td><td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="toggleProd(\\''+p.product_id+'\\','+(!p.is_active)+')">'+(p.is_active?'Pausar':'Ativar')+'</button><button class="btn br bxs" onclick="delProd(\\''+p.product_id+'\\')">✕</button></div></td></tr>').join('')+'</tbody></table>';
 }
-async function saveProd(){const b={product_id:document.getElementById('p_id').value,name:document.getElementById('p_name').value,description:document.getElementById('p_desc').value,price:document.getElementById('p_price').value,delivery_type:document.getElementById('p_type').value,delivery_url:document.getElementById('p_url').value};const d=await api('createProduct',{method:'POST',body:b});if(d.ok){closeM('mProd');toast('Produto criado.');loadProd();}else toast(d.error||'Erro','err');}
+async function saveProd(){const b={product_id:document.getElementById('p_id').value,name:document.getElementById('p_name').value,description:document.getElementById('p_desc').value,price:document.getElementById('p_price').value,delivery_type:document.getElementById('p_type').value,delivery_url:document.getElementById('p_url').value,storage_folder:document.getElementById('p_storage').value};const d=await api('createProduct',{method:'POST',body:b});if(d.ok){closeM('mProd');toast('Produto criado.');loadProd();}else toast(d.error||'Erro','err');}
 async function toggleProd(id,a){await api('toggleProduct',{method:'POST',body:{product_id:id,is_active:a}});toast(a?'Ativado.':'Pausado.','warn');loadProd();}
 async function delProd(id){if(!confirm('Remover produto "'+id+'"?'))return;await api('deleteProduct',{method:'DELETE',params:{product_id:id}});toast('Removido.','warn');loadProd();}
 
