@@ -3,6 +3,7 @@
 
 const axios = require('axios');
 const FormData = require('form-data');
+const db = require('./database');
 
 /**
  * Analisa comprovante PIX usando OCR.space
@@ -60,7 +61,18 @@ async function analyzeWithOCR(fileUrl, expectedAmount, pixKey, fileType) {
     console.log(`🔍 [OCR] Iniciando análise OCR...`);
     console.log(`📎 [OCR] URL: ${fileUrl.substring(0, 100)}...`);
     
-    const ocrApiKey = process.env.OCR_SPACE_API_KEY || 'K87899643688957';
+    let ocrApiKey = process.env.OCR_SPACE_API_KEY;
+    if (!ocrApiKey) {
+      try {
+        ocrApiKey = await db.getSetting('ocr_space_api_key');
+      } catch (err) {
+        console.warn('⚠️ [OCR] Falha ao buscar ocr_space_api_key no banco:', err.message);
+      }
+    }
+    // Fallback padrão se não estiver em env nem no banco
+    if (!ocrApiKey) {
+      ocrApiKey = 'K87899643688957';
+    }
     
     // TENTATIVA 1: Usar URL diretamente (mais rápido, sem download)
     // Tentar múltiplas engines via URL
