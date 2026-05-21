@@ -1,0 +1,22 @@
+{
+  "name": "bot-pix-vercel",
+  "version": "2.0.0",
+  "description": "Bot Telegram com PIX (modo manual) hospedado na Vercel",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node scripts/setWebhook.js",
+    "dev": "vercel dev",
+    "test": "node test-bot-local.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.4.0",
+    "dotenv": "^16.3.1",
+    "form-data": "^4.0.0",
+    "qrcode": "^1.5.1",
+    "telegraf": "^4.12.2"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
+}
