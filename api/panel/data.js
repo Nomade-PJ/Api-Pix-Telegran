@@ -41,8 +41,7 @@ function getBrasilStartOf(period) {
 }
 
 module.exports = async function handler(req, res) {
-  const allowedOrigin = process.env.PANEL_ORIGIN || 'https://api-pix-telegran.vercel.app';
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -423,7 +422,7 @@ module.exports = async function handler(req, res) {
     // GRUPOS
     // ═══════════════════════════════════════════════
     if (action === 'groups') {
-      const { data } = await supabase.from('groups').select('*').order('created_at', { ascending: false });
+      const { data } = await supabase.from('groups').select('*').order('created_at', { ascending: false }).limit(200);
       return res.json({ data: data || [] });
     }
     if (action === 'createGroup' && req.method === 'POST') {
@@ -468,7 +467,7 @@ module.exports = async function handler(req, res) {
       return res.json({ data, total: count, page: parseInt(page), pages: Math.ceil((count || 0) / parseInt(limit)) });
     }
     if (action === 'ticketMessages') {
-      const { data } = await supabase.from('support_messages').select('*').eq('ticket_id', req.query.ticket_id).order('created_at', { ascending: true });
+      const { data } = await supabase.from('support_messages').select('*').eq('ticket_id', req.query.ticket_id).order('created_at', { ascending: true }).limit(500);
       return res.json({ data: data || [] });
     }
     if (action === 'replyTicket' && req.method === 'POST') {
@@ -504,7 +503,7 @@ module.exports = async function handler(req, res) {
     // CUPONS
     // ═══════════════════════════════════════════════
     if (action === 'coupons') {
-      const { data } = await supabase.from('coupons').select('*').order('created_at', { ascending: false });
+      const { data } = await supabase.from('coupons').select('*').order('created_at', { ascending: false }).limit(500);
       return res.json({ data: data || [] });
     }
     if (action === 'createCoupon' && req.method === 'POST') {
@@ -530,7 +529,7 @@ module.exports = async function handler(req, res) {
     // RESPOSTAS AUTOMÁTICAS
     // ═══════════════════════════════════════════════
     if (action === 'autoResponses') {
-      const { data } = await supabase.from('auto_responses').select('*').order('priority', { ascending: false });
+      const { data } = await supabase.from('auto_responses').select('*').order('priority', { ascending: false }).limit(200);
       return res.json({ data: data || [] });
     }
     if (action === 'createAutoResponse' && req.method === 'POST') {
@@ -554,7 +553,7 @@ module.exports = async function handler(req, res) {
     // USUÁRIOS CONFIÁVEIS
     // ═══════════════════════════════════════════════
     if (action === 'trustedUsers') {
-      const { data } = await supabase.from('trusted_users').select('*').order('trust_score', { ascending: false });
+      const { data } = await supabase.from('trusted_users').select('*').order('trust_score', { ascending: false }).limit(500);
       if (data?.length) {
         const tids = data.map(t => t.telegram_id).filter(Boolean);
         if (tids.length) {
