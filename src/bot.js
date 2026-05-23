@@ -27,22 +27,18 @@ function formatAmount(value) {
 function createBot(token) {
   const bot = new Telegraf(token);
   
-  // Iniciar job de expiração automática de transações
-  startExpirationJob();
-  console.log('✅ [BOT-INIT] Job de expiração de transações iniciado');
-  
-  // Iniciar job de atualização automática da descrição do bot
-  startBotDescriptionJob();
-  console.log('✅ [BOT-INIT] Job de atualização de descrição do bot iniciado');
-  
-  // Iniciar job de backup automático
-  startBackupJob();
-  console.log('✅ [BOT-INIT] Job de backup automático iniciado');
-  
-  // Iniciar job de lembretes de pagamento (15 minutos)
-  startReminderJob(bot);
-  startRetryJob(bot);
-  console.log('✅ [BOT-INIT] Job de lembretes de pagamento iniciado');
+  // ──────────────────────────────────────────────────────────────────────
+  // JOBS REMOVIDOS DO BOOT — setInterval não funciona em Vercel Serverless.
+  // A instância é destruída após cada request — os intervalos nunca disparam.
+  //
+  // Os jobs abaixo são executados por cron jobs externos (cron-job.org):
+  //   • Expiração de transações  → /api/jobs/expire-members    (a cada 5min)
+  //   • Lembretes de pagamento   → via expire-members           (a cada 5min)
+  //   • Retry de entregas        → via expire-members           (a cada 5min)
+  //   • Backup do banco          → /api/jobs/cleanup-expired    (diário)
+  //   • Descrição do bot         → não crítico, pode ser manual
+  // ──────────────────────────────────────────────────────────────────────
+  console.log('✅ [BOT-INIT] Jobs gerenciados por cron externo (cron-job.org)');
   
   // 🆕 REGISTRAR COMANDO /criador PRIMEIRO (antes de tudo, para garantir prioridade)
   creator.registerCreatorCommands(bot);
@@ -90,38 +86,14 @@ function createBot(token) {
   })();
   
 
-  // ============================================================
-  // MENU BUTTON — aparece no canto inferior esquerdo do chat
-  // Aciona /start ao ser clicado (apenas no chat privado com o bot)
-  // ============================================================
-  const axios = require('axios');
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-
-  axios.post(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
-    menu_button: {
-      type: 'commands'  // Mostra botão "Menu" que abre lista de comandos do bot
-    }
-  }).then(() => {
-    console.log('✅ [MENU-BUTTON] Botão Menu configurado com sucesso');
-  }).catch(err => {
-    console.warn('⚠️ [MENU-BUTTON] Erro ao configurar botão Menu:', err.message);
-  });
-
-  // Registrar comandos visíveis no Menu (chat privado)
-  bot.telegram.setMyCommands([
-    { command: 'start',         description: '🏠 Exibir menu principal' },
-    { command: 'planos',        description: '📋 Ver planos disponíveis' },
-    { command: 'status',        description: '✅ Ver minha assinatura' },
-    { command: 'meusconteudos', description: '📦 Conteúdos que já comprei' },
-    { command: 'suporte',       description: '💬 Precisa de ajuda?' },
-    { command: 'sobre',         description: 'ℹ️ Sobre a plataforma' },
-    { command: 'criador',       description: '🎛️ Painel do criador' },
-    { command: 'admin',         description: '🔐 Painel administrativo' },
-  ], { scope: { type: 'all_private_chats' } }).then(() => {
-    console.log('✅ [MENU-BUTTON] Comandos registrados no Menu');
-  }).catch(err => {
-    console.warn('⚠️ [MENU-BUTTON] Erro ao registrar comandos:', err.message);
-  });
+  // ──────────────────────────────────────────────────────────────────────
+  // setChatMenuButton e setMyCommands REMOVIDOS do boot.
+  // Chamá-los a cada webhook desperdiça 2 requisições HTTP por cold start
+  // e pode causar rate limiting no Telegram.
+  //
+  // Execute UMA VEZ quando necessário (ex: após mudança de comandos):
+  //   node scripts/setup-bot-commands.js
+  // ──────────────────────────────────────────────────────────────────────
 
   // Registrar handler do /start PRIMEIRO (antes de tudo)
   bot.start(async (ctx) => {
