@@ -14,7 +14,7 @@
     { "src": "api/panel/data.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/api/telegram-webhook", "dest": "/api/telegram-webhook.js", "methods": ["POST"] },
+    { "src": "/webhook-secreto-aleatorio", "dest": "/api/telegram-webhook.js" },
     { "src": "/contrato", "dest": "/api/contrato.js" },
     { "src": "/api/sign-contract", "dest": "/api/sign-contract.js" },
     { "src": "/api/check-contract", "dest": "/api/check-contract.js" },
