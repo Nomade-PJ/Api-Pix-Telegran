@@ -7,8 +7,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const SALT = 'vipsdaval_panel_2026';
-const JWT_SECRET = process.env.ADMIN_SECRET || 'panel_jwt_secret_2026';
+// OBRIGATÓRIO: estas variáveis devem estar configuradas no Vercel.
+// Sem elas o servidor não aceita nenhum login — sem fallback, sem exceção.
+const SALT = process.env.PANEL_SALT;
+const JWT_SECRET = process.env.ADMIN_SECRET;
+
+if (!SALT || !JWT_SECRET) {
+  console.error('❌ [AUTH] PANEL_SALT e ADMIN_SECRET são obrigatórios. Configure no Vercel e faça redeploy.');
+}
 
 function hashPassword(password) {
   return crypto.createHmac('sha256', SALT).update(password).digest('hex');
@@ -33,7 +39,8 @@ function verifyToken(token) {
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const allowedOrigin = process.env.PANEL_ORIGIN || 'https://api-pix-telegran.vercel.app';
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -45,6 +52,11 @@ module.exports = async function handler(req, res) {
     const payload = verifyToken(auth);
     if (!payload) return res.status(401).json({ ok: false });
     return res.status(200).json({ ok: true, email: payload.email });
+  }
+
+  // Bloquear qualquer operação se as variáveis críticas não estiverem configuradas
+  if (!SALT || !JWT_SECRET) {
+    return res.status(500).json({ error: 'Servidor mal configurado. Contate o administrador.' });
   }
 
   // Login
