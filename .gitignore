@@ -34,3 +34,5 @@ temp/
 
 # bot-grupos - Repositório separado
 bot-grupos/
+.vercel
+.env*
