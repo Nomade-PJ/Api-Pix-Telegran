@@ -1,8 +1,6 @@
 // src/db/settings.js
 const { supabase } = require('./client');
 
-// ===== CONFIGURAÇÕES (SETTINGS) =====
-
 async function getSetting(key) {
   try {
     const { data, error } = await supabase
@@ -61,8 +59,6 @@ async function getPixKey() {
 async function setPixKey(pixKey, updatedBy = null) {
   return await setSetting('pix_key', pixKey, updatedBy);
 }
-
-// ===== GRUPOS =====
 
 module.exports = {
   getSetting,

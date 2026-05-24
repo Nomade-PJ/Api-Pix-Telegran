@@ -3,8 +3,6 @@ const { supabase } = require('./client');
 const cache = require('../cache');
 const crypto = require('crypto');
 
-// ===== TRANSAÇÕES =====
-
 async function createTransaction({ txid, userId, telegramId, productId, mediaPackId, groupId, amount, pixKey, pixPayload }) {
   try {
     const insertData = {

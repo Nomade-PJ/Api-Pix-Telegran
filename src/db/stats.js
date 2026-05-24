@@ -2,8 +2,6 @@
 const { supabase } = require('./client');
 const cache = require('../cache');
 
-// ===== ADMIN =====
-
 async function getPendingTransactions(limit = 10, offset = 0) {
   try {
     // Filtrar apenas transações dos últimos 30 minutos

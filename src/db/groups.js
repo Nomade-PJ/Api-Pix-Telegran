@@ -1,8 +1,6 @@
 // src/db/groups.js
 const { supabase } = require('./client');
 
-// ===== GRUPOS =====
-
 async function getAllGroups() {
   try {
     const { data, error } = await supabase

@@ -1,11 +1,6 @@
 // src/db/tickets.js
 const { supabase } = require('./client');
 
-// ===== SISTEMA DE TICKETS DE SUPORTE =====
-
-/**
- * Cria um novo ticket de suporte
- */
 async function createSupportTicket(telegramId, userId, subject, message) {
   try {
     // Gerar número do ticket manualmente

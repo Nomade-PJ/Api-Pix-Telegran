@@ -1,12 +1,6 @@
 // src/db/ocr.js
 const { supabase } = require('./client');
 
-// ===== CACHE OCR =====
-
-/**
- * Verifica se já existe análise OCR para uma transação
- * Retorna o resultado se existir, null caso contrário
- */
 async function getOCRResult(txid) {
   try {
     console.log(`🔍 [DB-CACHE] Buscando cache OCR para TXID: ${txid}`);
