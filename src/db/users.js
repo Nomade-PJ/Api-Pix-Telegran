@@ -1,6 +1,7 @@
 // src/db/users.js
 const { supabase } = require('./client');
 
+// ===== USUÁRIOS =====
 
 async function getUserByUUID(userId) {
   try {

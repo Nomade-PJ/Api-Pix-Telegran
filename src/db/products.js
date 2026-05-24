@@ -1,6 +1,7 @@
 // src/db/products.js
 const { supabase } = require('./client');
 
+// ===== PRODUTOS =====
 
 async function getProduct(productId, includeInactive = false) {
   try {

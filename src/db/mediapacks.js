@@ -1,6 +1,7 @@
 // src/db/mediapacks.js
 const { supabase } = require('./client');
 
+// ===== MEDIA PACKS =====
 
 async function getAllMediaPacks() {
   try {

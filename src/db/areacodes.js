@@ -1,6 +1,7 @@
 // src/db/areacodes.js
 const { supabase } = require('./client');
 
+// ===== BLOQUEIO POR DDD =====
 
 async function getBlockedAreaCodes() {
   try {

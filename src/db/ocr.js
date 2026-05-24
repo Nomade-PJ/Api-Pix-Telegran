@@ -1,6 +1,7 @@
 // src/db/ocr.js
 const { supabase } = require('./client');
 
+// ===== CACHE OCR =====
 
 /**
  * Verifica se já existe análise OCR para uma transação
