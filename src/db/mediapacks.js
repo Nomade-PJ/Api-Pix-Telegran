@@ -1,0 +1,354 @@
+// src/db/mediapacks.js
+const { supabase } = require('./client');
+const cache = require('../cache');
+const crypto = require('crypto');
+
+
+async function getOCRResult(txid) {
+  try {
+    console.log(`🔍 [DB-CACHE] Buscando cache OCR para TXID: ${txid}`);
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('ocr_result, ocr_confidence, ocr_analyzed_at')
+      .eq('txid', txid)
+      .single();
+    
+    // PGRST116 = not found (transação não existe ou campos não existem ainda)
+    if (error && error.code === 'PGRST116') {
+      console.log(`ℹ️ [DB-CACHE] Nenhum cache encontrado para TXID ${txid} (primeira análise)`);
+      return null;
+    }
+    
+    if (error) {
+      console.error(`❌ [DB-CACHE] Erro ao buscar cache:`, error.message);
+      return null;
+    }
+    
+    // Se existe resultado e foi analisado recentemente (últimas 24h), retornar
+    if (data && data.ocr_result && data.ocr_analyzed_at) {
+      const analyzedAt = new Date(data.ocr_analyzed_at);
+      const now = new Date();
+      const hoursDiff = (now - analyzedAt) / (1000 * 60 * 60);
+      
+      if (hoursDiff < 24) {
+        console.log(`✅ [DB-CACHE] Cache OCR encontrado para TXID ${txid} (${hoursDiff.toFixed(1)}h atrás)`);
+        return {
+          isValid: data.ocr_result.isValid,
+          confidence: data.ocr_confidence,
+          details: data.ocr_result.details || {}
+        };
+      } else {
+        console.log(`⏰ [DB-CACHE] Cache expirado para TXID ${txid} (${hoursDiff.toFixed(1)}h atrás, > 24h)`);
+      }
+    } else {
+      console.log(`ℹ️ [DB-CACHE] Nenhum resultado OCR salvo ainda para TXID ${txid}`);
+    }
+    
+    return null;
+  } catch (err) {
+    console.error(`❌ [DB-CACHE] Erro ao buscar cache OCR:`, err.message);
+    console.error(`❌ [DB-CACHE] Stack:`, err.stack);
+    return null;
+  }
+}
+
+/**
+ * Salva resultado do OCR no banco para cache
+ */
+async function saveOCRResult(txid, ocrResult) {
+  try {
+    console.log(`💾 [DB-CACHE] Salvando resultado OCR no cache para TXID: ${txid}`);
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        ocr_result: ocrResult,
+        ocr_confidence: ocrResult.confidence || 0,
+        ocr_analyzed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+    
+    if (error) {
+      console.error(`❌ [DB-CACHE] Erro ao salvar cache:`, error.message);
+      throw error;
+    }
+    
+    console.log(`✅ [DB-CACHE] Resultado OCR salvo no cache para TXID ${txid} (confiança: ${ocrResult.confidence || 0}%)`);
+    return true;
+  } catch (err) {
+    console.error(`❌ [DB-CACHE] Erro ao salvar cache OCR:`, err.message);
+    console.error(`❌ [DB-CACHE] Stack:`, err.stack);
+    return false;
+  }
+}
+
+/**
+ * Atualiza URL do arquivo de comprovante (para uso futuro com Supabase Storage)
+ */
+async function updateProofFileUrl(txid, fileUrl) {
+  try {
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        proof_file_url: fileUrl,
+        updated_at: new Date().toISOString()
+      })
+      .eq('txid', txid);
+    
+    if (error) {
+      console.warn(`⚠️ [DB-CACHE] Erro ao atualizar URL do arquivo:`, error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`⚠️ [DB-CACHE] Erro ao atualizar URL do arquivo:`, err.message);
+    return false;
+  }
+}
+
+// ===== MEDIA PACKS =====
+
+async function getAllMediaPacks() {
+  try {
+    const { data, error } = await supabase
+      .from('media_packs')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    const packs = data || [];
+    
+    // Buscar contagem de itens para cada pack separadamente
+    for (const pack of packs) {
+      const { count } = await supabase
+        .from('media_items')
+        .select('*', { count: 'exact', head: true })
+        .eq('pack_id', pack.pack_id);
+      
+      pack.items_count = count || 0;
+    }
+    
+    return packs;
+  } catch (err) {
+    console.error('Erro ao buscar media packs:', err.message);
+    return [];
+  }
+}
+
+async function getMediaPackById(packId) {
+  try {
+    const { data, error } = await supabase
+      .from('media_packs')
+      .select('*')
+      .eq('pack_id', packId)
+      .single();
+    
+    if (error) {
+      // PGRST116 = pack não encontrado (0 rows) - isso é esperado e não é um erro
+      if (error.code === 'PGRST116') {
+        return null;
+      }
+      throw error;
+    }
+    return data;
+  } catch (err) {
+    // Só logar se não for o erro esperado de "não encontrado"
+    if (err.code !== 'PGRST116') {
+      console.error('Erro ao buscar media pack:', err.message);
+    }
+    return null;
+  }
+}
+
+async function createMediaPack({ packId, name, description, price, itemsPerDelivery = 3 }) {
+  try {
+    const { data, error } = await supabase
+      .from('media_packs')
+      .insert([{
+        pack_id: packId,
+        name,
+        description,
+        price,
+        items_per_delivery: itemsPerDelivery
+      }])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    console.log('Media pack criado:', packId);
+    return data;
+  } catch (err) {
+    console.error('Erro ao criar media pack:', err.message);
+    throw err;
+  }
+}
+
+async function addMediaItem({ packId, fileName, fileUrl, fileType, storagePath, thumbnailUrl = null, sizeBytes = null }) {
+  try {
+    const { data, error } = await supabase
+      .from('media_items')
+      .insert([{
+        pack_id: packId,
+        file_name: fileName,
+        file_url: fileUrl,
+        file_type: fileType,
+        storage_path: storagePath,
+        thumbnail_url: thumbnailUrl,
+        size_bytes: sizeBytes
+      }])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    console.log('Media item adicionado:', fileName);
+    return data;
+  } catch (err) {
+    console.error('Erro ao adicionar media item:', err.message);
+    throw err;
+  }
+}
+
+async function getMediaItems(packId) {
+  try {
+    const { data, error } = await supabase
+      .from('media_items')
+      .select('*')
+      .eq('pack_id', packId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar media items:', err.message);
+    return [];
+  }
+}
+
+async function getRandomMediaItems(packId, userId, count = 3) {
+  try {
+    // Buscar itens já entregues para este usuário
+    const { data: delivered, error: deliveredError } = await supabase
+      .from('media_deliveries')
+      .select('media_item_id')
+      .eq('pack_id', packId)
+      .eq('user_id', userId);
+    
+    if (deliveredError) throw deliveredError;
+    
+    const deliveredIds = delivered ? delivered.map(d => d.media_item_id) : [];
+    
+    // Buscar todos os itens do pack
+    const { data: allItems, error: itemsError } = await supabase
+      .from('media_items')
+      .select('*')
+      .eq('pack_id', packId)
+      .eq('is_active', true);
+    
+    if (itemsError) throw itemsError;
+    
+    if (!allItems || allItems.length === 0) {
+      throw new Error('Pack sem itens de mídia cadastrados');
+    }
+    
+    // Filtrar itens não entregues
+    let availableItems = allItems.filter(item => !deliveredIds.includes(item.id));
+    
+    // Se não há itens disponíveis, resetar e usar todos
+    if (availableItems.length === 0) {
+      console.log('Todos os itens já foram entregues, resetando pool');
+      availableItems = allItems;
+    }
+    
+    // Selecionar itens aleatórios
+    const shuffled = availableItems.sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, Math.min(count, shuffled.length));
+    
+    return selected;
+  } catch (err) {
+    console.error('Erro ao buscar media items aleatórios:', err.message);
+    throw err;
+  }
+}
+
+async function recordMediaDelivery({ transactionId, userId, packId, mediaItemId }) {
+  try {
+    const { data, error } = await supabase
+      .from('media_deliveries')
+      .insert([{
+        transaction_id: transactionId,
+        user_id: userId,
+        pack_id: packId,
+        media_item_id: mediaItemId
+      }])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao registrar entrega de mídia:', err.message);
+    return null;
+  }
+}
+
+async function deleteMediaPack(packId) {
+  try {
+    // Deletar itens de mídia (cascata)
+    const { error: itemsError } = await supabase
+      .from('media_items')
+      .delete()
+      .eq('pack_id', packId);
+    
+    if (itemsError) throw itemsError;
+    
+    // Deletar pack
+    const { error: packError } = await supabase
+      .from('media_packs')
+      .delete()
+      .eq('pack_id', packId);
+    
+    if (packError) throw packError;
+    
+    console.log('Media pack deletado:', packId);
+    return true;
+  } catch (err) {
+    console.error('Erro ao deletar media pack:', err.message);
+    return false;
+  }
+}
+
+async function deleteMediaItem(itemId) {
+  try {
+    const { error } = await supabase
+      .from('media_items')
+      .delete()
+      .eq('id', itemId);
+    
+    if (error) throw error;
+    console.log('Media item deletado:', itemId);
+    return true;
+  } catch (err) {
+    console.error('Erro ao deletar media item:', err.message);
+    return false;
+  }
+}
+
+// ===== BLOQUEIO POR DDD =====
+
+
+module.exports = {
+  getOCRResult,
+  saveOCRResult,
+  updateProofFileUrl,
+  getAllMediaPacks,
+  getMediaPackById,
+  createMediaPack,
+  addMediaItem,
+  getMediaItems,
+  getRandomMediaItems,
+  recordMediaDelivery,
+  deleteMediaPack,
+  deleteMediaItem
+};
