@@ -5062,7 +5062,11 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
   
   // Handler para entregar MEDIA PACK
   bot.action(/^manual_deliver_mediapack:(.+)$/, async (ctx) => {
-    await ctx.answerCbQuery('📸 Entregando media pack...');
+    // ✅ CORREÇÃO: answerCbQuery IMEDIATAMENTE — Telegram exige resposta em <30s.
+    // O upload de vídeo pode demorar 60-90s e estourar o timeout do callback.
+    // Responder agora garante que o botão não trave, mesmo que a entrega demore.
+    try { await ctx.answerCbQuery('⏳ Processando entrega...'); } catch (_) {}
+
     const isAdmin = await db.isUserAdmin(ctx.from.id);
     if (!isAdmin) return;
     

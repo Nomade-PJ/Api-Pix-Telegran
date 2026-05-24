@@ -383,14 +383,36 @@ async function deliverMediaPack(chatId, packId, userId, transactionId, db) {
     await saveMessageSent({ telegramId: chatId, userId, messageId: msgConfirm.message_id, transactionId, packId, mediaType: 'text' });
 
     let successCount = 0;
+
+    // ── Buscar Supabase client para salvar file_ids ─────────────────────────
+    const { createClient: _createClient } = require('@supabase/supabase-js');
+    const _supabase = _createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+
     for (const item of randomItems) {
       try {
         console.log(`📤 [DELIVER] Enviando ${item.file_type}: ${item.file_name}`);
 
+        // ✅ CORREÇÃO: usar file_id cacheado quando disponível.
+        // Na primeira entrega o Telegram faz o upload da URL (lento para vídeos).
+        // Nas entregas seguintes usa o file_id retornado (instantâneo).
+        const mediaSource = item.telegram_file_id
+          ? item.telegram_file_id          // ← usa cache (rápido)
+          : { url: item.file_url };         // ← faz upload da URL (lento, 1ª vez)
+
         if (item.file_type === 'photo') {
           const sentPhoto = await withDeliveryRetry(() =>
-            tg.sendPhoto(chatId, { url: item.file_url }, { caption: `📸 ${item.file_name}` })
+            tg.sendPhoto(chatId, mediaSource, { caption: `📸 ${item.file_name}` })
           );
+
+          // Salvar file_id para próximas entregas (evita re-upload)
+          if (!item.telegram_file_id && sentPhoto.photo?.length > 0) {
+            const fileId = sentPhoto.photo[sentPhoto.photo.length - 1].file_id;
+            await _supabase.from('media_items')
+              .update({ telegram_file_id: fileId })
+              .eq('id', item.id);
+            console.log(`💾 [DELIVER] file_id salvo para ${item.file_name}`);
+          }
+
           await saveMessageSent({
             telegramId: chatId, userId, messageId: sentPhoto.message_id,
             transactionId, packId, productTag: packId, mediaType: 'photo', fileUrl: item.file_url
@@ -398,8 +420,17 @@ async function deliverMediaPack(chatId, packId, userId, transactionId, db) {
 
         } else if (item.file_type === 'video') {
           const sentVideo = await withDeliveryRetry(() =>
-            tg.sendVideo(chatId, { url: item.file_url }, { caption: `🎥 ${item.file_name}` })
+            tg.sendVideo(chatId, mediaSource, { caption: `🎥 ${item.file_name}` })
           );
+
+          // Salvar file_id para próximas entregas (evita re-upload de vídeo — o mais lento)
+          if (!item.telegram_file_id && sentVideo.video?.file_id) {
+            await _supabase.from('media_items')
+              .update({ telegram_file_id: sentVideo.video.file_id })
+              .eq('id', item.id);
+            console.log(`💾 [DELIVER] file_id de vídeo salvo para ${item.file_name}`);
+          }
+
           await saveMessageSent({
             telegramId: chatId, userId, messageId: sentVideo.message_id,
             transactionId, packId, productTag: packId, mediaType: 'video', fileUrl: item.file_url
@@ -408,7 +439,7 @@ async function deliverMediaPack(chatId, packId, userId, transactionId, db) {
 
         await db.recordMediaDelivery({ transactionId, userId, packId, mediaItemId: item.id });
         successCount++;
-        await new Promise(resolve => setTimeout(resolve, 800));
+        await new Promise(resolve => setTimeout(resolve, 500));
 
       } catch (itemErr) {
         console.error(`❌ [DELIVER] Erro ao enviar item ${item.id}:`, itemErr.message);
