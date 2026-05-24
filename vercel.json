@@ -30,14 +30,6 @@
       "use": "@vercel/node"
     },
     {
-      "src": "api/login.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "api/painel.js",
-      "use": "@vercel/node"
-    },
-    {
       "src": "api/panel/auth.js",
       "use": "@vercel/node"
     },
@@ -48,6 +40,10 @@
     {
       "src": "api/health.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -119,11 +115,19 @@
     },
     {
       "src": "/login",
-      "dest": "/api/login.js"
+      "dest": "/public/login.html",
+      "headers": {
+        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        "X-Content-Type-Options": "nosniff"
+      }
     },
     {
       "src": "/painel",
-      "dest": "/api/painel.js"
+      "dest": "/public/painel.html",
+      "headers": {
+        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        "X-Content-Type-Options": "nosniff"
+      }
     },
     {
       "src": "/",
