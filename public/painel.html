@@ -861,14 +861,14 @@ td b{color:var(--fg);font-weight:500}
         <div class="sblock" id="shopBlock">
           <h3>&#128722; Status da Loja</h3>
           <p>Controla se os bot&#245;es de compra est&#227;o ativos. Quando <b>fechada</b>, nenhum usu&#225;rio consegue iniciar uma compra.</p>
-          <div style=\"display:flex;align-items:center;gap:14px;margin-top:6px\">
-            <div id=\"shopBadge\" style=\"display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;border:1px solid transparent;transition:all .2s\">
-              <span id=\"shopDot\" style=\"width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0\"></span>
-              <span id=\"shopStatusTxt\">Carregando...</span>
+          <div style="display:flex;align-items:center;gap:14px;margin-top:6px">
+            <div id="shopBadge" style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;border:1px solid transparent;transition:all .2s">
+              <span id="shopDot" style="width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0"></span>
+              <span id="shopStatusTxt">Carregando...</span>
             </div>
-            <button id=\"shopToggleBtn\" class=\"btn bsm\" onclick=\"toggleShop()\" style=\"min-width:120px\">...</button>
+            <button id="shopToggleBtn" class="btn bsm" onclick="toggleShop()" style="min-width:120px">...</button>
           </div>
-          <div id=\"shopHint\" style=\"font-size:11px;color:var(--fg3);margin-top:8px;font-family:'Geist Mono',monospace\"></div>
+          <div id="shopHint" style="font-size:11px;color:var(--fg3);margin-top:8px;font-family:'Geist Mono',monospace"></div>
         </div>
         <div class="sblock">
           <h3>Broadcast + Cupom</h3><p>Habilita CastCupom no bot</p>
@@ -1128,7 +1128,7 @@ function setMN(sec){
   });
 }
 function goMN(sec,mnId){
-  go(sec,document.querySelector('.ni[onclick*="\\''+sec+'\\'"]'));
+  go(sec,document.querySelector('.ni[onclick*="\''+sec+'\'"]'));
   document.querySelectorAll('.mni').forEach(e=>e.classList.remove('on'));
   document.getElementById(mnId)?.classList.add('on');
 }
@@ -1288,9 +1288,9 @@ async function loadTx(p){
     +'<td>'+tag(t.status)+(hp?' <span style="font-size:9px;opacity:.6">📸</span>':'')+'</td>'
     +'<td class="hm" style="font-size:10px;color:var(--fg3)">'+fmtD(t.created_at)+'</td>'
     +'<td><div style="display:flex;gap:3px">'
-    +(canA?'<button class="btn bg_ bxs" onclick="approveTx(\\''+t.txid+'\\')">✓</button><button class="btn br bxs" onclick="rejectTx(\\''+t.txid+'\\')">✗</button>':'')
-    +(canD?'<button class="btn bd bxs" onclick="deliverTx(\\''+t.txid+'\\')">↓</button>':'')
-    +(canR?'<button class="btn bw bxs" onclick="openRev(\\''+t.txid+'\\')">↩</button>':'')
+    +(canA?'<button class="btn bg_ bxs" onclick="approveTx(\''+t.txid+'\')">✓</button><button class="btn br bxs" onclick="rejectTx(\''+t.txid+'\')">✗</button>':'')
+    +(canD?'<button class="btn bd bxs" onclick="deliverTx(\''+t.txid+'\')">↓</button>':'')
+    +(canR?'<button class="btn bw bxs" onclick="openRev(\''+t.txid+'\')">↩</button>':'')
     +'</div></td></tr>';
   }).join('');
   document.getElementById('txTable').innerHTML='<table><thead><tr><th>TXID</th><th class="hm">Telegram</th><th>Valor</th><th>Status</th><th class="hm">Data</th><th>Ações</th></tr></thead><tbody>'+(rows||'<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--fg3)">nenhuma transação</td></tr>')+'</tbody></table>';
@@ -1303,9 +1303,9 @@ async function loadTx(p){
     return'<div class="mrow"><div class="mr-top"><div><div class="mr-id">'+(t.txid||'').substring(0,18)+'…</div></div><div class="mr-val">'+fmtR(t.amount)+'</div></div>'
     +'<div class="mr-mid">'+tag(t.status)+(hp?'<span class="tag t-proof_sent">📸 comprovante</span>':'')+(t.coupon_id?'<span class="tag">🏷 cupom</span>':'')+'</div>'
     +'<div class="mr-bot"><div class="mr-date">'+fmtD(t.created_at)+'</div><div class="mr-acts">'
-    +(canA?'<button class="btn bg_ bxs" onclick="approveTx(\\''+t.txid+'\\')">✓ Aprovar</button><button class="btn br bxs" onclick="rejectTx(\\''+t.txid+'\\')">✗</button>':'')
-    +(canD?'<button class="btn bd bxs" onclick="deliverTx(\\''+t.txid+'\\')">↓ Entregar</button>':'')
-    +(canR?'<button class="btn bw bxs" onclick="openRev(\\''+t.txid+'\\')">↩</button>':'')
+    +(canA?'<button class="btn bg_ bxs" onclick="approveTx(\''+t.txid+'\')">✓ Aprovar</button><button class="btn br bxs" onclick="rejectTx(\''+t.txid+'\')">✗</button>':'')
+    +(canD?'<button class="btn bd bxs" onclick="deliverTx(\''+t.txid+'\')">↓ Entregar</button>':'')
+    +(canR?'<button class="btn bw bxs" onclick="openRev(\''+t.txid+'\')">↩</button>':'')
     +'</div></div></div>';
   }).join('')||'<div class="empty"><div class="et">nenhuma transação</div></div>';
   pager('txPager',d.page,d.pages,'loadTx');
@@ -1328,9 +1328,9 @@ async function loadFail(){
     +'<td><b>'+fmtR(f.amount)+'</b></td>'
     +'<td class="hm mono" style="font-size:10px;color:var(--fg3)">'+(f.delivery_error_type||'unknown')+'</td>'
     +'<td class="mono">'+(f.delivery_attempts||0)+'×</td>'
-    +'<td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="retryDel(\\''+f.txid+'\\')">↻</button><button class="btn bg_ bxs" onclick="forceDel(\\''+f.txid+'\\')">✓</button></div></td></tr>'
+    +'<td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="retryDel(\''+f.txid+'\')">↻</button><button class="btn bg_ bxs" onclick="forceDel(\''+f.txid+'\')">✓</button></div></td></tr>'
     ).join('')+'</tbody></table>';
-  document.getElementById('failCards').innerHTML=d.data.map(f=>'<div class="mrow"><div class="mr-top"><div><div class="mr-id">'+(f.txid||'').substring(0,18)+'…</div><div style="font-size:10px;color:var(--fg3);margin-top:2px">'+(f.delivery_error_type||'unknown')+' · '+(f.delivery_attempts||0)+'× tent.</div></div><div class="mr-val">'+fmtR(f.amount)+'</div></div><div class="mr-bot"><div class="mr-date">'+fmtD(f.last_delivery_attempt_at)+'</div><div class="mr-acts"><button class="btn bd bxs" onclick="retryDel(\\''+f.txid+'\\')">↻ Tentar</button><button class="btn bg_ bxs" onclick="forceDel(\\''+f.txid+'\\')">✓ Forçar</button></div></div></div>').join('');
+  document.getElementById('failCards').innerHTML=d.data.map(f=>'<div class="mrow"><div class="mr-top"><div><div class="mr-id">'+(f.txid||'').substring(0,18)+'…</div><div style="font-size:10px;color:var(--fg3);margin-top:2px">'+(f.delivery_error_type||'unknown')+' · '+(f.delivery_attempts||0)+'× tent.</div></div><div class="mr-val">'+fmtR(f.amount)+'</div></div><div class="mr-bot"><div class="mr-date">'+fmtD(f.last_delivery_attempt_at)+'</div><div class="mr-acts"><button class="btn bd bxs" onclick="retryDel(\''+f.txid+'\')">↻ Tentar</button><button class="btn bg_ bxs" onclick="forceDel(\''+f.txid+'\')">✓ Forçar</button></div></div></div>').join('');
 }
 async function retryDel(txid){await api('retryDelivery',{method:'POST',body:{txid}});toast('↻ Tentando novamente.');loadFail();}
 async function forceDel(txid){await api('forceDelivered',{method:'POST',body:{txid}});toast('✓ Marcado entregue.');loadFail();loadDash();}
@@ -1340,7 +1340,7 @@ async function loadProd(){
   const d=await api('products',{params:{includeInactive:true}});
   if(!d.data?.length){document.getElementById('prodTable').innerHTML='<div class="empty"><div class="ei">▣</div><div class="et">nenhum produto</div></div>';return;}
   document.getElementById('prodTable').innerHTML='<table><thead><tr><th>Nome</th><th class="hm">ID</th><th>Preço</th><th>Status</th><th>Ações</th></tr></thead><tbody>'
-    +d.data.map(p=>'<tr><td><b>'+p.name+'</b></td><td class="hm mono">'+p.product_id+'</td><td class="mono">'+fmtR(p.price)+'</td><td>'+tag(p.is_active?'active':'inactive')+'</td><td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="toggleProd(\\''+p.product_id+'\\','+(!p.is_active)+')">'+(p.is_active?'Pausar':'Ativar')+'</button><button class="btn br bxs" onclick="delProd(\\''+p.product_id+'\\')">✕</button></div></td></tr>').join('')+'</tbody></table>';
+    +d.data.map(p=>'<tr><td><b>'+p.name+'</b></td><td class="hm mono">'+p.product_id+'</td><td class="mono">'+fmtR(p.price)+'</td><td>'+tag(p.is_active?'active':'inactive')+'</td><td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="toggleProd(\''+p.product_id+'\','+(!p.is_active)+')">'+(p.is_active?'Pausar':'Ativar')+'</button><button class="btn br bxs" onclick="delProd(\''+p.product_id+'\')">✕</button></div></td></tr>').join('')+'</tbody></table>';
 }
 async function saveProd(){const b={product_id:document.getElementById('p_id').value,name:document.getElementById('p_name').value,description:document.getElementById('p_desc').value,price:document.getElementById('p_price').value,delivery_type:document.getElementById('p_type').value,delivery_url:document.getElementById('p_url').value,storage_folder:document.getElementById('p_storage').value};const d=await api('createProduct',{method:'POST',body:b});if(d.ok){closeM('mProd');toast('Produto criado.');loadProd();}else toast(d.error||'Erro','err');}
 async function toggleProd(id,a){await api('toggleProduct',{method:'POST',body:{product_id:id,is_active:a}});toast(a?'Ativado.':'Pausado.','warn');loadProd();}
@@ -1351,7 +1351,7 @@ async function loadMP(){
   const d=await api('mediaPacks');
   if(!d.data?.length){document.getElementById('mpTable').innerHTML='<div class="empty"><div class="ei">▤</div><div class="et">nenhum media pack</div></div>';return;}
   document.getElementById('mpTable').innerHTML='<table><thead><tr><th>Nome</th><th class="hm">Pack ID</th><th>Preço</th><th class="hm">Entrega</th><th>Status</th><th>Ação</th></tr></thead><tbody>'
-    +d.data.map(p=>'<tr><td><b>'+p.name+'</b></td><td class="hm mono">'+p.pack_id+'</td><td class="mono">'+fmtR(p.price)+'</td><td class="hm mono">'+(p.items_per_delivery||3)+'/entrega</td><td>'+tag(p.is_active?'active':'inactive')+'</td><td><button class="btn bd bxs" onclick="viewMP(\\''+p.pack_id+'\\',\\''+p.name.replace(/'/g,"\\\\'")+'\\')">Ver itens</button></td></tr>').join('')+'</tbody></table>';
+    +d.data.map(p=>'<tr><td><b>'+p.name+'</b></td><td class="hm mono">'+p.pack_id+'</td><td class="mono">'+fmtR(p.price)+'</td><td class="hm mono">'+(p.items_per_delivery||3)+'/entrega</td><td>'+tag(p.is_active?'active':'inactive')+'</td><td><button class="btn bd bxs" onclick="viewMP(\''+p.pack_id+'\',\''+p.name.replace(/'/g,"\'")+'\')">Ver itens</button></td></tr>').join('')+'</tbody></table>';
 }
 async function viewMP(packId,name){
   document.getElementById('mMPTit').textContent=name;
@@ -1375,7 +1375,7 @@ async function loadGroups(){
   const d=await api('groups',{params:{includeInactive:true}});
   if(!d.data?.length){document.getElementById('groupTable').innerHTML='<div class="empty"><div class="ei">◎</div><div class="et">nenhum grupo</div></div>';return;}
   document.getElementById('groupTable').innerHTML='<table><thead><tr><th>Nome</th><th class="hm">ID Telegram</th><th>Preço</th><th class="hm">Dias</th><th>Status</th><th>Ações</th></tr></thead><tbody>'
-    +d.data.map(g=>'<tr><td><b>'+(g.name||'Sem nome')+'</b></td><td class="hm mono" style="font-size:10px">'+g.group_id+'</td><td class="mono">'+fmtR(g.price)+'</td><td class="hm mono">'+(g.access_days||'∞')+'d</td><td>'+tag(g.is_active?'active':'inactive')+'</td><td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="toggleGrp(\\''+g.group_id+'\\','+(!g.is_active)+')">'+(g.is_active?'Pausar':'Ativar')+'</button><button class="btn br bxs" onclick="delGrp(\\''+g.group_id+'\\')">✕</button></div></td></tr>').join('')+'</tbody></table>';
+    +d.data.map(g=>'<tr><td><b>'+(g.name||'Sem nome')+'</b></td><td class="hm mono" style="font-size:10px">'+g.group_id+'</td><td class="mono">'+fmtR(g.price)+'</td><td class="hm mono">'+(g.access_days||'∞')+'d</td><td>'+tag(g.is_active?'active':'inactive')+'</td><td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="toggleGrp(\''+g.group_id+'\','+(!g.is_active)+')">'+(g.is_active?'Pausar':'Ativar')+'</button><button class="btn br bxs" onclick="delGrp(\''+g.group_id+'\')">✕</button></div></td></tr>').join('')+'</tbody></table>';
 }
 async function saveGroup(){const b={group_id:document.getElementById('g_id').value,name:document.getElementById('g_name').value,invite_link:document.getElementById('g_link').value,price:document.getElementById('g_price').value,access_days:document.getElementById('g_days').value};const d=await api('createGroup',{method:'POST',body:b});if(d.ok){closeM('mGroup');toast('Grupo criado.');loadGroups();}else toast(d.error||'Erro','err');}
 async function toggleGrp(id,a){await api('toggleGroup',{method:'POST',body:{group_id:id,is_active:a}});toast(a?'Ativado.':'Pausado.','warn');loadGroups();}
@@ -1386,7 +1386,7 @@ async function loadCoupons(){
   const d=await api('coupons',{params:{includeInactive:true}});
   if(!d.data?.length){document.getElementById('couponTable').innerHTML='<div class="empty"><div class="ei">◈</div><div class="et">nenhum cupom</div></div>';return;}
   document.getElementById('couponTable').innerHTML='<table><thead><tr><th>Código</th><th>Desconto</th><th class="hm">Usos</th><th class="hm">Expira</th><th>Status</th><th>Ações</th></tr></thead><tbody>'
-    +d.data.map(c=>'<tr><td><b class="mono">'+c.code+'</b></td><td class="mono">'+c.discount_percent+'%</td><td class="hm mono">'+(c.usage_count||0)+(c.max_uses?'/'+c.max_uses:'')+'</td><td class="hm" style="font-size:10px;color:var(--fg3)">'+(c.expires_at?fmtDs(c.expires_at):'sem data')+'</td><td>'+tag(c.is_active?'active':'inactive')+'</td><td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="toggleCoup(\\''+c.id+'\\','+(!c.is_active)+')">'+(c.is_active?'Pausar':'Ativar')+'</button><button class="btn br bxs" onclick="delCoup(\\''+c.id+'\\')">✕</button></div></td></tr>').join('')+'</tbody></table>';
+    +d.data.map(c=>'<tr><td><b class="mono">'+c.code+'</b></td><td class="mono">'+c.discount_percent+'%</td><td class="hm mono">'+(c.usage_count||0)+(c.max_uses?'/'+c.max_uses:'')+'</td><td class="hm" style="font-size:10px;color:var(--fg3)">'+(c.expires_at?fmtDs(c.expires_at):'sem data')+'</td><td>'+tag(c.is_active?'active':'inactive')+'</td><td><div style="display:flex;gap:4px"><button class="btn bd bxs" onclick="toggleCoup(\''+c.id+'\','+(!c.is_active)+')">'+(c.is_active?'Pausar':'Ativar')+'</button><button class="btn br bxs" onclick="delCoup(\''+c.id+'\')">✕</button></div></td></tr>').join('')+'</tbody></table>';
 }
 async function saveCoupon(){
   const pr=await api('products');
@@ -1424,13 +1424,13 @@ async function loadMoreUsers(){
     const nm=(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'');
     const tg=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
     const ph=u.phone_number?'<a href="tel:'+u.phone_number+'" class="mono" style="color:var(--fg3);font-size:11px">'+u.phone_number+'</a>':'<span style="color:var(--fg3)">—</span>';
-    return'<tr><td><a onclick="viewUser(\\''+u.telegram_id+'\\')" style="cursor:pointer;font-weight:500">'+nm+'</a></td>'
+    return'<tr><td><a onclick="viewUser(\''+u.telegram_id+'\')" style="cursor:pointer;font-weight:500">'+nm+'</a></td>'
       +'<td class="hm"><a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:11px">@'+(u.username||'—')+'</a></td>'
       +'<td class="hm mono" style="font-size:11px">'+u.telegram_id+'</td>'
       +'<td class="hm">'+ph+'</td>'
       +'<td>'+(u.is_blocked?tag('blocked'):tag('active'))+(u.is_admin?' '+tag('admin'):'')+(u.is_creator?' '+tag('creator'):'')+'</td>'
       +'<td><div style="display:flex;gap:4px">'
-      +(u.is_blocked?'<button class="btn bd bxs" onclick="unblockUser(\\''+u.telegram_id+'\\')">Desbloquear</button>':'<button class="btn br bxs" onclick="blockUser(\\''+u.telegram_id+'\\')">Bloquear</button>')
+      +(u.is_blocked?'<button class="btn bd bxs" onclick="unblockUser(\''+u.telegram_id+'\')">Desbloquear</button>':'<button class="btn br bxs" onclick="blockUser(\''+u.telegram_id+'\')">Bloquear</button>')
       +'</div></td></tr>';
   }).join('');
   document.getElementById('usersBody').insertAdjacentHTML('beforeend',rows);
@@ -1457,9 +1457,9 @@ async function viewUser(tid){
   document.getElementById('udPhone').innerHTML=u.phone_number?'<a href="tel:'+u.phone_number+'" style="color:var(--violl)" class="mono">'+u.phone_number+'</a>':'—';
   document.getElementById('udTx').innerHTML=(d.transactions||[]).map(t=>dli('<div class="mono" style="font-size:11px;color:var(--fg3)">'+(t.txid||'').substring(0,20)+'…</div>','<div style="display:flex;gap:6px;align-items:center"><span class="mono">'+fmtR(t.amount)+'</span>'+tag(t.status)+'</div>')).join('')||'<div class="empty" style="padding:16px"><div class="et">sem transações</div></div>';
   const acts=document.getElementById('udActs');
-  acts.innerHTML='<button class="btn bgh" onclick="closeM(\\'mUser\\')">Fechar</button>';
-  if(u.is_blocked)acts.innerHTML+='<button class="btn bg_ bfl" onclick="unblockUser(\\''+u.telegram_id+'\\')">✓ Desbloquear</button>';
-  else acts.innerHTML+='<button class="btn br bfl" onclick="blockUser(\\''+u.telegram_id+'\\')">Bloquear usuário</button>';
+  acts.innerHTML='<button class="btn bgh" onclick="closeM(\'mUser\')">Fechar</button>';
+  if(u.is_blocked)acts.innerHTML+='<button class="btn bg_ bfl" onclick="unblockUser(\''+u.telegram_id+'\')">✓ Desbloquear</button>';
+  else acts.innerHTML+='<button class="btn br bfl" onclick="blockUser(\''+u.telegram_id+'\')">Bloquear usuário</button>';
 }
 async function blockUser(tid){await api('blockUser',{method:'POST',body:{telegram_id:tid}});toast('Bloqueado.','warn');closeM('mUser');resetUserScroll();}
 async function unblockUser(tid){await api('unblockUser',{method:'POST',body:{telegram_id:tid}});toast('Desbloqueado.');closeM('mUser');resetUserScroll();}
@@ -1479,7 +1479,7 @@ async function loadTrusted(){
       +'<td class="hm mono">'+( u.approved_transactions||0)+'</td>'
       +'<td class="hm mono">'+(u.rejected_transactions||0)+'</td>'
       +'<td class="hm mono">'+(u.auto_approve_threshold||'—')+'</td>'
-      +'<td><button class="btn br bxs" onclick="remTrust(\\''+u.telegram_id+'\\')">Remover</button></td></tr>';
+      +'<td><button class="btn br bxs" onclick="remTrust(\''+u.telegram_id+'\')">Remover</button></td></tr>';
     }).join('')+'</tbody></table>';
 }
 async function remTrust(tid){if(!confirm('Remover da lista de confiáveis?'))return;await api('removeTrustedUser',{method:'DELETE',params:{telegram_id:tid}});toast('Removido.','warn');loadTrusted();}
@@ -1503,9 +1503,9 @@ async function loadTickets(p){
     +'<td class="hm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t.subject||'—')+'</td>'
     +'<td>'+tag(t.priority||'normal')+'</td>'
     +'<td>'+tag(t.status)+'</td>'
-    +'<td><button class="btn bd bxs" onclick="viewTicket(\\''+t.id+'\\')">Ver</button></td></tr>'
+    +'<td><button class="btn bd bxs" onclick="viewTicket(\''+t.id+'\')">Ver</button></td></tr>'
     ).join('')+'</tbody></table>';
-  document.getElementById('tickCards').innerHTML=d.data.map(t=>'<div class="mrow" onclick="viewTicket(\\''+t.id+'\\')"><div class="mr-top"><div><div class="mr-id">#'+t.id+' · '+t.telegram_id+'</div><div style="font-size:12px;font-weight:500;margin-top:2px;color:var(--fg)">'+(t.subject||'sem assunto')+'</div></div></div><div class="mr-mid">'+tag(t.status)+tag(t.priority||'normal')+'</div><div class="mr-bot"><div class="mr-date">'+fmtD(t.created_at)+'</div></div></div>').join('');
+  document.getElementById('tickCards').innerHTML=d.data.map(t=>'<div class="mrow" onclick="viewTicket(\''+t.id+'\')"><div class="mr-top"><div><div class="mr-id">#'+t.id+' · '+t.telegram_id+'</div><div style="font-size:12px;font-weight:500;margin-top:2px;color:var(--fg)">'+(t.subject||'sem assunto')+'</div></div></div><div class="mr-mid">'+tag(t.status)+tag(t.priority||'normal')+'</div><div class="mr-bot"><div class="mr-date">'+fmtD(t.created_at)+'</div></div></div>').join('');
   pager('tickPager',d.page,d.pages,'loadTickets');
 }
 async function viewTicket(id){
@@ -1540,7 +1540,7 @@ async function loadBC(){
   const d=await api('broadcasts');
   if(!d.data?.length){document.getElementById('bcList').innerHTML='<div class="empty"><div class="ei">◎</div><div class="et">nenhuma campanha</div></div>';return;}
   const colDot={sending:'#10b981',sent:'#34d399',pending_broadcast:'#a78bfa',draft:'#606080',failed:'#f87171'};
-  document.getElementById('bcList').innerHTML=d.data.map(b=>'<div class="bc"><div class="bc-dot" style="background:'+(colDot[b.status]||'#606080')+'"></div><div class="bc-body"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><b style="font-size:13px">'+(b.campaign_name||'Sem nome')+'</b>'+tag(b.status)+'</div><div style="font-size:11px;color:var(--fg3);margin:4px 0">'+fmtD(b.created_at)+(b.target_audience?' · '+b.target_audience:'')+(b.coupon_code?' · 🏷'+b.coupon_code:'')+'</div><div style="font-size:11px;color:var(--fg3)">✓ '+(b.success_count||0)+' · ✗ '+(b.failed_count||0)+'</div><div style="margin-top:8px"><button class="btn bd bxs" onclick="viewBC(\\''+b.id+'\\')">Detalhes</button>'+(b.status==='sending'||b.status==='pending_broadcast'?' <button class="btn br bxs" onclick="cancelBC(\\''+b.id+'\\')">Cancelar</button>':'')+'</div></div></div>').join('');
+  document.getElementById('bcList').innerHTML=d.data.map(b=>'<div class="bc"><div class="bc-dot" style="background:'+(colDot[b.status]||'#606080')+'"></div><div class="bc-body"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><b style="font-size:13px">'+(b.campaign_name||'Sem nome')+'</b>'+tag(b.status)+'</div><div style="font-size:11px;color:var(--fg3);margin:4px 0">'+fmtD(b.created_at)+(b.target_audience?' · '+b.target_audience:'')+(b.coupon_code?' · 🏷'+b.coupon_code:'')+'</div><div style="font-size:11px;color:var(--fg3)">✓ '+(b.success_count||0)+' · ✗ '+(b.failed_count||0)+'</div><div style="margin-top:8px"><button class="btn bd bxs" onclick="viewBC(\''+b.id+'\')">Detalhes</button>'+(b.status==='sending'||b.status==='pending_broadcast'?' <button class="btn br bxs" onclick="cancelBC(\''+b.id+'\')">Cancelar</button>':'')+'</div></div></div>').join('');
 }
 async function viewBC(id){
   const d=await api('broadcasts');
@@ -1559,7 +1559,7 @@ async function loadAR(){
   const d=await api('autoResponses');
   if(!d.data?.length){document.getElementById('arTable').innerHTML='<div class="empty"><div class="ei">◈</div><div class="et">nenhuma resposta automática</div></div>';return;}
   document.getElementById('arTable').innerHTML='<table><thead><tr><th>Keyword</th><th class="hm">Resposta</th><th class="hm">Prior.</th><th>Status</th><th>Ação</th></tr></thead><tbody>'
-    +d.data.map(r=>'<tr><td><b>'+r.keyword+'</b></td><td class="hm" style="font-size:11px;color:var(--fg3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.response+'</td><td class="hm mono">'+r.priority+'</td><td>'+tag(r.is_active?'active':'inactive')+'</td><td><button class="btn br bxs" onclick="delAR(\\''+r.id+'\\')">✕</button></td></tr>').join('')+'</tbody></table>';
+    +d.data.map(r=>'<tr><td><b>'+r.keyword+'</b></td><td class="hm" style="font-size:11px;color:var(--fg3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.response+'</td><td class="hm mono">'+r.priority+'</td><td>'+tag(r.is_active?'active':'inactive')+'</td><td><button class="btn br bxs" onclick="delAR(\''+r.id+'\')">✕</button></td></tr>').join('')+'</tbody></table>';
 }
 async function saveAR(){const b={keyword:document.getElementById('ar_kw').value,response:document.getElementById('ar_resp').value,priority:document.getElementById('ar_pri').value};const d=await api('createAutoResponse',{method:'POST',body:b});if(d.ok){closeM('mAR');toast('Criada.');loadAR();}else toast(d.error||'Erro','err');}
 async function delAR(id){if(!confirm('Remover resposta?'))return;await api('deleteAutoResponse',{method:'DELETE',params:{id}});toast('Removida.','warn');loadAR();}
@@ -1679,7 +1679,7 @@ async function loadDDDs(){
   const d=await api('blockedDDDs');
   if(!d.data?.length){document.getElementById('dddTable').innerHTML='<div class="empty"><div class="ei">◬</div><div class="et">nenhum DDD bloqueado</div></div>';return;}
   document.getElementById('dddTable').innerHTML='<table><thead><tr><th>DDD</th><th>Estado</th><th class="hm">Motivo</th><th class="hm">Adicionado</th><th>Ação</th></tr></thead><tbody>'
-    +d.data.map(x=>'<tr><td><b class="mono">'+x.area_code+'</b></td><td style="color:var(--fg2)">'+(x.state||'—')+'</td><td class="hm" style="color:var(--fg3)">'+(x.reason||'—')+'</td><td class="hm" style="font-size:10px;color:var(--fg3)">'+fmtDs(x.created_at)+'</td><td><button class="btn bd bxs" onclick="remDDD(\\''+x.area_code+'\\')">Desbloquear</button></td></tr>').join('')+'</tbody></table>';
+    +d.data.map(x=>'<tr><td><b class="mono">'+x.area_code+'</b></td><td style="color:var(--fg2)">'+(x.state||'—')+'</td><td class="hm" style="color:var(--fg3)">'+(x.reason||'—')+'</td><td class="hm" style="font-size:10px;color:var(--fg3)">'+fmtDs(x.created_at)+'</td><td><button class="btn bd bxs" onclick="remDDD(\''+x.area_code+'\')">Desbloquear</button></td></tr>').join('')+'</tbody></table>';
 }
 async function addDDD(){const b={area_code:document.getElementById('ddd_c').value,state:document.getElementById('ddd_s').value,reason:document.getElementById('ddd_r').value};const d=await api('addDDD',{method:'POST',body:b});if(d.ok){closeM('mDDD');toast('DDD '+b.area_code+' bloqueado.','warn');loadDDDs();}else toast(d.error||'Erro','err');}
 async function remDDD(code){if(!confirm('Desbloquear DDD '+code+'?'))return;await api('removeDDD',{method:'DELETE',params:{area_code:code}});toast('DDD '+code+' desbloqueado.');loadDDDs();}
