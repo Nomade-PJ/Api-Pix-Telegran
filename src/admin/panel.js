@@ -93,10 +93,10 @@ Selecione uma opção abaixo:`;
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '🔍 Buscar Usuário',    callback_data: 'admin_buscar_usuario'    }],
-              [{ text: '🕵️ Rastrear Cliente',  callback_data: 'admin_rastrear_cliente'  }],
-              [{ text: '🔄 Entregar por TXID', callback_data: 'admin_entregar_txid'     }],
-              [{ text: '🗑️ Revogar Conteúdo',  callback_data: 'admin_revogar_conteudo'  }],
+              [{ text: '🔍 Buscar Usuário',       callback_data: 'admin_buscar_usuario'    }],
+              [{ text: '🕵️ Rastrear Cliente',     callback_data: 'admin_rastrear_cliente'  }],
+              [{ text: '📦 Entrega de Produtos',   callback_data: 'admin_entregar_txid'     }],
+              [{ text: '🗑️ Revogar Conteúdo',     callback_data: 'admin_revogar_conteudo'  }],
               [{ text: '🔙 Voltar ao Painel',  callback_data: 'admin_refresh'           }]
             ]
           }
@@ -109,28 +109,64 @@ Selecione uma opção abaixo:`;
 
   bot.action('admin_buscar_usuario', async (ctx) => {
     try {
-      await ctx.answerCbQuery('🔍 Buscando usuário...');
+      await ctx.answerCbQuery('🔍 Buscar Usuário...');
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return;
-      
-      // Criar sessão para pedir o ID
-      global._SESSIONS = global._SESSIONS || {};
-      global._SESSIONS[ctx.from.id] = {
-        type: 'buscar_usuario',
-        step: 'waiting_id'
-      };
-      
-      return ctx.reply('🔍 *BUSCAR USUÁRIO*\n\nDigite o *ID do Telegram* do usuário que deseja buscar:\n\nExemplo: `6224210204`', {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }
-          ]]
+
+      return ctx.reply(
+        '🔍 *BUSCAR USUÁRIO*\n\nEscolha como deseja buscar o usuário:',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🆔 Buscar por ID do Telegram', callback_data: 'buscar_usuario_por_id'  }],
+              [{ text: '💳 Buscar por Código Pix (TXT)', callback_data: 'buscar_usuario_por_pix' }],
+              [{ text: '❌ Cancelar',                   callback_data: 'cancel_buscar_usuario'  }]
+            ]
+          }
         }
-      });
+      );
     } catch (err) {
       console.error('Erro ao iniciar busca de usuário:', err);
       return ctx.reply('❌ Erro ao iniciar busca. Verifique os logs.');
+    }
+  });
+
+  // Buscar usuário — por ID do Telegram
+  bot.action('buscar_usuario_por_id', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'buscar_usuario', step: 'waiting_id' };
+
+      return ctx.reply('🆔 *BUSCAR POR ID*\n\nDigite o *ID do Telegram* do usuário:\n\nExemplo: `6224210204`', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }]] }
+      });
+    } catch (err) {
+      console.error('Erro buscar_usuario_por_id:', err);
+    }
+  });
+
+  // Buscar usuário — por Código Pix (TXT)
+  bot.action('buscar_usuario_por_pix', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'buscar_usuario', step: 'waiting_pix' };
+
+      return ctx.reply('💳 *BUSCAR POR CÓDIGO PIX*\n\nCole o código *copia e cola* do Pix recebido:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }]] }
+      });
+    } catch (err) {
+      console.error('Erro buscar_usuario_por_pix:', err);
     }
   });
 
@@ -337,7 +373,7 @@ Selecione uma opção abaixo:`;
   // (Funções de revogação de mídia movidas para o nível do módulo)
 
 
-  // ── Botão principal: abre painel de revogar ──────────────────
+  // ── Botão principal: abre submenu de revogar ──────────────────
   bot.action('admin_revogar_conteudo', async (ctx) => {
     try {
       await ctx.answerCbQuery('🗑️ Revogar Conteúdo...');
@@ -346,29 +382,66 @@ Selecione uma opção abaixo:`;
 
       return ctx.reply(
         '🗑️ *REVOGAR CONTEÚDO*\n\n' +
-        'Esta função apaga mídias enviadas pelo bot no chat do usuário.\n\n' +
-        '⚠️ A ação é *irreversível* no Telegram.\n\n' +
-        'Digite o *Telegram ID* do usuário:',
+        'Esta função apaga mídias enviadas pelo bot no chat do usuário\.\n\n' +
+        '⚠️ A ação é *irreversível* no Telegram\.\n\n' +
+        'Escolha como deseja localizar o usuário:',
         {
-          parse_mode: 'Markdown',
+          parse_mode: 'MarkdownV2',
           reply_markup: {
-            inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancelar_revogar' }]]
+            inline_keyboard: [
+              [{ text: '🆔 Buscar por ID do Telegram',  callback_data: 'revogar_por_id'  }],
+              [{ text: '💳 Buscar por Código Pix (TXT)', callback_data: 'revogar_por_pix' }],
+              [{ text: '❌ Cancelar',                    callback_data: 'cancelar_revogar' }]
+            ]
           }
         }
       );
-
-      // Setar sessão para aguardar o ID
     } catch (err) {
       console.error('❌ [REVOGAR]', err.message);
-    } finally {
-      // Setar sessão SEMPRE após o reply (fora do try/catch principal)
-      try {
-        const isAdmin = await db.isUserAdmin(ctx.from.id);
-        if (isAdmin) {
-          global._SESSIONS = global._SESSIONS || {};
-          global._SESSIONS[ctx.from.id] = { type: 'revogar_conteudo', step: 'aguardando_id' };
+    }
+  });
+
+  // Revogar — por ID do Telegram
+  bot.action('revogar_por_id', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'revogar_conteudo', step: 'aguardando_id' };
+
+      return ctx.reply(
+        '🆔 *REVOGAR POR ID*\n\nDigite o *Telegram ID* do usuário:\n\nEx: `6880815060`',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancelar_revogar' }]] }
         }
-      } catch (_) {}
+      );
+    } catch (err) {
+      console.error('❌ [REVOGAR] revogar_por_id:', err.message);
+    }
+  });
+
+  // Revogar — por Código Pix (TXT)
+  bot.action('revogar_por_pix', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'revogar_conteudo', step: 'aguardando_pix' };
+
+      return ctx.reply(
+        '💳 *REVOGAR POR CÓDIGO PIX*\n\nCole o código *copia e cola* do Pix recebido:',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancelar_revogar' }]] }
+        }
+      );
+    } catch (err) {
+      console.error('❌ [REVOGAR] revogar_por_pix:', err.message);
     }
   });
 
@@ -647,28 +720,64 @@ Ele não conseguirá mais acessar o bot.`,
   // ===== ENTREGAR POR ID DO USUÁRIO =====
   bot.action('admin_entregar_txid', async (ctx) => {
     try {
-      await ctx.answerCbQuery('🔄 Preparando entrega...');
+      await ctx.answerCbQuery('📦 Entrega de Produtos...');
       const isAdmin = await db.isUserAdmin(ctx.from.id);
       if (!isAdmin) return;
-      
-      // Criar sessão para pedir o ID do usuário
-      global._SESSIONS = global._SESSIONS || {};
-      global._SESSIONS[ctx.from.id] = {
-        type: 'entregar_txid',
-        step: 'waiting_user_id'
-      };
-      
-      return ctx.reply('🔄 *ENTREGA MANUAL*\n\nDigite o *ID do usuário* (Telegram ID) para quem deseja entregar:\n\nExemplo: `6224210204`\n\n⚠️ *Atenção:* Após informar o ID, você selecionará o produto/grupo a ser entregue.', {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
-          ]]
+
+      return ctx.reply(
+        '📦 *ENTREGA DE PRODUTOS*\n\nEscolha como deseja localizar o usuário:',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🆔 Buscar por ID do Telegram',  callback_data: 'entregar_por_id'  }],
+              [{ text: '💳 Buscar por Código Pix (TXT)', callback_data: 'entregar_por_pix' }],
+              [{ text: '❌ Cancelar',                    callback_data: 'cancel_entregar_txid' }]
+            ]
+          }
         }
+      );
+    } catch (err) {
+      console.error('Erro ao iniciar entrega de produtos:', err);
+      return ctx.reply('❌ Erro ao iniciar entrega. Verifique os logs.');
+    }
+  });
+
+  // Entrega de Produtos — por ID do Telegram
+  bot.action('entregar_por_id', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'entregar_txid', step: 'waiting_user_id' };
+
+      return ctx.reply('🆔 *ENTREGA POR ID*\n\nDigite o *ID do Telegram* do usuário:\n\nExemplo: `6224210204`', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }]] }
       });
     } catch (err) {
-      console.error('Erro ao iniciar entrega manual:', err);
-      return ctx.reply('❌ Erro ao iniciar entrega. Verifique os logs.');
+      console.error('Erro entregar_por_id:', err);
+    }
+  });
+
+  // Entrega de Produtos — por Código Pix (TXT)
+  bot.action('entregar_por_pix', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = { type: 'entregar_txid', step: 'waiting_pix' };
+
+      return ctx.reply('💳 *ENTREGA POR CÓDIGO PIX*\n\nCole o código *copia e cola* do Pix para localizar o usuário:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }]] }
+      });
+    } catch (err) {
+      console.error('Erro entregar_por_pix:', err);
     }
   });
   

@@ -409,6 +409,142 @@ Digite o ID do produto:
           }
         });
       }
+
+      // Entrega de Produtos — por código Pix
+      if (session.type === 'entregar_txid' && session.step === 'waiting_pix') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+
+        const pixCode = ctx.message.text.trim();
+        if (pixCode.length < 10) {
+          return ctx.reply('❌ Código Pix muito curto. Cole o código completo.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
+              ]]
+            }
+          });
+        }
+
+        // Buscar na tabela transactions
+        let tx = null;
+        try {
+          const { data: byPayload } = await db.supabase
+            .from('transactions')
+            .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+            .or(`pix_payload.ilike.%${pixCode}%,txid.eq.${pixCode}`)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          tx = byPayload;
+
+          // Fallback: tentar extrair TXID do BR Code (campo 05 do payload EMV)
+          if (!tx && pixCode.length > 20) {
+            const match = pixCode.match(/05(\d{2})([A-Z0-9]{10,25})/);
+            if (match) {
+              const txidExtracted = match[2];
+              const { data: byTxid } = await db.supabase
+                .from('transactions')
+                .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+                .eq('txid', txidExtracted)
+                .maybeSingle();
+              tx = byTxid;
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao buscar transação por Pix:', err);
+        }
+
+        if (!tx) {
+          return ctx.reply('❌ Nenhuma transação encontrada para este código Pix.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
+              ]]
+            }
+          });
+        }
+
+        if (!tx.telegram_id) {
+          return ctx.reply('❌ Transação encontrada mas sem cliente/usuário vinculado.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
+              ]]
+            }
+          });
+        }
+
+        const user = await db.getUserByTelegramId(tx.telegram_id);
+        if (!user) {
+          return ctx.reply('❌ Usuário não encontrado no banco de dados.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }
+              ]]
+            }
+          });
+        }
+
+        // Buscar produtos, grupos e media packs disponíveis
+        await ctx.reply('⏳ Buscando produtos disponíveis...');
+
+        const [products, groups, mediaPacks] = await Promise.all([
+          db.getAllProducts(),
+          db.getAllGroups(),
+          db.getAllMediaPacks()
+        ]);
+
+        if (products.length === 0 && groups.length === 0 && mediaPacks.length === 0) {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Nenhum produto, grupo ou media pack disponível no momento.');
+        }
+
+        // Atualizar sessão com o ID do usuário
+        global._SESSIONS[ctx.from.id] = {
+          type: 'entregar_txid',
+          step: 'waiting_product_selection',
+          targetUserId: tx.telegram_id,
+          targetUser: user
+        };
+
+        // Gerar botões de produtos (igual ao /start)
+        const buttons = [];
+
+        // Botões de produtos
+        for (const product of products) {
+          const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
+          const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+          buttons.push([{ text: buttonText, callback_data: `manual_deliver_product:${product.product_id}` }]);
+        }
+
+        // Botões de media packs
+        const activeMediaPacks = mediaPacks.filter(p => p.is_active);
+        for (const pack of activeMediaPacks) {
+          buttons.push([{ text: pack.name, callback_data: `manual_deliver_mediapack:${pack.pack_id}` }]);
+        }
+
+        // Botões de grupos
+        const activeGroups = groups.filter(g => g.is_active);
+        for (const group of activeGroups) {
+          const groupButtonText = group.group_name || `👥 Grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`;
+          buttons.push([{ text: groupButtonText, callback_data: `manual_deliver_group:${group.group_id}` }]);
+        }
+
+        // Botão de cancelar
+        buttons.push([{ text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }]);
+
+        return ctx.reply(`✅ *Usuário encontrado!*\n\n👤 Nome: ${user.first_name}${user.username ? ` (@${user.username})` : ''}\n🆔 ID: ${tx.telegram_id}\n\n📦 *Selecione o produto/grupo para entregar:*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: buttons
+          }
+        });
+      }
+
       
       // Verificar se é busca de usuário
       if (session.type === 'buscar_usuario' && session.step === 'waiting_id') {
@@ -438,6 +574,82 @@ Digite o ID do produto:
         // Buscar e exibir informações
         return await buscarUsuarioInfo(ctx, telegramId);
       }
+
+      // Buscar usuário — por Código Pix
+      if (session.type === 'buscar_usuario' && session.step === 'waiting_pix') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) {
+          delete global._SESSIONS[ctx.from.id];
+          return;
+        }
+
+        const pixCode = ctx.message.text.trim();
+        if (pixCode.length < 10) {
+          return ctx.reply('❌ Código Pix muito curto. Cole o código completo.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }
+              ]]
+            }
+          });
+        }
+
+        // Buscar na tabela transactions
+        let tx = null;
+        try {
+          const { data: byPayload } = await db.supabase
+            .from('transactions')
+            .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+            .or(`pix_payload.ilike.%${pixCode}%,txid.eq.${pixCode}`)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          tx = byPayload;
+
+          // Fallback: tentar extrair TXID do BR Code (campo 05 do payload EMV)
+          if (!tx && pixCode.length > 20) {
+            const match = pixCode.match(/05(\d{2})([A-Z0-9]{10,25})/);
+            if (match) {
+              const txidExtracted = match[2];
+              const { data: byTxid } = await db.supabase
+                .from('transactions')
+                .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+                .eq('txid', txidExtracted)
+                .maybeSingle();
+              tx = byTxid;
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao buscar transação por Pix:', err);
+        }
+
+        if (!tx) {
+          return ctx.reply('❌ Nenhuma transação encontrada para este código Pix.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }
+              ]]
+            }
+          });
+        }
+
+        if (!tx.telegram_id) {
+          return ctx.reply('❌ Transação encontrada mas sem cliente/usuário vinculado.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancel_buscar_usuario' }
+              ]]
+            }
+          });
+        }
+
+        // Limpar sessão
+        delete global._SESSIONS[ctx.from.id];
+
+        // Buscar e exibir informações do usuário
+        return await buscarUsuarioInfo(ctx, tx.telegram_id.toString());
+      }
+
 
       // ── RASTREAR CLIENTE — por ID ──────────────────────────────────────
       if (session.type === 'rastrear_cliente' && session.step === 'aguardando_id') {
@@ -693,6 +905,120 @@ Digite o ID do produto:
           }
         );
       }
+
+      // Revogar Conteúdo — por Código Pix
+      if (session.type === 'revogar_conteudo' && session.step === 'aguardando_pix') {
+        const isAdmin = await db.isUserAdmin(ctx.from.id);
+        if (!isAdmin) { delete global._SESSIONS[ctx.from.id]; return; }
+
+        const pixCode = ctx.message.text.trim();
+        if (pixCode.length < 10) {
+          return ctx.reply('❌ Código Pix muito curto. Cole o código completo.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancelar_revogar' }
+              ]]
+            }
+          });
+        }
+
+        // Buscar na tabela transactions
+        let tx = null;
+        try {
+          const { data: byPayload } = await db.supabase
+            .from('transactions')
+            .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+            .or(`pix_payload.ilike.%${pixCode}%,txid.eq.${pixCode}`)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          tx = byPayload;
+
+          // Fallback: tentar extrair TXID do BR Code (campo 05 do payload EMV)
+          if (!tx && pixCode.length > 20) {
+            const match = pixCode.match(/05(\d{2})([A-Z0-9]{10,25})/);
+            if (match) {
+              const txidExtracted = match[2];
+              const { data: byTxid } = await db.supabase
+                .from('transactions')
+                .select('txid, telegram_id, user_id, amount, status, created_at, pix_payload, pix_key')
+                .eq('txid', txidExtracted)
+                .maybeSingle();
+              tx = byTxid;
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao buscar transação por Pix:', err);
+        }
+
+        if (!tx) {
+          return ctx.reply('❌ Nenhuma transação encontrada para este código Pix.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancelar_revogar' }
+              ]]
+            }
+          });
+        }
+
+        if (!tx.telegram_id) {
+          return ctx.reply('❌ Transação encontrada mas sem cliente/usuário vinculado.', {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Cancelar', callback_data: 'cancelar_revogar' }
+              ]]
+            }
+          });
+        }
+
+        const telegramId = tx.telegram_id;
+        delete global._SESSIONS[ctx.from.id];
+
+        // Buscar usuário
+        const usuario = await db.getUserByTelegramId(telegramId).catch(() => null);
+
+        // Buscar mensagens rastreadas
+        const todasMensagens = await buscarMensagensRevogar(telegramId);
+
+        if (todasMensagens.length === 0) {
+          return ctx.reply(
+            `📭 *Nenhuma mídia rastreada encontrada*\n\n` +
+            `🆔 Usuário: \`${telegramId}\`\n` +
+            `ℹ️ Só aparecem mensagens enviadas após a instalação do patch no deliver.js.`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🔙 Painel', callback_data: 'admin_refresh' }]] } }
+          );
+        }
+
+        const packs = await listarPacksRevogar(telegramId);
+        const nomeUsuario = usuario ? (usuario.first_name || 'Sem nome') : 'Usuário não encontrado';
+        const bloqLabel = usuario ? (usuario.is_blocked ? '🔴 Bloqueado' : '🟢 Ativo') : '⚠️ Não encontrado';
+
+        // Montar botões de packs
+        const packButtons = packs.map(p => ([{
+          text: `📦 ${p}`,
+          callback_data: `revogar_pack_${telegramId}__${p}`
+        }]));
+
+        return ctx.reply(
+          `🗑️ *REVOGAR CONTEÚDO*\n\n` +
+          `👤 *${nomeUsuario}* — ${bloqLabel}\n` +
+          `🆔 ID: \`${telegramId}\`\n\n` +
+          `📊 Mensagens rastreadas: *${todasMensagens.length}*\n` +
+          `📦 Packs: *${packs.join(', ') || 'N/A'}*\n\n` +
+          `O que deseja apagar?`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🗑️ TUDO (todas as mídias)', callback_data: `revogar_tudo_${telegramId}` }],
+                ...packButtons,
+                [{ text: '❌ Cancelar', callback_data: 'cancelar_revogar' }]
+              ]
+            }
+          }
+        );
+      }
+
 
       // Verificar se é broadcast do criador
       if (session.type === 'creator_broadcast' && session.step === 'message') {
