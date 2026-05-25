@@ -382,11 +382,11 @@ Selecione uma opção abaixo:`;
 
       return ctx.reply(
         '🗑️ *REVOGAR CONTEÚDO*\n\n' +
-        'Esta função apaga mídias enviadas pelo bot no chat do usuário\.\n\n' +
-        '⚠️ A ação é *irreversível* no Telegram\.\n\n' +
+        'Esta função apaga mídias enviadas pelo bot no chat do usuário.\n\n' +
+        '⚠️ A ação é *irreversível* no Telegram.\n\n' +
         'Escolha como deseja localizar o usuário:',
         {
-          parse_mode: 'MarkdownV2',
+          parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
               [{ text: '🆔 Buscar por ID do Telegram',  callback_data: 'revogar_por_id'  }],
