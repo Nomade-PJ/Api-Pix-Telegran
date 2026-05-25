@@ -1,5 +1,6 @@
 // src/db/mediapacks.js
 const { supabase } = require('./client');
+const { withRetry, isConnectionError } = require('../utils/withRetry');
 
 async function getAllMediaPacks() {
   try {
@@ -167,21 +168,28 @@ async function getRandomMediaItems(packId, userId, count = 3) {
 
 async function recordMediaDelivery({ transactionId, userId, packId, mediaItemId }) {
   try {
-    const { data, error } = await supabase
-      .from('media_deliveries')
-      .insert([{
-        transaction_id: transactionId,
-        user_id: userId,
-        pack_id: packId,
-        media_item_id: mediaItemId
-      }])
-      .select()
-      .single();
-    
-    if (error) throw error;
-    return data;
+    return await withRetry(async () => {
+      const { data, error } = await supabase
+        .from('media_deliveries')
+        .insert([{
+          transaction_id: transactionId,
+          user_id: userId,
+          pack_id: packId,
+          media_item_id: mediaItemId
+        }])
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data;
+    }, { retries: 4, delay: 1500, label: '[MEDIA-DELIVERY]' });
   } catch (err) {
-    console.error('Erro ao registrar entrega de mídia:', err.message);
+    // Se esgotou retries de conexão, apenas loga warn (não é erro crítico)
+    if (err._isConnectionRetryExhausted || isConnectionError(err)) {
+      console.warn(`⚠️ [MEDIA-DELIVERY] Falha de conexão ao registrar entrega (transação: ${transactionId}). Entrega já foi feita, apenas o registro falhou.`);
+    } else {
+      console.error('❌ [MEDIA-DELIVERY] Erro ao registrar entrega de mídia:', err.message);
+    }
     return null;
   }
 }
