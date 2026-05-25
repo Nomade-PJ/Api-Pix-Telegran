@@ -149,94 +149,8 @@ Selecione uma opção abaixo:`;
   });
 
 
-  // ═══════════════════════════════════════════════════════════
-  // 🕵️ RASTREAR CLIENTE — busca por ID ou código Pix (TXT)
-  // ═══════════════════════════════════════════════════════════
+  // (renderClienteRastreado foi movida para o nível do módulo)
 
-  // Escapa caracteres especiais do MarkdownV2
-  function escV2(val) {
-    if (val == null) return 'N/A';
-    return String(val).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
-  }
-
-  // Renderiza o card do cliente rastreado
-  async function renderClienteRastreado(ctx, user, tx, origem) {
-    try {
-      const ddd = db.extractAreaCode(user.phone_number);
-      let dddStatus = '📵 Sem telefone';
-      if (ddd) {
-        const bloqueado = await db.isAreaCodeBlocked(ddd);
-        dddStatus = bloqueado ? '🚫 DDD Bloqueado' : '✅ DDD Liberado';
-      }
-
-      // Escapa apenas os caracteres que Markdown v1 interpreta: _ * ` [
-      function esc(val) {
-        if (val == null) return 'N/A';
-        return String(val)
-          .replace(/\\/g, '\\\\')
-          .replace(/\*/g, '\\*')
-          .replace(/_/g, '\\_')
-          .replace(/`/g, '\\`')
-          .replace(/\[/g, '\\[');
-      }
-
-      const nome      = esc(user.first_name || 'Usuário');
-      const telefone  = user.phone_number || 'Não informado';
-      const usernameStr = user.username ? '@' + esc(user.username) : 'sem username';
-      const bloqLabel = user.is_blocked ? '🚫 Bloqueado' : '✅ Ativo';
-      const dddStr    = ddd || '—';
-
-      const hasUsername = !!user.username;
-      const chatLink = hasUsername ? 'https://t.me/' + user.username : null;
-
-      const txList = await db.getUserTransactions(user.telegram_id, 100);
-      const totalGasto = txList
-        .filter(t => t.status === 'delivered')
-        .reduce((a, t) => a + parseFloat(t.amount || 0), 0);
-      const totalTx = txList.length;
-
-      let msg = '🕵️ *RASTREAR CLIENTE*\n\n';
-      msg += '👤 *' + nome + '* — ' + bloqLabel + '\n';
-      msg += '🆔 ID: `' + user.telegram_id + '`\n';
-      msg += '📱 Username: ' + usernameStr + '\n';
-      msg += '📞 Telefone: ' + telefone + '\n';
-      msg += '📍 DDD: *' + dddStr + '* — ' + dddStatus + '\n';
-      msg += '💰 Total gasto: *R$ ' + totalGasto.toFixed(2) + '*\n';
-      msg += '📊 Transações: ' + totalTx + '\n';
-
-      if (!hasUsername) {
-        msg += '\n💬 *Para abrir conversa:*\n';
-        msg += 'Pesquise o ID `' + user.telegram_id + '` no Telegram\n';
-      }
-
-      if (tx) {
-        const txLabel = origem === 'pix' ? 'Transação encontrada:' : 'Última transação:';
-        msg += '\n📋 *' + txLabel + '*\n';
-        msg += '🆔 TXID: `' + esc(tx.txid) + '`\n';
-        msg += '💵 Valor: R$ ' + parseFloat(tx.amount || 0).toFixed(2) + '\n';
-        msg += '📊 Status: ' + esc(tx.status) + '\n';
-        msg += '📅 Data: ' + new Date(tx.created_at).toLocaleString('pt-BR') + '\n';
-      }
-
-      const keyboard = [];
-      if (hasUsername) {
-        keyboard.push([{ text: '💬 Abrir Conversa', url: chatLink }]);
-      }
-      keyboard.push([
-        { text: '📋 Copiar ID', callback_data: 'copiar_id_' + user.telegram_id },
-        { text: '📞 Copiar Telefone', callback_data: 'copiar_tel_' + user.telegram_id }
-      ]);
-      keyboard.push([{ text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }]);
-
-      return ctx.reply(msg, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: keyboard }
-      });
-    } catch (err) {
-      console.error('❌ [RASTREAR] Erro ao renderizar:', err.message);
-      return ctx.reply('❌ Erro ao exibir dados do cliente. Tente novamente.');
-    }
-  }
 
   // Bot\u00e3o principal \u2014 abre submenu
   bot.action('admin_rastrear_cliente', async (ctx) => {
@@ -420,58 +334,8 @@ Selecione uma opção abaixo:`;
   });
 
   
-  // ═══════════════════════════════════════════════════════════════
-  // 🗑️ REVOGAR CONTEÚDO — replica o script deletar_midias.js
-  // ═══════════════════════════════════════════════════════════════
+  // (Funções de revogação de mídia movidas para o nível do módulo)
 
-  // Deletar mensagem no Telegram via API direta
-  async function deletarMensagemTelegram(telegram, chatId, messageId) {
-    try {
-      await telegram.deleteMessage(chatId, messageId);
-      return { ok: true, erro: null };
-    } catch (err) {
-      const msg = err.message || '';
-      if (msg.includes('message to delete not found') || msg.includes('MESSAGE_ID_INVALID') || msg.includes('message can\'t be deleted')) {
-        return { ok: true, jaApagada: true, erro: null }; // já apagada — marcar mesmo assim
-      }
-      return { ok: false, erro: msg };
-    }
-  }
-
-  // Buscar mensagens do usuário na tabela messages_sent
-  async function buscarMensagensRevogar(telegramId, packId = null) {
-    let query = db.supabase
-      .from('messages_sent')
-      .select('id, message_id, pack_id, product_tag, media_type, created_at')
-      .eq('telegram_id', telegramId)
-      .eq('deleted', false)
-      .order('created_at', { ascending: true });
-    if (packId) query = query.eq('pack_id', packId);
-    const { data, error } = await query;
-    if (error) throw new Error('Erro ao buscar mensagens: ' + error.message);
-    return data || [];
-  }
-
-  // Marcar como deletado no banco
-  async function marcarDeletadoRevogar(ids) {
-    const { error } = await db.supabase
-      .from('messages_sent')
-      .update({ deleted: true, deleted_at: new Date().toISOString() })
-      .in('id', ids);
-    if (error) console.error('⚠️ [REVOGAR] Erro ao atualizar banco:', error.message);
-  }
-
-  // Listar packs únicos do usuário
-  async function listarPacksRevogar(telegramId) {
-    const { data, error } = await db.supabase
-      .from('messages_sent')
-      .select('pack_id, product_tag')
-      .eq('telegram_id', telegramId)
-      .eq('deleted', false);
-    if (error) throw new Error(error.message);
-    const unicos = [...new Set((data || []).map(r => r.pack_id || r.product_tag).filter(Boolean))];
-    return unicos;
-  }
 
   // ── Botão principal: abre painel de revogar ──────────────────
   bot.action('admin_revogar_conteudo', async (ctx) => {
@@ -2730,7 +2594,142 @@ Obrigado pela preferência! 💚`, {
     }
   });
 
-
 }
 
-module.exports = { registerPanelHandlers };
+// 🕵️ RASTREAR CLIENTE — (NÍVEL DO MÓDULO)
+async function renderClienteRastreado(ctx, user, tx, origem) {
+  try {
+    const ddd = db.extractAreaCode(user.phone_number);
+    let dddStatus = '📵 Sem telefone';
+    if (ddd) {
+      const bloqueado = await db.isAreaCodeBlocked(ddd);
+      dddStatus = bloqueado ? '🚫 DDD Bloqueado' : '✅ DDD Liberado';
+    }
+
+    // Escapa apenas os caracteres que Markdown v1 interpreta: _ * ` [
+    function esc(val) {
+      if (val == null) return 'N/A';
+      return String(val)
+        .replace(/\\/g, '\\\\')
+        .replace(/\*/g, '\\*')
+        .replace(/_/g, '\\_')
+        .replace(/`/g, '\\`')
+        .replace(/\[/g, '\\[');
+    }
+
+    const nome      = esc(user.first_name || 'Usuário');
+    const telefone  = user.phone_number || 'Não informado';
+    const usernameStr = user.username ? '@' + esc(user.username) : 'sem username';
+    const bloqLabel = user.is_blocked ? '🚫 Bloqueado' : '✅ Ativo';
+    const dddStr    = ddd || '—';
+
+    const hasUsername = !!user.username;
+    const chatLink = hasUsername ? 'https://t.me/' + user.username : null;
+
+    const txList = await db.getUserTransactions(user.telegram_id, 100);
+    const totalGasto = txList
+      .filter(t => t.status === 'delivered')
+      .reduce((a, t) => a + parseFloat(t.amount || 0), 0);
+    const totalTx = txList.length;
+
+    let msg = '🕵️ *RASTREAR CLIENTE*\n\n';
+    msg += '👤 *' + nome + '* — ' + bloqLabel + '\n';
+    msg += '🆔 ID: `' + user.telegram_id + '`\n';
+    msg += '📱 Username: ' + usernameStr + '\n';
+    msg += '📞 Telefone: ' + telefone + '\n';
+    msg += '📍 DDD: *' + dddStr + '* — ' + dddStatus + '\n';
+    msg += '💰 Total gasto: *R$ ' + totalGasto.toFixed(2) + '*\n';
+    msg += '📊 Transações: ' + totalTx + '\n';
+
+    if (!hasUsername) {
+      msg += '\n💬 *Para abrir conversa:*\n';
+      msg += 'Pesquise o ID `' + user.telegram_id + '` no Telegram\n';
+    }
+
+    if (tx) {
+      const txLabel = origem === 'pix' ? 'Transação encontrada:' : 'Última transação:';
+      msg += '\n📋 *' + txLabel + '*\n';
+      msg += '🆔 TXID: `' + esc(tx.txid) + '`\n';
+      msg += '💵 Valor: R$ ' + parseFloat(tx.amount || 0).toFixed(2) + '\n';
+      msg += '📊 Status: ' + esc(tx.status) + '\n';
+      msg += '📅 Data: ' + new Date(tx.created_at).toLocaleString('pt-BR') + '\n';
+    }
+
+    const keyboard = [];
+    if (hasUsername) {
+      keyboard.push([{ text: '💬 Abrir Conversa', url: chatLink }]);
+    }
+    keyboard.push([
+      { text: '📋 Copiar ID', callback_data: 'copiar_id_' + user.telegram_id },
+      { text: '📞 Copiar Telefone', callback_data: 'copiar_tel_' + user.telegram_id }
+    ]);
+    keyboard.push([{ text: '🔙 Voltar ao Painel', callback_data: 'admin_refresh' }]);
+
+    return ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboard }
+    });
+  } catch (err) {
+    console.error('❌ [RASTREAR] Erro ao renderizar:', err.message);
+    return ctx.reply('❌ Erro ao exibir dados do cliente. Tente novamente.');
+  }
+}
+
+// Deletar mensagem no Telegram via API direta (NÍVEL DO MÓDULO)
+async function deletarMensagemTelegram(telegram, chatId, messageId) {
+  try {
+    await telegram.deleteMessage(chatId, messageId);
+    return { ok: true, erro: null };
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('message to delete not found') || msg.includes('MESSAGE_ID_INVALID') || msg.includes('message can\'t be deleted')) {
+      return { ok: true, jaApagada: true, erro: null }; // já apagada — marcar mesmo assim
+    }
+    return { ok: false, erro: msg };
+  }
+}
+
+// Buscar mensagens do usuário na tabela messages_sent (NÍVEL DO MÓDULO)
+async function buscarMensagensRevogar(telegramId, packId = null) {
+  let query = db.supabase
+    .from('messages_sent')
+    .select('id, message_id, pack_id, product_tag, media_type, created_at')
+    .eq('telegram_id', telegramId)
+    .eq('deleted', false)
+    .order('created_at', { ascending: true });
+  if (packId) query = query.eq('pack_id', packId);
+  const { data, error } = await query;
+  if (error) throw new Error('Erro ao buscar mensagens: ' + error.message);
+  return data || [];
+}
+
+// Marcar como deletado no banco (NÍVEL DO MÓDULO)
+async function marcarDeletadoRevogar(ids) {
+  const { error } = await db.supabase
+    .from('messages_sent')
+    .update({ deleted: true, deleted_at: new Date().toISOString() })
+    .in('id', ids);
+  if (error) console.error('⚠️ [REVOGAR] Erro ao atualizar banco:', error.message);
+}
+
+// Listar packs únicos do usuário (NÍVEL DO MÓDULO)
+async function listarPacksRevogar(telegramId) {
+  const { data, error } = await db.supabase
+    .from('messages_sent')
+    .select('pack_id, product_tag')
+    .eq('telegram_id', telegramId)
+    .eq('deleted', false);
+  if (error) throw new Error(error.message);
+  const unicos = [...new Set((data || []).map(r => r.pack_id || r.product_tag).filter(Boolean))];
+  return unicos;
+}
+
+module.exports = { 
+  registerPanelHandlers, 
+  renderClienteRastreado, 
+  deletarMensagemTelegram, 
+  buscarMensagensRevogar, 
+  marcarDeletadoRevogar, 
+  listarPacksRevogar 
+};
+

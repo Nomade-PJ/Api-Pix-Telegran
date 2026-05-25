@@ -3,6 +3,9 @@
 const { Markup } = require('telegraf');
 const db = require('../database');
 const deliver = require('../deliver');
+const { buscarUsuarioInfo } = require('./users');
+const { renderClienteRastreado, buscarMensagensRevogar, listarPacksRevogar } = require('./panel');
+
 
 function registerProductHandlers(bot) {
   // ===== LISTAR PRODUTOS =====

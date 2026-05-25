@@ -118,27 +118,63 @@ function createBot(token) {
           return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*', { parse_mode: 'Markdown' });
         }
 
-        // Buscar produto
-        const product = await db.getProduct(productId, false);
-        if (!product) {
-          return ctx.reply('❌ Produto não encontrado. Use /start para ver o menu.');
+        // Buscar item dinamicamente (pode ser produto, media pack ou grupo)
+        let targetItem = await db.getProduct(productId, false);
+        let itemType = 'product'; // 'product', 'media_pack', 'group'
+
+        if (!targetItem) {
+          targetItem = await db.getMediaPackById(productId);
+          if (targetItem) {
+            itemType = 'media_pack';
+          }
+        }
+
+        if (!targetItem) {
+          // Se for ID numérico (BigInt do Telegram), pode ser grupo
+          const numericId = parseInt(productId);
+          if (!isNaN(numericId)) {
+            targetItem = await db.getGroupById(numericId);
+            if (targetItem) {
+              itemType = 'group';
+            }
+          }
+        }
+
+        if (!targetItem) {
+          return ctx.reply('❌ Conteúdo ou grupo não encontrado. Use /start para ver o menu.');
         }
 
         // Garantir usuário criado
         const user = await db.getOrCreateUser(ctx.from);
 
+        // Determinar o valor (amount) e chaves corretas
+        let amount;
+        if (itemType === 'media_pack') {
+          if (targetItem.variable_prices && Array.isArray(targetItem.variable_prices) && targetItem.variable_prices.length > 0) {
+            const randomIndex = Math.floor(Math.random() * targetItem.variable_prices.length);
+            amount = parseFloat(targetItem.variable_prices[randomIndex]).toString();
+          } else {
+            amount = targetItem.price.toString();
+          }
+        } else if (itemType === 'group') {
+          amount = targetItem.subscription_price.toString();
+        } else {
+          amount = targetItem.price.toString();
+        }
+
         // Gerar PIX
-        const amount = product.price.toString();
-        const resp = await manualPix.createManualCharge({ amount, productId });
+        const resp = await manualPix.createManualCharge({ amount, productId: itemType === 'product' ? productId : undefined, userId: user.id });
         const charge = resp.charge;
         const txid = charge.txid;
 
-        // Salvar transação
+        // Salvar transação com a tipagem correta
         db.createTransaction({
           txid,
           userId: user.id,
           telegramId: ctx.chat.id,
-          productId,
+          productId: itemType === 'product' ? productId : null,
+          mediaPackId: itemType === 'media_pack' ? productId : null,
+          groupId: itemType === 'group' ? targetItem.id : null, // Salva o UUID interno
           amount,
           pixKey: charge.key,
           pixPayload: charge.copiaCola
@@ -147,11 +183,14 @@ function createBot(token) {
         const expirationStr = new Date(Date.now() + 30 * 60 * 1000)
           .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
+        const itemName = targetItem.group_name || targetItem.name || 'Conteúdo';
+        const formattedType = itemType === 'group' ? 'Assinatura' : itemType === 'media_pack' ? 'Media Pack' : 'Produto';
+
         // Enviar QR Code
         await ctx.replyWithPhoto(
           { source: charge.qrcodeBuffer },
           {
-            caption: `✅ *${product.name}*\n\n💰 Pague R$ ${parseFloat(amount).toFixed(2)} usando PIX\n\n🔑 Chave: \`${charge.key}\`\n\n📋 *Cópia & Cola:*\n\`${charge.copiaCola}\`\n\n⏰ *Expira às:* ${expirationStr}\n⚠️ Prazo: 30 minutos\n\n📸 Após pagar, envie o comprovante aqui.\n\n🆔 TXID: ${txid}`,
+            caption: `✅ *[${formattedType}] ${itemName}*\n\n💰 Pague R$ ${parseFloat(amount).toFixed(2)} usando PIX\n\n🔑 Chave: \`${charge.key}\`\n\n📋 *Cópia & Cola:*\n\`${charge.copiaCola}\`\n\n⏰ *Expira às:* ${expirationStr}\n⚠️ Prazo: 30 minutos\n\n📸 Após pagar, envie o comprovante aqui.\n\n🆔 TXID: ${txid}`,
             parse_mode: 'Markdown'
           }
         );

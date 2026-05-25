@@ -260,34 +260,103 @@ module.exports = async function handler(req, res) {
     // ENTREGA MANUAL
     // ═══════════════════════════════════════════════
     if (action === 'manualDeliverOptions') {
-      const { telegram_id } = req.query;
-      const { data: user } = await supabase.from('users').select('telegram_id, first_name, username, phone_number').eq('telegram_id', parseInt(telegram_id)).single();
-      if (!user) return res.status(404).json({ error: 'Usuário não encontrado' });
-      const [{ data: products }, { data: groups }] = await Promise.all([
+      const [{ data: products }, { data: groups }, { data: mediapacks }] = await Promise.all([
         supabase.from('products').select('product_id, name, price, delivery_type').eq('is_active', true),
-        supabase.from('groups').select('group_id, group_name, subscription_price, subscription_days').eq('is_active', true)
+        supabase.from('groups').select('group_id, group_name, subscription_price, subscription_days').eq('is_active', true),
+        supabase.from('media_packs').select('pack_id, name, price').eq('is_active', true)
       ]);
-      return res.json({ user, products: products || [], groups: groups || [] });
+      return res.json({ products: products || [], groups: groups || [], mediapacks: mediapacks || [] });
     }
     if (action === 'manualDeliver' && req.method === 'POST') {
-      const { telegram_id, product_id, group_id } = req.body;
+      const { telegram_id, type, item_id } = req.body;
       const txid = 'MANUAL_' + Date.now() + '_' + telegram_id;
       let amount = 0;
-      let finalProductId = product_id || null;
-      let finalGroupId = group_id || null;
-      if (product_id) {
-        const { data: p } = await supabase.from('products').select('price').eq('product_id', product_id).single();
+      let finalProductId = null;
+      let finalGroupId = null;
+      let finalMediaPackId = null;
+
+      // Buscar usuário para obter o UUID (user_id)
+      const { data: user } = await supabase.from('users').select('id').eq('telegram_id', parseInt(telegram_id)).single();
+      if (!user) return res.status(404).json({ error: 'Usuário não encontrado. Ele precisa iniciar o bot pelo menos uma vez.' });
+
+      if (type === 'product') {
+        finalProductId = item_id;
+        const { data: p } = await supabase.from('products').select('price').eq('product_id', item_id).single();
         amount = parseFloat(p?.price || 0);
-      } else if (group_id) {
-        const { data: g } = await supabase.from('groups').select('subscription_price').eq('group_id', group_id).single();
+      } else if (type === 'group') {
+        finalGroupId = item_id;
+        const { data: g } = await supabase.from('groups').select('subscription_price').eq('group_id', item_id).single();
         amount = parseFloat(g?.subscription_price || 0);
+      } else if (type === 'mediapack') {
+        finalMediaPackId = item_id;
+        const { data: m } = await supabase.from('media_packs').select('price').eq('pack_id', item_id).single();
+        amount = parseFloat(m?.price || 0);
       }
-      await supabase.from('transactions').insert([{
-        txid, telegram_id: parseInt(telegram_id), amount, status: 'delivered',
-        product_id: finalProductId, group_id: finalGroupId,
-        delivered_at: new Date().toISOString(), notes: 'Entrega manual via painel web'
-      }]);
-      return res.json({ ok: true, txid });
+
+      // 1. Criar transação no banco de dados com status 'approved'
+      const { data: transaction, error: insertError } = await supabase.from('transactions').insert([{
+        txid,
+        user_id: user.id,
+        telegram_id: parseInt(telegram_id),
+        amount,
+        status: 'approved',
+        product_id: finalProductId,
+        group_id: finalGroupId,
+        media_pack_id: finalMediaPackId,
+        pix_key: 'MANUAL_DELIVERY',
+        pix_payload: 'MANUAL_DELIVERY',
+        validated_at: new Date().toISOString(),
+        notes: 'Entrega manual via painel web'
+      }]).select().single();
+
+      if (insertError) {
+        return res.status(500).json({ error: 'Erro ao criar transação no banco: ' + insertError.message });
+      }
+
+      // 2. Acionar entrega real por Telegram
+      try {
+        const deliver = require('../../src/deliver');
+        const db = require('../../src/database');
+
+        if (type === 'product') {
+          const { data: productData } = await supabase.from('products').select('*').eq('product_id', item_id).single();
+          await deliver.deliverProductFromStorage(parseInt(telegram_id), item_id, productData?.name || item_id, {
+            userId: user.id,
+            transactionId: transaction.id
+          });
+        } else if (type === 'mediapack') {
+          await deliver.deliverMediaPack(parseInt(telegram_id), item_id, user.id, transaction.id, db);
+        } else if (type === 'group') {
+          const { data: groupData } = await supabase.from('groups').select('*').eq('group_id', item_id).single();
+          if (groupData) {
+            // Adicionar assinatura no banco
+            await db.addGroupMember({
+              telegramId: parseInt(telegram_id),
+              userId: user.id,
+              groupId: groupData.id,
+              days: groupData.subscription_days
+            });
+            // Enviar convite do grupo
+            const { Telegram } = require('telegraf');
+            const tg = new Telegram(process.env.TELEGRAM_BOT_TOKEN);
+            await tg.sendMessage(parseInt(telegram_id), `✅ *SEU ACESSO FOI LIBERADO!*\n\n👥 Grupo: ${groupData.group_name}\n🔗 ${groupData.group_link}`, { parse_mode: 'Markdown' });
+          }
+        }
+
+        // Marcar como entregue se tudo correu bem
+        await db.markAsDelivered(txid);
+        return res.json({ ok: true, txid });
+
+      } catch (deliverErr) {
+        console.error('Erro na entrega manual via Telegram:', deliverErr.message);
+        // Atualizar transação para delivery_failed
+        const deliver = require('../../src/deliver');
+        const db = require('../../src/database');
+        const errorType = deliver.classifyDeliveryError(deliverErr);
+        await db.markDeliveryFailed(txid, deliverErr.message, errorType);
+        
+        return res.status(500).json({ error: `Transação criada, mas erro ao entregar no Telegram: ${deliverErr.message}` });
+      }
     }
 
     // ═══════════════════════════════════════════════

@@ -85,83 +85,8 @@ function registerUserHandlers(bot) {
     }
   });
   
-  // ===== FUNÇÃO PARA BUSCAR E EXIBIR INFORMAÇÕES DO USUÁRIO =====
-  // Escapa caracteres especiais do Markdown v1 em valores dinâmicos
-  function escMd(val) {
-    if (val == null) return 'N/A';
-    return String(val).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
-  }
+  // (buscarUsuarioInfo foi movida para fora de registerUserHandlers)
 
-  async function buscarUsuarioInfo(ctx, telegramId) {
-    try {
-      // Buscar usuário
-      const user = await db.getUserByTelegramId(telegramId);
-      if (!user) {
-        return ctx.reply(`❌ Usuário com ID ${telegramId} não encontrado.`);
-      }
-      
-      // Buscar transações
-      const transactions = await db.getUserTransactions(telegramId, 50);
-      
-      // Montar mensagem — valores dinâmicos SEM parse_mode para evitar quebra
-      // Usamos MarkdownV2 com escape correto em todos os campos variáveis
-      const nome     = escMd(user.first_name);
-      const username = user.username ? `@${escMd(user.username)}` : 'sem username';
-      const bloq     = user.is_blocked ? '🚫 Sim' : '✅ Não';
-      const cadData  = escMd(new Date(user.created_at).toLocaleString('pt-BR'));
-
-      let message = `👤 *USUÁRIO ENCONTRADO:*\n\n`;
-      message += `Nome: ${nome}\n`;
-      message += `ID: ${telegramId}\n`;
-      message += `Username: ${username}\n`;
-      message += `Bloqueado: ${bloq}\n`;
-      message += `Cadastrado em: ${cadData}\n`;
-      
-      const keyboard = [];
-
-      if (transactions.length === 0) {
-        message += `\n❌ Nenhuma transação encontrada\\.`;
-      } else {
-        message += `\n📊 *TRANSAÇÕES \\(${transactions.length}\\):*\n\n`;
-
-        for (const tx of transactions.slice(0, 5)) {
-          const txid   = escMd(tx.txid);
-          const valor  = escMd(parseFloat(tx.amount || 0).toFixed(2));
-          const status = escMd(tx.status);
-          const data   = escMd(new Date(tx.created_at).toLocaleString('pt-BR'));
-
-          message += `🆔 TXID: \`${txid}\`\n`;
-          message += `💰 Valor: R$ ${valor}\n`;
-          message += `📊 Status: ${status}\n`;
-          message += `📅 Data: ${data}\n`;
-          if (tx.proof_file_id) {
-            message += `📸 Comprovante: ✅ Disponível\n`;
-          }
-          message += `\n`;
-
-          keyboard.push([
-            { text: `📋 Ver TXID: ${tx.txid.substring(0, 10)}...`, callback_data: `details_${tx.txid}` }
-          ]);
-        }
-
-        if (transactions.length > 5) {
-          message += `\n\\.\\.\\. e mais ${transactions.length - 5} transação\\(ões\\)\\.`;
-        }
-      }
-
-      keyboard.push([
-        { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
-      ]);
-      
-      return ctx.reply(message, { 
-        parse_mode: 'MarkdownV2',
-        reply_markup: { inline_keyboard: keyboard }
-      });
-    } catch (err) {
-      console.error('Erro ao buscar usuário:', err);
-      return ctx.reply('❌ Erro ao buscar usuário. Verifique os logs.');
-    }
-  }
 
   // ===== COMANDO PARA BUSCAR TRANSAÇÕES POR ID DE USUÁRIO =====
   bot.command('buscar_usuario', async (ctx) => {
@@ -500,4 +425,82 @@ Selecione uma opção abaixo:`;
 
 }
 
-module.exports = { registerUserHandlers };
+// ===== FUNÇÃO PARA BUSCAR E EXIBIR INFORMAÇÕES DO USUÁRIO (NÍVEL DO MÓDULO) =====
+function escMd(val) {
+  if (val == null) return 'N/A';
+  return String(val).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
+}
+
+async function buscarUsuarioInfo(ctx, telegramId) {
+  try {
+    // Buscar usuário
+    const user = await db.getUserByTelegramId(telegramId);
+    if (!user) {
+      return ctx.reply(`❌ Usuário com ID ${telegramId} não encontrado.`);
+    }
+    
+    // Buscar transações
+    const transactions = await db.getUserTransactions(telegramId, 50);
+    
+    // Montar mensagem — valores dinâmicos SEM parse_mode para evitar quebra
+    // Usamos MarkdownV2 com escape correto em todos os campos variáveis
+    const nome     = escMd(user.first_name);
+    const username = user.username ? `@${escMd(user.username)}` : 'sem username';
+    const bloq     = user.is_blocked ? '🚫 Sim' : '✅ Não';
+    const cadData  = escMd(new Date(user.created_at).toLocaleString('pt-BR'));
+
+    let message = `👤 *USUÁRIO ENCONTRADO:*\n\n`;
+    message += `Nome: ${nome}\n`;
+    message += `ID: ${telegramId}\n`;
+    message += `Username: ${username}\n`;
+    message += `Bloqueado: ${bloq}\n`;
+    message += `Cadastrado em: ${cadData}\n`;
+    
+    const keyboard = [];
+
+    if (transactions.length === 0) {
+      message += `\n❌ Nenhuma transação encontrada\\.`;
+    } else {
+      message += `\n📊 *TRANSAÇÕES \\(${transactions.length}\\):*\n\n`;
+
+      for (const tx of transactions.slice(0, 5)) {
+        const txid   = escMd(tx.txid);
+        const valor  = escMd(parseFloat(tx.amount || 0).toFixed(2));
+        const status = escMd(tx.status);
+        const data   = escMd(new Date(tx.created_at).toLocaleString('pt-BR'));
+
+        message += `🆔 TXID: \`${txid}\`\n`;
+        message += `💰 Valor: R$ ${valor}\n`;
+        message += `📊 Status: ${status}\n`;
+        message += `📅 Data: ${data}\n`;
+        if (tx.proof_file_id) {
+          message += `📸 Comprovante: ✅ Disponível\n`;
+        }
+        message += `\n`;
+
+        keyboard.push([
+          { text: `📋 Ver TXID: ${tx.txid.substring(0, 10)}...`, callback_data: `details_${tx.txid}` }
+        ]);
+      }
+
+      if (transactions.length > 5) {
+        message += `\n\\.\\.\\. e mais ${transactions.length - 5} transação\\(ões\\)\\.`;
+      }
+    }
+
+    keyboard.push([
+      { text: '⬅️ Voltar ao Painel', callback_data: 'admin_refresh' }
+    ]);
+    
+    return ctx.reply(message, { 
+      parse_mode: 'MarkdownV2',
+      reply_markup: { inline_keyboard: keyboard }
+    });
+  } catch (err) {
+    console.error('Erro ao buscar usuário:', err);
+    return ctx.reply('❌ Erro ao buscar usuário. Verifique os logs.');
+  }
+}
+
+module.exports = { registerUserHandlers, buscarUsuarioInfo };
+

@@ -505,21 +505,92 @@ async function markDeliveryFailed(txid, errorMessage, errorType = 'unknown') {
  * Busca transações com falha temporária candidatas a reenvio automático
  */
 async function getFailedDeliveries() {
-  try {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*, user:user_id (first_name, username, telegram_id)')
-      .eq('status', 'delivery_failed')
-      .neq('delivery_error_type', 'blocked')
-      .lt('delivery_attempts', 5)
-      .order('last_delivery_attempt_at', { ascending: true });
+  let retries = 3;
+  let lastError;
+  
+  while (retries > 0) {
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*, user:user_id (first_name, username, telegram_id)')
+        .eq('status', 'delivery_failed')
+        .neq('delivery_error_type', 'blocked')
+        .lt('delivery_attempts', 5)
+        .order('last_delivery_attempt_at', { ascending: true });
 
-    if (error) throw error;
-    return data || [];
-  } catch (err) {
-    console.error('Erro ao buscar entregas com falha:', err);
-    return [];
+      if (error) {
+        // Verificar se é erro de conexão
+        const errorMessage = error.message || '';
+        const errorDetails = error.details || '';
+        const errorString = JSON.stringify(error);
+        
+        const isConnectionError = (
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('SocketError') ||
+          errorMessage.includes('other side closed') ||
+          errorMessage.includes('ECONNRESET') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('UND_ERR_SOCKET') ||
+          errorDetails.includes('other side closed') ||
+          errorDetails.includes('SocketError') ||
+          errorDetails.includes('ETIMEDOUT') ||
+          errorString.includes('UND_ERR_SOCKET') ||
+          errorString.includes('ETIMEDOUT')
+        );
+        
+        if (isConnectionError) {
+          lastError = error;
+          retries--;
+          
+          if (retries > 0) {
+            console.warn(`⚠️ [DB] Erro de conexão ao buscar entregas com falha: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+            console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+            continue;
+          }
+        }
+        throw error;
+      }
+
+      return data || [];
+    } catch (err) {
+      const errorMessage = err.message || '';
+      const errorDetails = err.details || '';
+      const errorString = JSON.stringify(err);
+      
+      const isConnectionError = (
+        errorMessage.includes('fetch failed') ||
+        errorMessage.includes('SocketError') ||
+        errorMessage.includes('other side closed') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('UND_ERR_SOCKET') ||
+        errorDetails.includes('other side closed') ||
+        errorDetails.includes('SocketError') ||
+        errorDetails.includes('ETIMEDOUT') ||
+        errorString.includes('UND_ERR_SOCKET') ||
+        errorString.includes('ETIMEDOUT')
+      );
+      
+      if (isConnectionError) {
+        lastError = err;
+        retries--;
+        
+        if (retries > 0) {
+          console.warn(`⚠️ [DB] Erro de conexão ao buscar entregas com falha: ${errorMessage || errorDetails || 'Erro desconhecido'}`);
+          console.warn(`⚠️ [DB] Tentando novamente... (${retries} tentativas restantes)`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * (4 - retries)));
+          continue;
+        }
+      }
+      
+      console.error('Erro ao buscar entregas com falha:', err);
+      return [];
+    }
   }
+  return [];
 }
 
 /**

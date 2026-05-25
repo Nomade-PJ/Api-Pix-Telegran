@@ -418,7 +418,8 @@ Ticket médio: R$ ${stats.totalTransactions > 0 ? (parseFloat(stats.totalSales) 
       // Importar a função temporariamente para validação
       try {
         // Testar se a chave é válida (sem salvar ainda)
-        const { sanitizePixKey } = require('./pix/manual');
+        const { sanitizePixKey } = require('../pix/manual');
+
         const sanitizedKey = sanitizePixKey(novaChave);
         
         // Se chegou aqui, a chave é válida

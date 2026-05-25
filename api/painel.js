@@ -1575,13 +1575,13 @@ async function loadDeliver(){
   delData.mediapack=(d.mediapacks||[]);
   delData.group=(d.groups||[]);
   updateDelProduct();
-}
 function updateDelProduct(){
   const type=document.getElementById('delType').value;
   const items=delData[type]||[];
   const sel=document.getElementById('delProduct');
-  sel.innerHTML=items.length?items.map(i=>'<option value="'+(i.product_id||i.pack_id||i.group_id)+'">'+(i.name||i.product_id||i.pack_id)+'</option>').join(''):'<option>Nenhum disponível</option>';
+  sel.innerHTML=items.length?items.map(i=>'<option value="'+(i.product_id||i.pack_id||i.group_id)+'">'+(i.name||i.group_name||i.product_id||i.pack_id||i.group_id)+'</option>').join(''):'<option>Nenhum disponível</option>';
 }
+
 async function lookupDelUser(){
   const tid=document.getElementById('delUserId').value;
   if(!tid)return;

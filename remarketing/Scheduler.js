@@ -51,8 +51,8 @@ function isBRBusinessHour() {
 function makeButton(productId, label) {
   const botName = process.env.BOT_USERNAME || '';
   const url     = botName
-    ? `https://t.me/${botName}?start=${productId}`
-    : `https://t.me/${process.env.TELEGRAM_BOT_TOKEN.split(':')[0]}`;
+    ? `https://t.me/${botName}?start=produto_${productId}`
+    : `https://t.me/${process.env.TELEGRAM_BOT_TOKEN.split(':')[0]}?start=produto_${productId}`;
   return [[{ text: label || '🛒 Comprar agora', url }]];
 }
 
