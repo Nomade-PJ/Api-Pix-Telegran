@@ -363,16 +363,16 @@ _Cancelar:_ /cancelar`,
           return ctx.reply('❌ Ticket não encontrado.');
         }
         
-        console.log(`✅ [ADMIN-REPLY-TICKET] Adicionando mensagem ao ticket ${ticketId}`);
-        // Adicionar mensagem do admin
-        await db.addTicketMessage(ticketId, user.id, ctx.message.text, true);
-        
         // Atualizar status se estiver aberto
         if (ticket.status === 'open') {
           await db.updateTicketStatus(ticketId, 'in_progress', user.id);
         }
         
         delete global._SESSIONS[ctx.from.id];
+        
+        console.log(`✅ [ADMIN-REPLY-TICKET] Adicionando mensagem ao ticket ${ticketId}`);
+        // Adicionar mensagem do admin
+        await db.addTicketMessage(ticketId, user.id, ctx.message.text, true);
         
         // Notificar usuário
         try {
@@ -392,12 +392,32 @@ _Cancelar:_ /cancelar`,
           
           const ticketNumber = escapeMarkdown(ticket.ticket_number);
           const adminMessage = escapeMarkdown(ctx.message.text);
+          const adminName = user?.first_name || 'Suporte';
+          
+          // Buscar link de suporte configurado (fallback para suportedireto)
+          let supportLink = 'https://t.me/suportedireto';
+          try {
+            const configuredLink = await db.getSetting('support_link');
+            if (configuredLink) supportLink = configuredLink;
+          } catch (_) {}
           
           console.log(`✅ [ADMIN-REPLY-TICKET] Notificando usuário ${ticket.telegram_id}`);
-          await ctx.telegram.sendMessage(ticket.telegram_id, 
-            `💬 *Nova resposta no seu ticket*\n\n📋 Ticket: ${ticketNumber}\n\n👨\\u200d💼 *Admin:*\n${adminMessage}\n\n💬 Use /suporte para ver seus tickets.`, {
-              parse_mode: 'Markdown'
-            });
+          await ctx.telegram.sendMessage(
+            ticket.telegram_id,
+            `💬 *Resposta do Suporte*\n\n` +
+            `📋 *Ticket:* ${ticketNumber}\n` +
+            `👨‍💼 *Atendente:* ${escapeMarkdown(adminName)}\n\n` +
+            `📩 *Mensagem:*\n${adminMessage}\n\n` +
+            `_Se precisar de mais ajuda, clique no botão abaixo ou use /suporte._`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '💬 Falar com Suporte', url: supportLink }
+                ]]
+              }
+            }
+          );
         } catch (err) {
           console.error('❌ [ADMIN-REPLY-TICKET] Erro ao notificar usuário:', err);
         }
@@ -405,7 +425,7 @@ _Cancelar:_ /cancelar`,
         const ticketNumber = (ticket.ticket_number || '').replace(/\*/g, '\\*').replace(/_/g, '\\_');
         
         console.log(`✅ [ADMIN-REPLY-TICKET] Resposta enviada com sucesso!`);
-        return ctx.reply(`✅ Resposta enviada ao ticket ${ticketNumber}!`, {
+        return ctx.reply(`✅ Resposta enviada ao ticket ${ticketNumber}!\n\n📩 O cliente foi notificado com sua mensagem e o link de suporte.`, {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[

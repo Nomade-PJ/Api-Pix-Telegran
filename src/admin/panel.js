@@ -1586,13 +1586,17 @@ Digite /setpix seguido da nova chave
       
       const buttons = [];
       if (ticket.status !== 'closed') {
-        buttons.push([Markup.button.callback('💬 Responder', `admin_reply_ticket_${ticketId}`)]);
+        // Linha 1: Responder + Chamar no Suporte
+        buttons.push([
+          Markup.button.callback('💬 Responder', `admin_reply_ticket_${ticketId}`),
+          Markup.button.callback('📣 Chamar no Suporte', `admin_ticket_notify_support_${ticketId}`)
+        ]);
         
+        // Linha 2: Atribuir + Bloquear/Desbloquear
         const row2 = [];
         if (ticket.status === 'open') {
           row2.push(Markup.button.callback('✅ Atribuir a Mim', `admin_assign_ticket_${ticketId}`));
         }
-        
         if (user) {
           row2.push(Markup.button.callback(user.is_blocked ? '🟢 Desbloquear' : '🔴 Bloquear', `admin_ticket_toggle_block_${ticketId}`));
         }
@@ -1600,9 +1604,12 @@ Digite /setpix seguido da nova chave
           buttons.push(row2);
         }
 
+        // Linha 3: Comprovante + Entregar Produto
         const row3 = [];
-        if (hasProof) {
-          row3.push(Markup.button.callback('📸 Ver Comprovante', `admin_ticket_view_proof_${ticketId}`));
+        // Mostrar sempre o botão de comprovante (se lastTx existe); handler informa se não há comprovante
+        if (lastTx) {
+          const proofLabel = hasProof ? '📸 Ver Comprovante' : '📂 Sem Comprovante';
+          row3.push(Markup.button.callback(proofLabel, `admin_ticket_view_proof_${ticketId}`));
         }
         if (user) {
           row3.push(Markup.button.callback('⚡ Entregar Produto', `admin_ticket_deliver_flow_${ticketId}`));
@@ -1611,6 +1618,7 @@ Digite /setpix seguido da nova chave
           buttons.push(row3);
         }
 
+        // Linha 4: Resolver + Fechar
         buttons.push([
           Markup.button.callback('✅ Resolver', `admin_resolve_ticket_${ticketId}`),
           Markup.button.callback('🔴 Fechar', `admin_close_ticket_${ticketId}`)
@@ -1706,39 +1714,150 @@ Digite /setpix seguido da nova chave
 
       const transactions = await db.getUserTransactions(ticket.telegram_id, 1);
       const lastTx = transactions?.[0];
-      if (!lastTx || (!lastTx.proof_file_id && !lastTx.proof_file_url)) {
-        return ctx.answerCbQuery('📭 Nenhum comprovante encontrado para este cliente.', { show_alert: true });
+      
+      // Sem transação alguma
+      if (!lastTx) {
+        return ctx.answerCbQuery('📭 Nenhuma transação encontrada para este cliente.', { show_alert: true });
+      }
+      
+      // Sem comprovante na transação
+      if (!lastTx.proof_file_id && !lastTx.proof_file_url) {
+        return ctx.answerCbQuery('📭 Este cliente ainda não enviou comprovante de pagamento.', { show_alert: true });
       }
 
       await ctx.answerCbQuery('📸 Buscando comprovante...');
 
       const user = await db.getUserByTelegramId(ticket.telegram_id);
-      const captionText = `📸 *Comprovante do Cliente*\n\n` +
-                          `👤 Nome: ${user?.first_name || 'N/A'}\n` +
-                          `💰 Valor: R$ ${parseFloat(lastTx.amount).toFixed(2)}\n` +
-                          `🔑 TXID: \`${lastTx.txid}\``;
+      
+      // Status da transação traduzido
+      const txStatusMap = {
+        pending: '⏳ Pendente',
+        proof_sent: '📸 Comprovante Enviado',
+        validated: '✅ Validado',
+        approved: '🟢 Aprovado',
+        delivered: '📦 Entregue',
+        delivery_failed: '❌ Falha na entrega',
+        reversed: '↩️ Revertido',
+        expired: '⏰ Expirado',
+        cancelled: '❌ Cancelado'
+      };
+      const txStatus = txStatusMap[lastTx.status] || lastTx.status;
+      const txDate = new Date(lastTx.created_at).toLocaleString('pt-BR');
+      
+      const captionText = `📸 *COMPROVANTE DE PAGAMENTO*\n\n` +
+                          `👤 *Cliente:* ${user?.first_name || 'N/A'}${user?.username ? ` (@${user.username})` : ''}\n` +
+                          `🛍️ *Produto:* ${lastTx.product_name || 'Não identificado'}\n` +
+                          `💰 *Valor:* R$ ${parseFloat(lastTx.amount).toFixed(2)}\n` +
+                          `📊 *Status:* ${txStatus}\n` +
+                          `🔑 *TXID:* \`${lastTx.txid}\`\n` +
+                          `📅 *Data:* ${txDate}`;
+
+      // Botão de retorno ao ticket
+      const backButton = {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Voltar ao Ticket', callback_data: `admin_view_ticket_${ticketId}` }
+          ]]
+        }
+      };
 
       if (lastTx.proof_file_id) {
         const isPdf = lastTx.proof_file_url && lastTx.proof_file_url.toLowerCase().includes('.pdf');
         if (isPdf) {
           await ctx.telegram.sendDocument(ctx.from.id, lastTx.proof_file_id, {
             caption: captionText,
-            parse_mode: 'Markdown'
+            parse_mode: 'Markdown',
+            ...backButton
           });
         } else {
           await ctx.telegram.sendPhoto(ctx.from.id, lastTx.proof_file_id, {
             caption: captionText,
-            parse_mode: 'Markdown'
+            parse_mode: 'Markdown',
+            ...backButton
           });
         }
       } else if (lastTx.proof_file_url) {
         await ctx.reply(`${captionText}\n\n🔗 *URL do Comprovante:* ${lastTx.proof_file_url}`, {
-          parse_mode: 'Markdown'
+          parse_mode: 'Markdown',
+          ...backButton
         });
       }
     } catch (err) {
       console.error('Erro ao enviar comprovante via ticket:', err);
       return ctx.reply(`❌ Erro ao recuperar comprovante: ${err.message}`);
+    }
+  });
+
+  // Notificar cliente via suporte (enviar link do suporte ao cliente)
+  bot.action(/^admin_ticket_notify_support_(.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      if (!ticket) {
+        return ctx.answerCbQuery('❌ Ticket não encontrado.', { show_alert: true });
+      }
+
+      const user = await db.getUserByTelegramId(ticket.telegram_id);
+      if (!user) {
+        return ctx.answerCbQuery('❌ Usuário não cadastrado no bot.', { show_alert: true });
+      }
+
+      // Buscar link de suporte configurado (fallback para suportedireto)
+      let supportLink = 'https://t.me/suportedireto';
+      try {
+        const configuredLink = await db.getSetting('support_link');
+        if (configuredLink) supportLink = configuredLink;
+      } catch (_) {}
+
+      await ctx.answerCbQuery('📣 Notificando cliente...');
+
+      // Enviar mensagem ao cliente com convite para o suporte
+      try {
+        await ctx.telegram.sendMessage(
+          ticket.telegram_id,
+          `👋 *Olá, ${user.first_name || 'cliente'}!*\n\n` +
+          `Um de nossos administradores analisou seu ticket e está pronto para te atender diretamente.\n\n` +
+          `📋 *Ticket:* ${ticket.ticket_number}\n` +
+          `📝 *Assunto:* ${ticket.subject || 'Sem assunto'}\n\n` +
+          `📞 *Entre em contato agora pelo nosso suporte:*`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '💬 Falar com Suporte', url: supportLink }
+              ]]
+            }
+          }
+        );
+
+        return ctx.reply(
+          `✅ *Cliente notificado com sucesso!*\n\n` +
+          `👤 ${user.first_name || 'N/A'}${user.username ? ` (@${user.username})` : ''} recebeu o link de suporte.\n` +
+          `🔗 Link enviado: ${supportLink}`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🔙 Voltar ao Ticket', callback_data: `admin_view_ticket_${ticketId}` }
+              ]]
+            }
+          }
+        );
+      } catch (sendErr) {
+        console.error('Erro ao notificar cliente via suporte:', sendErr);
+        return ctx.reply(
+          `❌ *Não foi possível notificar o cliente.*\n\n` +
+          `O cliente pode ter bloqueado o bot ou ter saído.\n` +
+          `ID: \`${ticket.telegram_id}\``,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    } catch (err) {
+      console.error('Erro ao notificar suporte via ticket:', err);
+      return ctx.answerCbQuery('❌ Erro ao notificar cliente.', { show_alert: true });
     }
   });
 
