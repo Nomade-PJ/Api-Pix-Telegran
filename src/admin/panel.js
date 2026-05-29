@@ -1523,13 +1523,56 @@ Digite /setpix seguido da nova chave
       const userName = escapeMarkdown(user?.first_name || 'N/A');
       const userUsername = escapeMarkdown(user?.username || 'N/A');
       const subject = escapeMarkdown(ticket.subject || 'Sem assunto');
+
+      // Obter informações do cliente e de compras
+      const isBlockedText = user ? (user.is_blocked ? '🔴 Bloqueado' : '🟢 Ativo') : '⚠️ Não cadastrado';
+      const ddd = user?.phone_number ? db.extractAreaCode(user.phone_number) : null;
+      let dddText = 'N/A';
+      if (ddd) {
+        const isDddBlocked = await db.isAreaCodeBlocked(ddd);
+        dddText = isDddBlocked ? `🔴 ${ddd} (Bloqueado)` : `🟢 ${ddd} (Liberado)`;
+      }
+
+      // Buscar última transação do usuário
+      const transactions = await db.getUserTransactions(ticket.telegram_id, 1);
+      const lastTx = transactions?.[0] || null;
+      let txInfoText = '_Nenhuma transação encontrada_';
+      let hasProof = false;
+
+      if (lastTx) {
+        const txStatusMap = {
+          pending: '⏳ Pendente',
+          proof_sent: '📸 Comprovante Enviado',
+          validated: '✅ Validado',
+          approved: '🟢 Aprovado',
+          delivered: '📦 Entregue',
+          delivery_failed: '❌ Falha na entrega',
+          reversed: '↩️ Revertido',
+          expired: '⏰ Expirado',
+          cancelled: '❌ Cancelado'
+        };
+        const txStatus = txStatusMap[lastTx.status] || lastTx.status;
+        const txDate = new Date(lastTx.created_at).toLocaleString('pt-BR');
+        const prodName = escapeMarkdown(lastTx.product_name || 'Produto não identificado');
+        txInfoText = `🛍️ *Prod:* ${prodName}\n` +
+                     `💰 *Val:* R$ ${parseFloat(lastTx.amount).toFixed(2)} | *Status:* ${txStatus}\n` +
+                     `🔑 *TXID:* \`${lastTx.txid}\`\n` +
+                     `📅 *Data:* ${txDate}`;
+        
+        hasProof = !!(lastTx.proof_file_id || lastTx.proof_file_url);
+      }
       
       let message = `📋 *TICKET ${ticketNumber}*\n\n`;
       message += `👤 *Usuário:* ${userName} (@${userUsername})\n`;
       message += `🆔 *ID:* ${ticket.telegram_id}\n`;
+      message += `🚫 *Status:* ${isBlockedText} | 📍 *DDD:* ${dddText}\n`;
       message += `📝 *Assunto:* ${subject}\n`;
-      message += `📊 *Status:* ${ticket.status === 'open' ? '🟢 Aberto' : ticket.status === 'in_progress' ? '🟡 Em andamento' : ticket.status === 'resolved' ? '✅ Resolvido' : '🔴 Fechado'}\n`;
+      message += `📊 *Status do Ticket:* ${ticket.status === 'open' ? '🟢 Aberto' : ticket.status === 'in_progress' ? '🟡 Em andamento' : ticket.status === 'resolved' ? '✅ Resolvido' : '🔴 Fechado'}\n`;
       message += `📅 *Criado:* ${new Date(ticket.created_at).toLocaleString('pt-BR')}\n\n`;
+
+      message += `💳 *ÚLTIMA TRANSAÇÃO PIX:*\n`;
+      message += `${txInfoText}\n\n`;
+
       message += `💬 *Conversa:*\n\n`;
       
       for (const msg of messages) {
@@ -1544,9 +1587,30 @@ Digite /setpix seguido da nova chave
       const buttons = [];
       if (ticket.status !== 'closed') {
         buttons.push([Markup.button.callback('💬 Responder', `admin_reply_ticket_${ticketId}`)]);
+        
+        const row2 = [];
         if (ticket.status === 'open') {
-          buttons.push([Markup.button.callback('✅ Atribuir a Mim', `admin_assign_ticket_${ticketId}`)]);
+          row2.push(Markup.button.callback('✅ Atribuir a Mim', `admin_assign_ticket_${ticketId}`));
         }
+        
+        if (user) {
+          row2.push(Markup.button.callback(user.is_blocked ? '🟢 Desbloquear' : '🔴 Bloquear', `admin_ticket_toggle_block_${ticketId}`));
+        }
+        if (row2.length > 0) {
+          buttons.push(row2);
+        }
+
+        const row3 = [];
+        if (hasProof) {
+          row3.push(Markup.button.callback('📸 Ver Comprovante', `admin_ticket_view_proof_${ticketId}`));
+        }
+        if (user) {
+          row3.push(Markup.button.callback('⚡ Entregar Produto', `admin_ticket_deliver_flow_${ticketId}`));
+        }
+        if (row3.length > 0) {
+          buttons.push(row3);
+        }
+
         buttons.push([
           Markup.button.callback('✅ Resolver', `admin_resolve_ticket_${ticketId}`),
           Markup.button.callback('🔴 Fechar', `admin_close_ticket_${ticketId}`)
@@ -1576,6 +1640,184 @@ Digite /setpix seguido da nova chave
     } catch (err) {
       console.error('❌ [ADMIN-TICKET] Erro:', err);
       return ctx.reply('❌ Erro ao visualizar ticket.');
+    }
+  });
+
+  // Alternar bloqueio do cliente a partir do ticket
+  bot.action(/^admin_ticket_toggle_block_(.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      if (!ticket) {
+        return ctx.answerCbQuery('❌ Ticket não encontrado.', { show_alert: true });
+      }
+
+      const user = await db.getUserByTelegramId(ticket.telegram_id);
+      if (!user) {
+        return ctx.answerCbQuery('❌ Usuário não cadastrado no bot.', { show_alert: true });
+      }
+
+      const nowBlocked = !user.is_blocked;
+      if (nowBlocked) {
+        await db.blockUserByTelegramId(ticket.telegram_id);
+        // Tentar notificar o usuário do bloqueio
+        try {
+          await ctx.telegram.sendMessage(ticket.telegram_id,
+            '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+            'No momento, não conseguimos processar seu acesso.\n\n' +
+            'Estamos trabalhando para expandir nosso atendimento em breve!',
+            { parse_mode: 'Markdown', reply_markup: { remove_keyboard: true } }
+          );
+        } catch (_) {}
+      } else {
+        await db.unblockUserByTelegramId(ticket.telegram_id);
+      }
+
+      await ctx.answerCbQuery(nowBlocked ? '🔴 Usuário Bloqueado!' : '🟢 Usuário Desbloqueado!', { show_alert: false });
+
+      // Atualizar a tela do ticket
+      return bot.handleUpdate({
+        ...ctx.update,
+        callback_query: {
+          ...ctx.update.callback_query,
+          data: `admin_view_ticket_${ticketId}`
+        }
+      });
+    } catch (err) {
+      console.error('Erro ao alternar bloqueio via ticket:', err);
+      return ctx.answerCbQuery('❌ Erro ao alterar bloqueio.', { show_alert: true });
+    }
+  });
+
+  // Visualizar comprovante a partir do ticket
+  bot.action(/^admin_ticket_view_proof_(.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      if (!ticket) {
+        return ctx.answerCbQuery('❌ Ticket não encontrado.', { show_alert: true });
+      }
+
+      const transactions = await db.getUserTransactions(ticket.telegram_id, 1);
+      const lastTx = transactions?.[0];
+      if (!lastTx || (!lastTx.proof_file_id && !lastTx.proof_file_url)) {
+        return ctx.answerCbQuery('📭 Nenhum comprovante encontrado para este cliente.', { show_alert: true });
+      }
+
+      await ctx.answerCbQuery('📸 Buscando comprovante...');
+
+      const user = await db.getUserByTelegramId(ticket.telegram_id);
+      const captionText = `📸 *Comprovante do Cliente*\n\n` +
+                          `👤 Nome: ${user?.first_name || 'N/A'}\n` +
+                          `💰 Valor: R$ ${parseFloat(lastTx.amount).toFixed(2)}\n` +
+                          `🔑 TXID: \`${lastTx.txid}\``;
+
+      if (lastTx.proof_file_id) {
+        const isPdf = lastTx.proof_file_url && lastTx.proof_file_url.toLowerCase().includes('.pdf');
+        if (isPdf) {
+          await ctx.telegram.sendDocument(ctx.from.id, lastTx.proof_file_id, {
+            caption: captionText,
+            parse_mode: 'Markdown'
+          });
+        } else {
+          await ctx.telegram.sendPhoto(ctx.from.id, lastTx.proof_file_id, {
+            caption: captionText,
+            parse_mode: 'Markdown'
+          });
+        }
+      } else if (lastTx.proof_file_url) {
+        await ctx.reply(`${captionText}\n\n🔗 *URL do Comprovante:* ${lastTx.proof_file_url}`, {
+          parse_mode: 'Markdown'
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao enviar comprovante via ticket:', err);
+      return ctx.reply(`❌ Erro ao recuperar comprovante: ${err.message}`);
+    }
+  });
+
+  // Iniciar fluxo de entrega manual para o cliente do ticket
+  bot.action(/^admin_ticket_deliver_flow_(.+)$/, async (ctx) => {
+    try {
+      const isAdmin = await db.isUserAdmin(ctx.from.id);
+      if (!isAdmin) return;
+
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      if (!ticket) {
+        return ctx.answerCbQuery('❌ Ticket não encontrado.', { show_alert: true });
+      }
+
+      const user = await db.getUserByTelegramId(ticket.telegram_id);
+      if (!user) {
+        return ctx.answerCbQuery('❌ Usuário não cadastrado no bot.', { show_alert: true });
+      }
+
+      await ctx.answerCbQuery('📦 Carregando produtos...');
+
+      // Buscar produtos, grupos e media packs disponíveis
+      const [products, groups, mediaPacks] = await Promise.all([
+        db.getAllProducts(),
+        db.getAllGroups(),
+        db.getAllMediaPacks()
+      ]);
+      
+      if (products.length === 0 && groups.length === 0 && mediaPacks.length === 0) {
+        return ctx.reply('❌ Nenhum produto, grupo ou media pack disponível no momento.');
+      }
+
+      // Configurar a sessão de entrega manual exatamente como no fluxo normal
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'entregar_txid',
+        step: 'waiting_product_selection',
+        targetUserId: ticket.telegram_id,
+        targetUser: user
+      };
+
+      const buttons = [];
+      
+      // Botões de produtos
+      for (const product of products) {
+        const emoji = parseFloat(product.price) >= 50 ? '💎' : '🛍️';
+        const buttonText = `${emoji} ${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+        buttons.push([{ text: buttonText, callback_data: `manual_deliver_product:${product.product_id}` }]);
+      }
+      
+      // Botões de media packs
+      const activeMediaPacks = mediaPacks.filter(p => p.is_active);
+      for (const pack of activeMediaPacks) {
+        buttons.push([{ text: pack.name, callback_data: `manual_deliver_mediapack:${pack.pack_id}` }]);
+      }
+      
+      // Botões de grupos
+      const activeGroups = groups.filter(g => g.is_active);
+      for (const group of activeGroups) {
+        const groupButtonText = group.group_name || `👥 Grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`;
+        buttons.push([{ text: groupButtonText, callback_data: `manual_deliver_group:${group.group_id}` }]);
+      }
+      
+      // Botão de cancelar/voltar ao ticket
+      buttons.push([{ text: '🔙 Voltar ao Ticket', callback_data: `admin_view_ticket_${ticketId}` }]);
+
+      return ctx.reply(`⚡ *ENTREGA MANUAL EXPRESSA*\n\n` +
+                       `👤 Cliente: *${user.first_name || 'N/A'}* (@${user.username || 'N/A'})\n` +
+                       `🆔 ID: \`${ticket.telegram_id}\`\n\n` +
+                       `📦 *Selecione o produto/grupo para entregar:*`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: buttons
+        }
+      });
+    } catch (err) {
+      console.error('Erro no fluxo de entrega expressa via ticket:', err);
+      return ctx.reply('❌ Erro ao abrir entrega expressa.');
     }
   });
   
