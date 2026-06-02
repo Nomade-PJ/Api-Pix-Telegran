@@ -7,6 +7,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Nexus Panel</title>
+<script>
+  (function() {
+    const theme = localStorage.getItem('theme') || 'system';
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -20,6 +26,47 @@
   --grad:linear-gradient(135deg,#7c3aed,#db2777);
   --sb:220px;--tb:52px;--mnav:60px;
   --r:8px;--rl:12px;--rxl:16px;
+  --tb-bg:rgba(6,6,8,.9);--mnav-bg:rgba(6,6,8,.92);
+}
+
+/* TEMA CLARO */
+html[data-theme="light"] {
+  --bg:#f9fafb;--s1:#ffffff;--s2:#f3f4f6;--s3:#e5e7eb;--s4:#d1d5db;
+  --line:rgba(0,0,0,0.06);--line2:rgba(0,0,0,0.1);--line3:rgba(0,0,0,0.16);
+  --fg:#111827;--fg2:#4b5563;--fg3:#9ca3af;
+  --glow:rgba(124,58,237,0.05);--glow2:rgba(124,58,237,0.15);
+  --tb-bg:rgba(255,255,255,0.9);--mnav-bg:rgba(255,255,255,0.92);
+}
+
+/* TEMA ESCURO FORÇADO */
+html[data-theme="dark"] {
+  --bg:#060608;--s1:#0c0c10;--s2:#111116;--s3:#18181f;--s4:#1f1f28;
+  --line:#ffffff08;--line2:#ffffff12;--line3:#ffffff1e;
+  --fg:#f8f8fc;--fg2:#a8a8c0;--fg3:#606080;
+  --glow:#7c3aed22;--glow2:#7c3aed44;
+  --tb-bg:rgba(6,6,8,.9);--mnav-bg:rgba(6,6,8,.92);
+}
+
+/* SISTEMA PREFERE CLARO */
+@media (prefers-color-scheme: light) {
+  html[data-theme="system"] {
+    --bg:#f9fafb;--s1:#ffffff;--s2:#f3f4f6;--s3:#e5e7eb;--s4:#d1d5db;
+    --line:rgba(0,0,0,0.06);--line2:rgba(0,0,0,0.1);--line3:rgba(0,0,0,0.16);
+    --fg:#111827;--fg2:#4b5563;--fg3:#9ca3af;
+    --glow:rgba(124,58,237,0.05);--glow2:rgba(124,58,237,0.15);
+    --tb-bg:rgba(255,255,255,0.9);--mnav-bg:rgba(255,255,255,0.92);
+  }
+}
+
+/* SISTEMA PREFERE ESCURO */
+@media (prefers-color-scheme: dark) {
+  html[data-theme="system"] {
+    --bg:#060608;--s1:#0c0c10;--s2:#111116;--s3:#18181f;--s4:#1f1f28;
+    --line:#ffffff08;--line2:#ffffff12;--line3:#ffffff1e;
+    --fg:#f8f8fc;--fg2:#a8a8c0;--fg3:#606080;
+    --glow:#7c3aed22;--glow2:#7c3aed44;
+    --tb-bg:rgba(6,6,8,.9);--mnav-bg:rgba(6,6,8,.92);
+  }
 }
 html,body{height:100%;font-family:'Geist',sans-serif;background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;font-size:14px}
 body::after{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");pointer-events:none;z-index:9000}
@@ -299,11 +346,11 @@ td b{color:var(--fg);font-weight:500}
   .sdot{display:none}
   .mnav{display:flex}
   .toasts{bottom:calc(var(--mnav) + 8px);right:10px}
-  /* KPIs: hide grid, show scroll */
-  .kpis{display:none}
-  .kpis-m{display:flex}
+  /* KPIs: grid no mobile */
+  .kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+  .kpis-m{display:none!important}
   /* urgent strip */
-  .ustrip{display:flex}
+  .ustrip{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px;overflow-x:visible}
   /* quick actions */
   .qact{display:flex}
   /* dashboard grid 1 col */
@@ -336,12 +383,6 @@ td b{color:var(--fg);font-weight:500}
   input,select,textarea{font-size:max(16px,1em) !important}
 }
 
-/* ── SIDEBAR: oculta completamente no mobile ────────── */
-@media(max-width:768px){
-  .sb{display:none !important}
-  .sb-ov{display:none !important}
-  .btnhb{display:none !important}      /* esconde hamburger */
-}
 
 /* ── TOPBAR sticky com glassmorphism ────────────────── */
 @media(max-width:768px){
@@ -350,7 +391,7 @@ td b{color:var(--fg);font-weight:500}
     height:52px;padding:0 16px;
     backdrop-filter:blur(14px);
     -webkit-backdrop-filter:blur(14px);
-    background:rgba(6,6,8,.9);
+    background:var(--tb-bg);
     border-bottom:1px solid var(--line2)
   }
   .tb-brand-m{
@@ -406,7 +447,7 @@ td b{color:var(--fg);font-weight:500}
     padding:6px 2px max(12px,env(safe-area-inset-bottom,12px));
     backdrop-filter:blur(18px);
     -webkit-backdrop-filter:blur(18px);
-    background:rgba(6,6,8,.92);
+    background:var(--mnav-bg);
     border-top:1px solid var(--line2)
   }
   .mni{padding:5px 6px;min-width:52px;gap:3px}
@@ -482,12 +523,10 @@ td b{color:var(--fg);font-weight:500}
 @media(max-width:768px){
   .card{border-radius:14px;margin-bottom:12px}
   .card-h{padding:14px 16px 12px}
-  .kpis-m{gap:10px}
-  .kpis-m .kpi{padding:16px;border-radius:14px}
-  .kpis-m .kpi-v{font-size:26px;letter-spacing:-1.5px}
-  .ustrip{gap:10px}
-  .uc{border-radius:14px;padding:16px}
-  .uc-val{font-size:30px;letter-spacing:-1.5px}
+  .kpi{padding:14px;border-radius:14px}
+  .kpi-v{font-size:clamp(15px, 4.5vw, 22px);letter-spacing:-1px}
+  .uc{border-radius:14px;padding:14px;min-width:0!important;flex-shrink:1!important}
+  .uc-val{font-size:clamp(16px, 5vw, 24px);letter-spacing:-1px}
   .qab{min-height:40px;padding:10px 16px;border-radius:24px;font-size:13px}
   .dg{grid-template-columns:1fr;gap:10px;margin-top:12px}
   .dli{padding:12px 16px}
@@ -633,6 +672,9 @@ td b{color:var(--fg);font-weight:500}
       <div class="crumb"><span class="crumb-r">nexus</span><span class="crumb-s">/</span><span class="crumb-c" id="pgTit">dashboard</span></div>
     </div>
     <div class="tb-r">
+      <button class="btn bd bxs" id="theme-toggle" onclick="cycleTheme()" style="gap:5px" title="Alternar Tema">
+        <span id="theme-icon">🖥️</span><span class="hm" id="theme-text">Padrão</span>
+      </button>
       <button class="btn bd bxs" onclick="reloadCur()" style="gap:3px">↺ <span class="hm">Atualizar</span></button>
       <div class="sdot"><div class="pulse"></div>online</div>
     </div>
@@ -1689,6 +1731,36 @@ document.getElementById('cnt').addEventListener('scroll',function(){
   if(cur!=='users')return;
   if(this.scrollHeight-this.scrollTop-this.clientHeight<300)loadMoreUsers();
 },{passive:true});
+
+// ── SISTEMA DE TEMAS CÍCLICOS ──
+const themeMap = {
+  system: { next: 'dark', text: 'Padrão', icon: '🖥️' },
+  dark: { next: 'light', text: 'Escuro', icon: '🌙' },
+  light: { next: 'system', text: 'Claro', icon: '☀️' }
+};
+
+function updateThemeUI(theme) {
+  const info = themeMap[theme] || themeMap.system;
+  document.documentElement.setAttribute('data-theme', theme);
+  const iconEl = document.getElementById('theme-icon');
+  const textEl = document.getElementById('theme-text');
+  if(iconEl) iconEl.textContent = info.icon;
+  if(textEl) textEl.textContent = info.text;
+}
+
+function cycleTheme() {
+  const currentTheme = localStorage.getItem('theme') || 'system';
+  const nextTheme = themeMap[currentTheme]?.next || 'system';
+  localStorage.setItem('theme', nextTheme);
+  updateThemeUI(nextTheme);
+  toast(`Tema alterado para: ${themeMap[nextTheme].text}`);
+}
+
+(function initTheme() {
+  const activeTheme = localStorage.getItem('theme') || 'system';
+  // Pequeno timeout caso o DOM precise de um milissegundo para os elementos existirem
+  setTimeout(() => updateThemeUI(activeTheme), 50);
+})();
 
 // ── INIT ─────────────────────────────────────────────
 // ── iOS Viewport Height fix (Safari) ──────────────────
