@@ -828,16 +828,19 @@ td b{color:var(--fg);font-weight:500}
 
     <!-- ═══ TICKETS ═══ -->
     <div id="s-tickets" class="sec">
-      <div class="filters">
-        <select class="fi fi-sm" id="tickSt" onchange="loadTickets()">
-          <option value="all">Todos</option><option value="open">Abertos</option>
-          <option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option>
-        </select>
-        <select class="fi fi-sm" id="tickPri" onchange="loadTickets()">
-          <option value="">Prioridade</option>
-          <option value="urgent">🔴 Urgente</option><option value="high">🟡 Alta</option>
-          <option value="normal">⚪ Normal</option><option value="low">🟢 Baixa</option>
-        </select>
+      <div class="filters" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select class="fi fi-sm" id="tickSt" onchange="loadTickets()">
+            <option value="all">Todos</option><option value="open">Abertos</option>
+            <option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option>
+          </select>
+          <select class="fi fi-sm" id="tickPri" onchange="loadTickets()">
+            <option value="">Prioridade</option>
+            <option value="urgent">🔴 Urgente</option><option value="high">🟡 Alta</option>
+            <option value="normal">⚪ Normal</option><option value="low">🟢 Baixa</option>
+          </select>
+        </div>
+        <button class="btn bp bsm" onclick="openBulkTicketMsg()" style="white-space:nowrap">✉ Msg para tickets abertos</button>
       </div>
       <div class="card tbl-w hm" id="tickTable"><div class="loader"><div class="spin"></div></div></div>
       <div class="mrows sm" id="tickCards" style="display:none"></div>
@@ -1104,6 +1107,20 @@ td b{color:var(--fg);font-weight:500}
   <div class="mfoot"><button class="btn bgh" onclick="closeM('mBC')">Fechar</button><button class="btn br bxs" id="btnCBC" style="display:none">✕ Cancelar campanha</button></div>
 </div></div>
 
+<div class="ov" id="mBulkTicket"><div class="modal xl"><div class="mdrag"></div>
+  <div class="mtitle">✉ Mensagem para todos os tickets abertos</div>
+  <div style="font-size:12px;color:var(--fg3);margin-bottom:14px">Esta mensagem será enviada como resposta de admin para <b>todos os tickets com status "aberto"</b> no momento do envio.</div>
+  <div class="frow"><label>Mensagem *</label><textarea class="fi" id="bulkTickMsg" placeholder="Digite a mensagem para enviar a todos os tickets abertos..." rows="5"></textarea></div>
+  <div id="bulkTickProgress" style="display:none;margin-top:10px">
+    <div style="font-size:12px;color:var(--fg3);margin-bottom:6px" id="bulkTickStatus">Enviando...</div>
+    <div style="background:var(--line);border-radius:8px;height:6px;overflow:hidden"><div id="bulkTickBar" style="background:var(--purple);height:100%;width:0%;transition:width .3s"></div></div>
+  </div>
+  <div class="mfoot">
+    <button class="btn bgh" onclick="closeM('mBulkTicket')">Cancelar</button>
+    <button class="btn bp" id="btnBulkSend" onclick="sendBulkTicketMsg()">✉ Enviar para todos os abertos</button>
+  </div>
+</div></div>
+
 <div class="toasts" id="toasts"></div>
 <script>
 const API='/api/panel/data';
@@ -1186,6 +1203,8 @@ function go(sec,el){
   if(el)el.classList.add('on');
   document.getElementById('pgTit').textContent=meta[sec]||sec;
   cur=sec;
+  // Persiste a seção na URL sem rolar
+  history.replaceState(null,'','#'+sec);
   if(isMob())closeSB();
   if(loads[sec])loads[sec]();
 }
@@ -1795,7 +1814,70 @@ function cycleTheme() {
   },{passive:true});
 })();
 
-checkAuth().then(()=>loadDash());
+// ── BULK TICKET MSG ──────────────────────────────────
+function openBulkTicketMsg(){
+  document.getElementById('bulkTickMsg').value='';
+  document.getElementById('bulkTickProgress').style.display='none';
+  document.getElementById('bulkTickStatus').textContent='Enviando...';
+  document.getElementById('bulkTickBar').style.width='0%';
+  document.getElementById('btnBulkSend').disabled=false;
+  openM('mBulkTicket');
+}
+async function sendBulkTicketMsg(){
+  const message=document.getElementById('bulkTickMsg').value.trim();
+  if(!message){toast('Digite uma mensagem.','err');return;}
+  const btn=document.getElementById('btnBulkSend');
+  btn.disabled=true;
+  const prog=document.getElementById('bulkTickProgress');
+  const statusEl=document.getElementById('bulkTickStatus');
+  const barEl=document.getElementById('bulkTickBar');
+  prog.style.display='block';
+  statusEl.textContent='Buscando tickets abertos...';
+  try{
+    // Busca todos os tickets abertos (sem limite de página)
+    let page=1,allTickets=[];
+    while(true){
+      const d=await api('tickets',{params:{page,limit:50,status:'open',priority:''}});
+      if(!d||!d.data||d.data.length===0)break;
+      allTickets=[...allTickets,...d.data];
+      if(page>=d.pages)break;
+      page++;
+    }
+    if(allTickets.length===0){toast('Nenhum ticket aberto encontrado.','warn');btn.disabled=false;prog.style.display='none';return;}
+    statusEl.textContent=`Enviando para 0 de ${allTickets.length} tickets...`;
+    let ok=0,fail=0;
+    for(let i=0;i<allTickets.length;i++){
+      const t=allTickets[i];
+      try{
+        await api('replyTicket',{method:'POST',body:{ticket_id:t.id,message}});
+        ok++;
+      }catch(e){fail++;}
+      const pct=Math.round(((i+1)/allTickets.length)*100);
+      barEl.style.width=pct+'%';
+      statusEl.textContent=`Enviando para ${i+1} de ${allTickets.length} tickets... (${pct}%)`;
+    }
+    barEl.style.width='100%';
+    statusEl.textContent=`✓ Concluído! ${ok} enviados${fail>0?' · '+fail+' falhas':''}.`;
+    toast(`Mensagem enviada para ${ok} ticket(s)${fail>0?', '+fail+' falharam':''}.`,fail>0?'warn':'ok');
+    setTimeout(()=>{closeM('mBulkTicket');loadTickets();},2000);
+  }catch(e){
+    toast('Erro ao enviar mensagens.','err');
+    btn.disabled=false;
+    prog.style.display='none';
+  }
+}
+
+checkAuth().then(()=>{
+  // Restaura a seção salva na URL ou vai para dashboard
+  const hash=location.hash.replace('#','');
+  const validSec=Object.keys(loads);
+  if(hash&&validSec.includes(hash)){
+    go(hash,document.querySelector('.ni[onclick*="\''+hash+'\'"]'));
+    setMN(hash);
+  }else{
+    loadDash();
+  }
+});
 setInterval(()=>{if(cur==='dashboard')loadDash();},60000);
 </script>
 </div><!-- /wrap -->
