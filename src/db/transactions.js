@@ -628,7 +628,7 @@ async function cancelTransaction(txid) {
         .from('transactions')
         .update({
           status: 'expired',
-          notes: 'Transação expirada - prazo de 30 minutos ultrapassado',
+          notes: 'Transação expirada - prazo de 60 minutos ultrapassado',
           updated_at: new Date().toISOString()
         })
         .eq('txid', txid);
