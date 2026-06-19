@@ -1109,15 +1109,18 @@ td b{color:var(--fg);font-weight:500}
 
 <div class="ov" id="mBulkTicket"><div class="modal xl"><div class="mdrag"></div>
   <div class="mtitle">✉ Mensagem para todos os tickets abertos</div>
-  <div style="font-size:12px;color:var(--fg3);margin-bottom:14px">Esta mensagem será enviada como resposta de admin para <b>todos os tickets com status "aberto"</b> no momento do envio.</div>
-  <div class="frow"><label>Mensagem *</label><textarea class="fi" id="bulkTickMsg" placeholder="Digite a mensagem para enviar a todos os tickets abertos..." rows="5"></textarea></div>
-  <div id="bulkTickProgress" style="display:none;margin-top:10px">
+  <div style="font-size:12px;color:var(--fg3);margin-bottom:14px">Esta mensagem será enviada para <b>todos os tickets com status "aberto"</b>. Após o envio, cada ticket será marcado como <b>resolvido e fechado</b> automaticamente.</div>
+  <div class="frow"><label>Mensagem *</label><textarea class="fi" id="bulkTickMsg" rows="6"></textarea></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+    <button class="btn bgh bxs" onclick="setBulkPreset()" style="font-size:11px">↺ Restaurar mensagem padrão</button>
+  </div>
+  <div id="bulkTickProgress" style="display:none;margin-top:14px">
     <div style="font-size:12px;color:var(--fg3);margin-bottom:6px" id="bulkTickStatus">Enviando...</div>
     <div style="background:var(--line);border-radius:8px;height:6px;overflow:hidden"><div id="bulkTickBar" style="background:var(--purple);height:100%;width:0%;transition:width .3s"></div></div>
   </div>
   <div class="mfoot">
-    <button class="btn bgh" onclick="closeM('mBulkTicket')">Cancelar</button>
-    <button class="btn bp" id="btnBulkSend" onclick="sendBulkTicketMsg()">✉ Enviar para todos os abertos</button>
+    <button class="btn bgh" id="btnBulkCancel" onclick="closeM('mBulkTicket')">Cancelar</button>
+    <button class="btn bp" id="btnBulkSend" onclick="sendBulkTicketMsg()">✉ Enviar e fechar todos os abertos</button>
   </div>
 </div></div>
 
@@ -1127,9 +1130,29 @@ const API='/api/panel/data';
 let TOKEN=localStorage.getItem('panel_token')||'';
 let pg={tx:1,tick:1};
 let dbt={};
-let cur='dashboard';
+// Detecta seção do hash ANTES de qualquer render
+const _initHash=(location.hash||'').replace('#','');
+let cur=_initHash||'dashboard';
 let uState={loading:false,done:false,offset:0,limit:30,q:'',bl:''};
 let delData={product:[],mediapack:[],group:[]};
+
+// Aplica a seção inicial imediatamente (sem chamar loads ainda)
+(function _applyInitSec(){
+  const sec=cur;
+  document.querySelectorAll('.sec').forEach(s=>s.classList.remove('on'));
+  document.getElementById('s-'+sec)?.classList.add('on');
+  // Marca sidebar
+  const elNi=document.querySelector('.ni[onclick*="\''+sec+'\'"]');
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
+  if(elNi)elNi.classList.add('on');
+  const metaInit={dashboard:'dashboard',stats:'analytics',transactions:'transações',failures:'falhas',products:'produtos',mediapacks:'media packs',groups:'grupos VIP',coupons:'cupons',users:'usuários',trusted:'confiáveis',tickets:'tickets',broadcast:'broadcast',autoresponses:'auto respostas',deliver:'entrega manual',settings:'configurações',ddds:'DDDs bloqueados'};
+  const pgTit=document.getElementById('pgTit');
+  if(pgTit)pgTit.textContent=metaInit[sec]||sec;
+  // Mobile nav highlight
+  const mnMap={dashboard:'mn-d',transactions:'mn-t',users:'mn-u',tickets:'mn-tk'};
+  document.querySelectorAll('.mni').forEach(e=>e.classList.remove('on'));
+  document.getElementById(mnMap[sec]||'mn-more')?.classList.add('on');
+})();
 
 // ── AUTH ──────────────────────────────────────────────
 async function checkAuth(){
@@ -1815,67 +1838,82 @@ function cycleTheme() {
 })();
 
 // ── BULK TICKET MSG ──────────────────────────────────
+const BULK_MSG_DEFAULT=`Olá! Passando para informar que nosso suporte agora está centralizado no link abaixo:\n\n👉 https://t.me/suportedireto\n\nPor lá você consegue atendimento mais rápido e direto. Qualquer dúvida, pode chamar por lá!\n\nObrigado pela compreensão. 🙏`;
+function setBulkPreset(){
+  document.getElementById('bulkTickMsg').value=BULK_MSG_DEFAULT;
+}
 function openBulkTicketMsg(){
-  document.getElementById('bulkTickMsg').value='';
+  setBulkPreset();
   document.getElementById('bulkTickProgress').style.display='none';
   document.getElementById('bulkTickStatus').textContent='Enviando...';
   document.getElementById('bulkTickBar').style.width='0%';
   document.getElementById('btnBulkSend').disabled=false;
+  document.getElementById('btnBulkCancel').disabled=false;
   openM('mBulkTicket');
 }
 async function sendBulkTicketMsg(){
   const message=document.getElementById('bulkTickMsg').value.trim();
   if(!message){toast('Digite uma mensagem.','err');return;}
   const btn=document.getElementById('btnBulkSend');
+  const btnC=document.getElementById('btnBulkCancel');
   btn.disabled=true;
+  btnC.disabled=true;
   const prog=document.getElementById('bulkTickProgress');
   const statusEl=document.getElementById('bulkTickStatus');
   const barEl=document.getElementById('bulkTickBar');
   prog.style.display='block';
   statusEl.textContent='Buscando tickets abertos...';
   try{
-    // Busca todos os tickets abertos (sem limite de página)
+    // Busca TODOS os tickets abertos percorrendo todas as páginas
     let page=1,allTickets=[];
     while(true){
       const d=await api('tickets',{params:{page,limit:50,status:'open',priority:''}});
       if(!d||!d.data||d.data.length===0)break;
       allTickets=[...allTickets,...d.data];
-      if(page>=d.pages)break;
+      if(page>=(d.pages||1))break;
       page++;
     }
-    if(allTickets.length===0){toast('Nenhum ticket aberto encontrado.','warn');btn.disabled=false;prog.style.display='none';return;}
-    statusEl.textContent=`Enviando para 0 de ${allTickets.length} tickets...`;
+    if(allTickets.length===0){
+      toast('Nenhum ticket aberto encontrado.','warn');
+      btn.disabled=false;btnC.disabled=false;prog.style.display='none';
+      return;
+    }
     let ok=0,fail=0;
     for(let i=0;i<allTickets.length;i++){
       const t=allTickets[i];
+      const pct=Math.round(((i+1)/allTickets.length)*100);
+      statusEl.textContent=`Processando ${i+1} de ${allTickets.length} tickets... (${pct}%)`;
+      barEl.style.width=pct+'%';
       try{
+        // 1. Envia a mensagem
         await api('replyTicket',{method:'POST',body:{ticket_id:t.id,message}});
+        // 2. Resolve o ticket
+        await api('resolveTicket',{method:'POST',body:{ticket_id:t.id}});
+        // 3. Fecha o ticket
+        await api('closeTicket',{method:'POST',body:{ticket_id:t.id}});
         ok++;
       }catch(e){fail++;}
-      const pct=Math.round(((i+1)/allTickets.length)*100);
-      barEl.style.width=pct+'%';
-      statusEl.textContent=`Enviando para ${i+1} de ${allTickets.length} tickets... (${pct}%)`;
     }
     barEl.style.width='100%';
-    statusEl.textContent=`✓ Concluído! ${ok} enviados${fail>0?' · '+fail+' falhas':''}.`;
-    toast(`Mensagem enviada para ${ok} ticket(s)${fail>0?', '+fail+' falharam':''}.`,fail>0?'warn':'ok');
-    setTimeout(()=>{closeM('mBulkTicket');loadTickets();},2000);
+    statusEl.textContent=`✓ Concluído! ${ok} ticket(s) respondidos e fechados${fail>0?' · '+fail+' falhas':''}.`;
+    toast(`${ok} ticket(s) respondidos e fechados${fail>0?', '+fail+' falharam':''}.`,fail>0?'warn':'ok');
+    setTimeout(()=>{closeM('mBulkTicket');loadTickets();},2500);
   }catch(e){
-    toast('Erro ao enviar mensagens.','err');
-    btn.disabled=false;
+    toast('Erro ao processar tickets.','err');
+    btn.disabled=false;btnC.disabled=false;
     prog.style.display='none';
   }
 }
 
 checkAuth().then(()=>{
-  // Restaura a seção salva na URL ou vai para dashboard
-  const hash=location.hash.replace('#','');
+  // A seção já foi aplicada visualmente no DOM via _applyInitSec().
+  // Aqui só carregamos os dados da seção atual sem renavegar.
   const validSec=Object.keys(loads);
-  if(hash&&validSec.includes(hash)){
-    go(hash,document.querySelector('.ni[onclick*="\''+hash+'\'"]'));
-    setMN(hash);
+  if(validSec.includes(cur)&&loads[cur]){
+    loads[cur]();
   }else{
-    loadDash();
+    cur='dashboard';
+    go('dashboard',document.querySelector('.ni[onclick*="\'dashboard\'"]'));
   }
 });
 setInterval(()=>{if(cur==='dashboard')loadDash();},60000);
