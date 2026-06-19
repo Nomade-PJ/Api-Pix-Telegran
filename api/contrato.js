@@ -391,7 +391,7 @@ module.exports = (req, res) => {
                                 <li>&lt;40% - Rejeição automática com notificação ao cliente</li>
                             </ul>
                         </li>
-                        <li>✅ Expiração automática de transações após 30 minutos</li>
+                        <li>✅ Expiração automática de transações após 60 minutos</li>
                         <li>✅ Cache inteligente de análises OCR para reprocessamento</li>
                         <li>✅ Suporte a comprovantes em imagem (JPG, PNG) e PDF</li>
                     </ul>
