@@ -4,9 +4,9 @@ const cache = require('../cache');
 
 async function getPendingTransactions(limit = 10, offset = 0) {
   try {
-    // Filtrar apenas transações dos últimos 30 minutos
+    // Filtrar apenas transações dos últimos 60 minutos
     const thirtyMinutesAgo = new Date();
-    thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
+    thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 60);
     
     const { data, error, count } = await supabase
       .from('transactions')
