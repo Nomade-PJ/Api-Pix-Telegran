@@ -1037,7 +1037,7 @@ Após aprovação, sua assinatura será renovada automaticamente.
             }
             
             const expirationTime = new Date(finalCheck.created_at);
-            expirationTime.setMinutes(expirationTime.getMinutes() + 30); // 30 minutos
+            expirationTime.setMinutes(expirationTime.getMinutes() + 60); // 60 minutos
             const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
               hour: '2-digit', 
               minute: '2-digit',
@@ -1064,7 +1064,7 @@ Após aprovação, sua assinatura será renovada automaticamente.
 \`${finalCheck.pix_payload}\`
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
+⚠️ *Prazo:* 60 minutos para pagamento
 
 📸 Após pagar, envie o comprovante aqui.
 Após aprovação, você será adicionado automaticamente ao grupo!
@@ -1088,7 +1088,7 @@ Após aprovação, você será adicionado automaticamente ao grupo!
 \`${finalCheck.pix_payload}\`
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
+⚠️ *Prazo:* 60 minutos para pagamento
 
 📸 *Após pagar, envie o comprovante aqui.*
 ✅ *Após a aprovação, você receberá o link do grupo automaticamente!*
@@ -1150,7 +1150,7 @@ Após aprovação, você será adicionado automaticamente ao grupo!
 \`${charge.charge.copiaCola}\`
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
+⚠️ *Prazo:* 60 minutos para pagamento
 
 📸 *Após pagar, envie o comprovante aqui.*
 ✅ *Após a aprovação, você receberá o link do grupo automaticamente!*
@@ -1175,7 +1175,7 @@ Após aprovação, você será adicionado automaticamente ao grupo!
 \`${charge.charge.copiaCola}\`
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
+⚠️ *Prazo:* 60 minutos para pagamento
 
 📸 *Após pagar, envie o comprovante aqui.*
 ✅ *Após a aprovação, você receberá o link do grupo automaticamente!*
@@ -1402,4 +1402,3 @@ module.exports = {
   startGroupControl,
   checkExpirations 
 };
-
