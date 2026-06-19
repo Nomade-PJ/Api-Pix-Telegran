@@ -1,0 +1,3357 @@
+// src/bot.js
+const { Telegraf, Markup } = require('telegraf');
+const manualPix = require('./pix/manual');
+const deliver = require('./deliver');
+const db = require('./database');
+const admin = require('./admin');
+const creator = require('./creator');
+const proofAnalyzer = require('./proofAnalyzer');
+const { startExpirationJob } = require('./jobs/expireTransactions');
+const { startBotDescriptionJob } = require('./jobs/updateBotDescription');
+const { startBackupJob } = require('./jobs/backupDatabase');
+const { startReminderJob } = require('./jobs/sendPaymentReminders');
+const { startRetryJob } = require('./jobs/retryDeliveries');
+
+// Helper para formatar valores monetários (remover .00)
+function formatAmount(value) {
+  const num = parseFloat(value);
+  if (isNaN(num)) return value;
+  // Se termina com .00, remover decimais
+  if (num % 1 === 0) {
+    return num.toString();
+  }
+  // Caso contrário, manter 2 decimais mas remover zeros à direita
+  return num.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function createBot(token) {
+  const bot = new Telegraf(token);
+  
+  // ──────────────────────────────────────────────────────────────────────
+  // JOBS REMOVIDOS DO BOOT — setInterval não funciona em Vercel Serverless.
+  // A instância é destruída após cada request — os intervalos nunca disparam.
+  //
+  // Os jobs abaixo são executados por cron jobs externos (cron-job.org):
+  //   • Expiração de transações  → /api/jobs/expire-members    (a cada 5min)
+  //   • Lembretes de pagamento   → via expire-members           (a cada 5min)
+  //   • Retry de entregas        → via expire-members           (a cada 5min)
+  //   • Backup do banco          → /api/jobs/cleanup-expired    (diário)
+  //   • Descrição do bot         → não crítico, pode ser manual
+  // ──────────────────────────────────────────────────────────────────────
+  console.log('✅ [BOT-INIT] Jobs gerenciados por cron externo (cron-job.org)');
+  
+  // 🆕 REGISTRAR COMANDO /criador PRIMEIRO (antes de tudo, para garantir prioridade)
+  creator.registerCreatorCommands(bot);
+  console.log('✅ [BOT-INIT] Comando /criador registrado PRIMEIRO');
+  
+  // Configurar usuário criador automaticamente (se ainda não estiver configurado)
+  // IDs dos criadores carregados do banco (tabela settings)
+  // Para alterar: atualize a tabela settings — sem precisar de novo deploy
+  let CREATOR_TELEGRAM_ID = parseInt(process.env.CREATOR_TELEGRAM_ID) || 0;
+  let SECOND_CREATOR_ID = parseInt(process.env.SECOND_CREATOR_ID || process.env.CREATOR_TELEGRAM_ID_2) || 0;
+  (async () => {
+    try {
+      // Carregar IDs dos criadores do banco (sem precisar de novo deploy para alterar)
+      try {
+        const creatorSetting  = await db.getSetting('creator_telegram_id');
+        const creator2Setting = await db.getSetting('creator2_telegram_id');
+        if (creatorSetting)  CREATOR_TELEGRAM_ID = parseInt(creatorSetting);
+        if (creator2Setting) SECOND_CREATOR_ID   = parseInt(creator2Setting);
+        console.log(`✅ [BOT-INIT] IDs de criadores carregados do banco: ${CREATOR_TELEGRAM_ID}, ${SECOND_CREATOR_ID}`);
+      } catch (e) {
+        console.warn('⚠️ [BOT-INIT] Usando IDs de criadores em fallback (env ou 0):', e.message);
+      }
+
+      if (CREATOR_TELEGRAM_ID > 0) {
+        const { data: creatorUser } = await db.supabase
+          .from('users')
+          .select('is_creator')
+          .eq('telegram_id', CREATOR_TELEGRAM_ID)
+          .single();
+        
+        if (creatorUser && !creatorUser.is_creator) {
+          await db.setUserAsCreator(CREATOR_TELEGRAM_ID);
+          console.log(`✅ [BOT-INIT] Usuário ${CREATOR_TELEGRAM_ID} configurado como criador`);
+        } else if (!creatorUser) {
+          console.log(`ℹ️ [BOT-INIT] Usuário ${CREATOR_TELEGRAM_ID} ainda não existe - será configurado quando usar o bot`);
+        } else {
+          console.log(`✅ [BOT-INIT] Usuário ${CREATOR_TELEGRAM_ID} já é criador`);
+        }
+      } else {
+        console.log('⚠️ [BOT-INIT] Nenhum ID de criador válido configurado (settings ou env)');
+      }
+    } catch (err) {
+      console.log(`ℹ️ [BOT-INIT] Criador será configurado quando usar o bot pela primeira vez ou quando o ID for cadastrado`);
+    }
+  })();
+  
+
+  // ──────────────────────────────────────────────────────────────────────
+  // setChatMenuButton e setMyCommands REMOVIDOS do boot.
+  // Chamá-los a cada webhook desperdiça 2 requisições HTTP por cold start
+  // e pode causar rate limiting no Telegram.
+  //
+  // Execute UMA VEZ quando necessário (ex: após mudança de comandos):
+  //   node scripts/setup-bot-commands.js
+  // ──────────────────────────────────────────────────────────────────────
+
+  // Registrar handler do /start PRIMEIRO (antes de tudo)
+  bot.start(async (ctx) => {
+    try {
+      console.log('🎯 [START] Comando /start recebido de:', ctx.from.id);
+
+      // ── DEEP LINK: /start produto_PRODUCTID (vindo do broadcast) ──────────
+      const payload = ctx.startPayload; // ex: "produto_conteudovip"
+      if (payload && payload.startsWith('produto_')) {
+        const productId = payload.replace('produto_', '');
+        console.log(`🔗 [DEEPLINK] Produto solicitado via deep link: ${productId}`);
+
+        // Verificar bloqueio
+        const { data: existingUser } = await db.supabase
+          .from('users')
+          .select('*')
+          .eq('telegram_id', ctx.from.id)
+          .single()
+          .catch(() => ({ data: null }));
+
+        if (existingUser && existingUser.is_blocked === true) {
+          return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*', { parse_mode: 'Markdown' });
+        }
+
+        // Buscar item dinamicamente (pode ser produto, media pack ou grupo)
+        let targetItem = await db.getProduct(productId, false);
+        let itemType = 'product'; // 'product', 'media_pack', 'group'
+
+        if (!targetItem) {
+          targetItem = await db.getMediaPackById(productId);
+          if (targetItem) {
+            itemType = 'media_pack';
+          }
+        }
+
+        if (!targetItem) {
+          // Se for ID numérico (BigInt do Telegram), pode ser grupo
+          const numericId = parseInt(productId);
+          if (!isNaN(numericId)) {
+            targetItem = await db.getGroupById(numericId);
+            if (targetItem) {
+              itemType = 'group';
+            }
+          }
+        }
+
+        if (!targetItem) {
+          return ctx.reply('❌ Conteúdo ou grupo não encontrado. Use /start para ver o menu.');
+        }
+
+        // Garantir usuário criado
+        const user = await db.getOrCreateUser(ctx.from);
+
+        // Determinar o valor (amount) e chaves corretas
+        let amount;
+        if (itemType === 'media_pack') {
+          if (targetItem.variable_prices && Array.isArray(targetItem.variable_prices) && targetItem.variable_prices.length > 0) {
+            const randomIndex = Math.floor(Math.random() * targetItem.variable_prices.length);
+            amount = parseFloat(targetItem.variable_prices[randomIndex]).toString();
+          } else {
+            amount = targetItem.price.toString();
+          }
+        } else if (itemType === 'group') {
+          amount = targetItem.subscription_price.toString();
+        } else {
+          amount = targetItem.price.toString();
+        }
+
+        // Gerar PIX
+        const resp = await manualPix.createManualCharge({ amount, productId: itemType === 'product' ? productId : undefined, userId: user.id });
+        const charge = resp.charge;
+        const txid = charge.txid;
+
+        // Salvar transação com a tipagem correta
+        db.createTransaction({
+          txid,
+          userId: user.id,
+          telegramId: ctx.chat.id,
+          productId: itemType === 'product' ? productId : null,
+          mediaPackId: itemType === 'media_pack' ? productId : null,
+          groupId: itemType === 'group' ? targetItem.id : null, // Salva o UUID interno
+          amount,
+          pixKey: charge.key,
+          pixPayload: charge.copiaCola
+        }).catch(err => console.error('Erro ao salvar transação deep link:', err));
+
+        const expirationStr = new Date(Date.now() + 30 * 60 * 1000)
+          .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+
+        const itemName = targetItem.group_name || targetItem.name || 'Conteúdo';
+        const formattedType = itemType === 'group' ? 'Assinatura' : itemType === 'media_pack' ? 'Media Pack' : 'Produto';
+
+        // Enviar QR Code
+        await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: `✅ *[${formattedType}] ${itemName}*\n\n💰 Pague R$ ${parseFloat(amount).toFixed(2)} usando PIX\n\n🔑 Chave: \`${charge.key}\`\n\n📋 *Cópia & Cola:*\n\`${charge.copiaCola}\`\n\n⏰ *Expira às:* ${expirationStr}\n⚠️ Prazo: 30 minutos\n\n📸 Após pagar, envie o comprovante aqui.\n\n🆔 TXID: ${txid}`,
+            parse_mode: 'Markdown'
+          }
+        );
+
+        console.log(`✅ [DEEPLINK] PIX gerado via deep link: ${txid} para ${ctx.from.id}`);
+        return;
+      }
+      // ── FIM DEEP LINK ──────────────────────────────────────────────────────
+
+      // 🚫 VERIFICAÇÃO DE BLOQUEIO INDIVIDUAL (PRIORIDADE MÁXIMA)
+      // Primeiro, verificar se o usuário já existe no banco
+      console.log('🔍 [START] Verificando usuário no banco...');
+      const { data: existingUser, error: userError } = await db.supabase
+        .from('users')
+        .select('*')
+        .eq('telegram_id', ctx.from.id)
+        .single();
+      
+      // 🚫 SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE (is_blocked = true), BLOQUEAR ACESSO
+      if (existingUser && existingUser.is_blocked === true) {
+        console.log(`🚫 [START] Usuário ${ctx.from.id} está BLOQUEADO INDIVIDUALMENTE (is_blocked = true)`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.\n\n' +
+          'Estamos trabalhando para expandir nosso atendimento em breve!',
+          { 
+            parse_mode: 'Markdown',
+            reply_markup: { remove_keyboard: true }
+          }
+        );
+      }
+      
+      // 🚫 VERIFICAÇÃO DE BLOQUEIO POR DDD (DISCRETA)
+      
+      // Se usuário não existe E tem telefone no Telegram, verificar DDD
+      if (userError && userError.code === 'PGRST116') {
+        console.log('👤 [START] Usuário novo detectado');
+        // Usuário novo - verificar se compartilhou contato
+        if (!ctx.from.phone_number && !ctx.message?.contact) {
+          console.log('📱 [START] Usuário novo sem telefone - solicitando contato');
+          // Solicitar telefone
+          try {
+            await ctx.telegram.sendMessage(
+              ctx.chat.id,
+            '📱 *Bem-vindo!*\n\n' +
+            'Para acessar nossos produtos, precisamos verificar sua conta.\n\n' +
+            'Por favor, compartilhe seu número de telefone usando o botão abaixo:',
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                keyboard: [[{
+                  text: '📱 Compartilhar Telefone',
+                  request_contact: true
+                }]],
+                resize_keyboard: true,
+                one_time_keyboard: true
+              }
+            }
+          );
+            console.log('📱 [START] Mensagem de solicitação de telefone enviada');
+            return;
+          } catch (err) {
+            // 403 = usuário bloqueou o bot — silenciar, não há nada a fazer
+            if (err.response?.error_code === 403 || err.message?.includes('bot was blocked')) {
+              console.log(`ℹ️ [START] Usuário ${ctx.from.id} bloqueou o bot — ignorando`);
+              return;
+            }
+            console.error('❌ [START] Erro ao enviar mensagem com botão de contato:', err.message);
+            return;
+          }
+        } else {
+          console.log('✅ [START] Usuário novo com telefone ou contato compartilhado');
+        }
+        
+        // Verificar DDD do telefone compartilhado
+        const phoneNumber = ctx.from.phone_number || ctx.message?.contact?.phone_number;
+        if (phoneNumber) {
+          const areaCode = db.extractAreaCode(phoneNumber);
+          console.log(`🔍 [DDD-CHECK] Novo usuário - DDD: ${areaCode}, Telefone: ${phoneNumber}`);
+          
+          if (areaCode) {
+            // Verificar se é admin, criador ou foi liberado manualmente
+            // Primeiro verificar admin/criador
+            const [isAdmin, isCreator] = await Promise.all([
+              db.isUserAdmin(ctx.from.id),
+              db.isUserCreator(ctx.from.id)
+            ]);
+            
+            // Se não for admin/criador, verificar se foi liberado manualmente
+            let isManuallyUnblocked = false;
+            if (!isAdmin && !isCreator) {
+              try {
+                // Tentar buscar usuário existente através da função do database
+                const existingUser = await db.getUserByTelegramId(ctx.from.id);
+                // Se encontrou e não está bloqueado, está liberado manualmente
+                if (existingUser && existingUser.is_blocked === false) {
+                  isManuallyUnblocked = true;
+                }
+              } catch (err) {
+                // Se não encontrou usuário, não está liberado
+                isManuallyUnblocked = false;
+              }
+            }
+            
+            // Se for admin, criador ou liberado manualmente, pular verificação de DDD
+            if (isAdmin || isCreator || isManuallyUnblocked) {
+              const reason = isAdmin ? 'admin' : isCreator ? 'criador' : 'liberado manualmente';
+              console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${reason} - ignorando bloqueio de DDD`);
+            } else {
+              // Apenas verificar bloqueio se não for admin/criador/liberado
+              const isBlocked = await db.isAreaCodeBlocked(areaCode);
+              
+              if (isBlocked) {
+                console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
+                return ctx.reply(
+                  '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+                  'No momento, não conseguimos processar seu acesso.\n\n' +
+                  'Estamos trabalhando para expandir nosso atendimento em breve!',
+                  { 
+                    parse_mode: 'Markdown',
+                    reply_markup: { remove_keyboard: true }
+                  }
+                );
+              }
+            }
+          }
+        }
+      }
+      
+      // Verificar se é o primeiro criador - mostrar painel direto apenas para ele
+      const user = await db.getOrCreateUser(ctx.from);
+      const isCreator = await db.isUserCreator(ctx.from.id);
+      
+      // Apenas o primeiro criador vê o painel direto no /start
+      if (isCreator && ctx.from.id === CREATOR_TELEGRAM_ID) {
+        console.log(`👑 [START] Primeiro criador detectado (${ctx.from.id}) - mostrando painel do criador`);
+        
+        // Buscar estatísticas em tempo real (apenas transações aprovadas para criadores)
+        const stats = await db.getCreatorStats();
+        const pendingResult = await db.getPendingTransactions(10, 0);
+        const pendingCount = pendingResult.total || 0;
+        
+        const message = `👑 *PAINEL DO CRIADOR*
+
+📊 *ESTATÍSTICAS EM TEMPO REAL*
+
+💳 *Transações Aprovadas:* ${stats.totalTransactions}
+⏳ *Pendentes:* ${pendingCount}
+💰 *Vendas:* R$ ${parseFloat(stats.totalSales || 0).toFixed(2)}
+
+📅 *Hoje:*
+💰 Vendas: R$ ${parseFloat(stats.todaySales || 0).toFixed(2)}
+📦 Transações: ${stats.todayTransactions || 0}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+Selecione uma opção abaixo:`;
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('📊 Estatísticas', 'creator_stats')],
+          [Markup.button.callback('👤 Usuários', 'creator_users')],
+          [Markup.button.callback('📢 Broadcast', 'creator_broadcast')],
+          [Markup.button.callback('⏳ Pendentes', 'creator_pending')],
+          [Markup.button.callback('🔄 Atualizar', 'creator_refresh')]
+        ]);
+        
+        return ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...keyboard
+        });
+      }
+      
+      // Se não for criador, mostrar menu normal
+
+      // 🔒 VERIFICAÇÃO: Loja habilitada? (controlado pelo painel admin)
+      const shopEnabledSetting = await db.getSetting('shop_enabled');
+      const shopEnabled = shopEnabledSetting !== 'false'; // default true se não configurado
+      if (!shopEnabled) {
+        console.log(`🔒 [START] Loja FECHADA — usuário ${ctx.from.id} tentou acessar o menu de compras`);
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\n' +
+          'No momento não estamos aceitando novos pedidos.\n\n' +
+          'Tente novamente mais tarde ou entre em contato com o suporte.\n\n' +
+          '💬 Use /suporte para abrir um ticket.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      // Paralelizar queries (OTIMIZAÇÃO #4)
+      console.log('📦 [START] Buscando produtos, grupos e media packs...');
+      const [products, groups, mediaPacks, supportLink] = await Promise.all([
+        db.getAllProducts(),
+        db.getAllGroups(),
+        db.getAllMediaPacks(),
+        db.getSetting('support_link')
+      ]);
+      
+      console.log(`📊 [START] Produtos: ${products.length}, Grupos: ${groups.length}, Media Packs: ${mediaPacks.length}`);
+      
+      if (products.length === 0 && groups.length === 0 && mediaPacks.length === 0) {
+        console.log('⚠️ [START] Nenhum produto/grupo/pack disponível');
+        return ctx.reply('🚧 Nenhum produto ou grupo disponível no momento. Volte mais tarde!');
+      }
+      
+      // Gerar botões dinamicamente (sem logs pesados)
+      const buttons = products.map(product => {
+        const buttonText = `${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+        return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
+      });
+      
+      // Adicionar botões de media packs (fotos/vídeos aleatórios)
+      const activeMediaPacks = mediaPacks.filter(p => p.is_active);
+      for (const pack of activeMediaPacks) {
+        // Não mostrar preço no botão (será aleatório a cada clique)
+        buttons.push([Markup.button.callback(pack.name, `buy_media:${pack.pack_id}`)]);
+      }
+      
+      // Adicionar botões de grupos ativos (um botão por grupo, usando o nome cadastrado)
+      const activeGroups = groups.filter(g => g.is_active);
+      for (const group of activeGroups) {
+        // Usar o nome do grupo cadastrado no admin, ou um padrão se não tiver nome
+        const groupButtonText = group.group_name || `👥 Grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`;
+        buttons.push([Markup.button.callback(groupButtonText, `subscribe:${group.group_id}`)]);
+      }
+      
+      // Botão de suporte fixo (sempre aparece) - callback interno
+      buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
+      
+      const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
+      
+      console.log(`✅ [START] Enviando menu com ${buttons.length} botões`);
+      const result = await ctx.reply(text, Markup.inlineKeyboard(buttons));
+      console.log('✅ [START] Menu enviado com sucesso!');
+      return result;
+    } catch (err) {
+      console.error('❌ [START] Erro no /start:', err.message);
+      console.error('❌ [START] Stack:', err.stack);
+      return ctx.reply('❌ Erro ao carregar menu. Tente novamente.');
+    }
+  });
+
+  // 🆕 REGISTRAR HANDLER DE COMPROVANTES ANTES DO ADMIN (CRÍTICO!)
+  // Isso garante que comprovantes sejam processados antes de qualquer handler do admin
+  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes...');
+  
+  // 🆕 DEBUG: Log TODOS os tipos de mensagem
+  bot.use(async (ctx, next) => {
+    try {
+      // Apenas logar mensagens, não callback_query
+      if (ctx.message && ctx.from && ctx.from.id) {
+        console.log('📨 [BOT-USE] Mensagem recebida:', {
+          message_id: ctx.message.message_id,
+          from: ctx.from.id,
+          text: ctx.message.text?.substring(0, 50) || 'N/A',
+          photo: !!ctx.message.photo,
+          document: !!ctx.message.document,
+          video: !!ctx.message.video,
+          audio: !!ctx.message.audio
+        });
+      }
+      return next();
+    } catch (err) {
+      // Ignorar erros no middleware para não quebrar o fluxo
+      console.error('⚠️ [BOT-USE] Erro no middleware:', err.message);
+      return next();
+    }
+  });
+
+  // Handler para contato compartilhado (verificação de DDD)
+  bot.on('contact', async (ctx) => {
+    try {
+      const contact = ctx.message.contact;
+      
+      // Verificar se é o próprio contato do usuário
+      if (contact.user_id !== ctx.from.id) {
+        return ctx.reply('❌ Por favor, compartilhe SEU próprio número de telefone.');
+      }
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const existingUserCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (existingUserCheck && existingUserCheck.is_blocked === true) {
+        console.log(`🚫 [CONTACT] Usuário ${ctx.from.id} está BLOQUEADO - não aceitar contato`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.\n\n' +
+          'Estamos trabalhando para expandir nosso atendimento em breve!',
+          { 
+            parse_mode: 'Markdown',
+            reply_markup: { remove_keyboard: true }
+          }
+        );
+      }
+      
+      const phoneNumber = contact.phone_number;
+      const areaCode = db.extractAreaCode(phoneNumber);
+      
+      console.log(`📞 [CONTACT] Contato recebido - User: ${ctx.from.id}, Phone: ${phoneNumber}, DDD: ${areaCode}`);
+      
+      if (!areaCode) {
+        return ctx.reply('❌ Não foi possível identificar seu número de telefone. Tente novamente.', {
+          reply_markup: { remove_keyboard: true }
+        });
+      }
+      
+      // Verificar se é admin, criador ou foi liberado manualmente
+      // Primeiro verificar admin/criador
+      const [isAdmin, isCreator] = await Promise.all([
+        db.isUserAdmin(ctx.from.id),
+        db.isUserCreator(ctx.from.id)
+      ]);
+      
+      // Se não for admin/criador, verificar se foi liberado manualmente
+      let isManuallyUnblocked = false;
+      if (!isAdmin && !isCreator) {
+        try {
+          // Tentar buscar usuário existente através da função do database
+          const existingUser = await db.getUserByTelegramId(ctx.from.id);
+          // Se encontrou e não está bloqueado, está liberado manualmente
+          if (existingUser && existingUser.is_blocked === false) {
+            isManuallyUnblocked = true;
+          }
+        } catch (err) {
+          // Se não encontrou usuário, não está liberado
+          isManuallyUnblocked = false;
+        }
+      }
+      
+      // Se for admin, criador ou liberado manualmente, pular verificação de DDD
+      if (isAdmin || isCreator || isManuallyUnblocked) {
+        const reason = isAdmin ? 'admin' : isCreator ? 'criador' : 'liberado manualmente';
+        console.log(`✅ [DDD-BYPASS] Usuário ${ctx.from.id} é ${reason} - ignorando bloqueio de DDD ${areaCode}`);
+      } else {
+        // Verificar se o DDD está bloqueado apenas se não for admin/criador/liberado
+        const isBlocked = await db.isAreaCodeBlocked(areaCode);
+        
+        if (isBlocked) {
+          console.log(`🚫 [DDD-BLOCKED] DDD ${areaCode} bloqueado - Usuário: ${ctx.from.id}`);
+          return ctx.reply(
+            '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+            'No momento, não conseguimos processar seu acesso.\n\n' +
+            'Estamos trabalhando para expandir nosso atendimento em breve!',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: { remove_keyboard: true }
+            }
+          );
+        }
+      }
+      
+      // DDD permitido - criar usuário e salvar telefone
+      const user = await db.getOrCreateUser(ctx.from);
+      await db.updateUserPhone(ctx.from.id, phoneNumber);
+      
+      console.log(`✅ [DDD-ALLOWED] DDD ${areaCode} permitido - Usuário: ${ctx.from.id} criado`);
+      
+      return ctx.reply(
+        '✅ *Verificação Concluída\\!*\n\n' +
+        'Seu acesso foi liberado\\! Use /start para ver nossos produtos\\.',
+        { 
+          parse_mode: 'MarkdownV2',
+          reply_markup: { remove_keyboard: true }
+        }
+      );
+      
+    } catch (err) {
+      console.error('❌ [CONTACT] Erro ao processar contato:', err);
+      return ctx.reply('❌ Erro ao processar seu contato. Tente novamente.');
+    }
+  });
+
+  // 🆕 REGISTRAR HANDLER DE COMPROVANTES ANTES DO ADMIN (CRÍTICO!)
+  // Isso garante que comprovantes sejam processados antes de qualquer handler do admin
+  console.log('🔧 [BOT-INIT] Registrando handler de comprovantes ANTES do admin...');
+
+  // Receber comprovante (foto ou documento)
+  bot.on(['photo', 'document'], async (ctx, next) => {
+    try {
+      // 🆕 PRIORIDADE: Verificar se usuário está em sessão de admin/criador PRIMEIRO
+      global._SESSIONS = global._SESSIONS || {};
+      const session = global._SESSIONS[ctx.from.id];
+      if (session && (
+        session.type === 'create_product' || 
+        session.type === 'edit_product' ||
+        (session.type === 'creator_broadcast_product_coupon' && session.step === 'image')
+      )) {
+        console.log('⏭️ [HANDLER-BOT] Sessão de admin/criador detectada, passando para handler do admin.js');
+        return next(); // ✅ Passar para próximo handler (admin.js)
+      }
+      
+      // 🆕 LOG INICIAL - CRÍTICO PARA DEBUG
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🎯 [HANDLER] COMPROVANTE RECEBIDO!');
+      console.log(`📋 [HANDLER] Tipo: ${ctx.message.photo ? 'PHOTO' : 'DOCUMENT'}`);
+      
+      // 🆕 LOG DETALHADO PARA PDFs
+      if (ctx.message.document) {
+        console.log(`📄 [HANDLER] Documento detectado:`, {
+          file_name: ctx.message.document.file_name,
+          mime_type: ctx.message.document.mime_type,
+          file_size: ctx.message.document.file_size,
+          file_id: ctx.message.document.file_id?.substring(0, 30)
+        });
+      }
+      
+      console.log(`👤 [HANDLER] User: ${ctx.from.id} (@${ctx.from.username || 'N/A'})`);
+      console.log(`📅 [HANDLER] Timestamp: ${new Date().toISOString()}`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      console.log('🔍 [HANDLER] Buscando transação pendente...');
+      const transaction = await db.getLastPendingTransaction(ctx.chat.id);
+      
+      if (!transaction) {
+        console.warn('⚠️ [HANDLER] Nenhuma transação pendente encontrada');
+        // Não há transação pendente, então não processar como comprovante
+        return;
+      }
+      
+      console.log(`✅ [HANDLER] Transação encontrada: ${transaction.txid}`);
+      console.log(`📋 [HANDLER] Detalhes da transação:`, {
+        txid: transaction.txid,
+        product_id: transaction.product_id,
+        media_pack_id: transaction.media_pack_id,
+        group_id: transaction.group_id, // 🆕 Log do group_id
+        amount: transaction.amount
+      });
+
+      // Verificar se a transação está expirada (30 minutos)
+      const createdAt = new Date(transaction.created_at);
+      const now = new Date();
+      const diffMinutes = (now - createdAt) / (1000 * 60);
+      
+      if (diffMinutes > 30) {
+        // Cancelar transação expirada
+        await db.cancelTransaction(transaction.txid);
+        
+        return ctx.reply(`⏰ *Transação expirada!*
+
+❌ Esta transação ultrapassou o prazo de 30 minutos para pagamento.
+
+🔄 *Para comprar novamente:*
+1. Use o comando /start
+2. Selecione o produto desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+🆔 Transação expirada: ${transaction.txid}`, {
+          parse_mode: 'Markdown'
+        });
+      }
+
+      const fileId = ctx.message.photo 
+        ? ctx.message.photo.slice(-1)[0].file_id 
+        : (ctx.message.document?.file_id || null);
+      
+      if (!fileId) {
+        console.error('❌ [HANDLER] FileId não encontrado');
+        return ctx.reply('❌ Erro ao processar comprovante. Envie uma foto ou documento válido.');
+      }
+
+      console.log(`📎 [HANDLER] FileId: ${fileId.substring(0, 30)}...`);
+
+      // Calcular tempo restante
+      const minutesElapsed = Math.floor(diffMinutes);
+      const minutesRemaining = 30 - minutesElapsed;
+
+      console.log(`⏰ [HANDLER] Tempo decorrido: ${minutesElapsed} minutos (${minutesRemaining} minutos restantes)`);
+
+      // 🆕 OTIMIZAÇÃO CRÍTICA: SALVAR NO BANCO PRIMEIRO (NÃO BLOQUEAR)
+      console.log(`💾 [HANDLER] Salvando comprovante no banco IMEDIATAMENTE...`);
+      
+      try {
+        const saveResult = await db.updateTransactionProof(
+          transaction.txid, 
+          fileId, 
+          transaction.amount, 
+          transaction.pix_key
+        );
+        
+        if (saveResult && saveResult.isDuplicate) {
+          console.warn(`⚠️ [HANDLER] COMPROVANTE DUPLICADO DETECTADO!`);
+          console.warn(`⚠️ [HANDLER] TXID anterior: ${saveResult.duplicateTxid}`);
+          
+          // Notificar usuário sobre duplicata
+          await ctx.reply(`⚠️ *COMPROVANTE DUPLICADO*
+
+❌ Este comprovante já foi usado anteriormente.
+
+🆔 TXID anterior: \`${saveResult.duplicateTxid}\`
+📅 Data: ${new Date(saveResult.duplicateDate).toLocaleString('pt-BR')}
+
+Por favor, envie um comprovante diferente ou entre em contato com o suporte.
+
+💬 Use /suporte para abrir um ticket.`, {
+            parse_mode: 'Markdown'
+          });
+          
+          // Notificar admins
+          const admins = await db.getAllAdmins();
+          for (const admin of admins) {
+            try {
+              await ctx.telegram.sendMessage(admin.telegram_id, 
+                `⚠️ *COMPROVANTE DUPLICADO DETECTADO*
+
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 ID: ${ctx.from.id}
+🆔 TXID atual: ${transaction.txid}
+🆔 TXID anterior: ${saveResult.duplicateTxid}
+📅 Data anterior: ${new Date(saveResult.duplicateDate).toLocaleString('pt-BR')}
+
+⚠️ O mesmo comprovante foi usado em duas transações diferentes.`, {
+                parse_mode: 'Markdown'
+              });
+            } catch (err) {
+              console.error('Erro ao notificar admin:', err);
+            }
+          }
+          
+          return; // Parar processamento
+        }
+        
+        console.log(`✅ [HANDLER] Comprovante salvo no banco: ${saveResult?.success ? 'Sucesso' : 'Falha'}`);
+      } catch (saveErr) {
+        console.error(`❌ [HANDLER] Erro ao salvar comprovante:`, saveErr.message);
+        // Continuar mesmo com erro - notificar admin é mais importante
+      }
+      
+      // 🆕 NOTIFICAÇÃO 1: COMPROVANTE RECEBIDO
+      console.log(`💬 [HANDLER] Enviando notificação de comprovante recebido...`);
+      try {
+        await ctx.reply('✅ *Comprovante recebido!*\n\n⏳ *Analisando pagamento...*\n\n🔍 Verificando comprovante automaticamente.\n\n🆔 TXID: ' + transaction.txid, { 
+          parse_mode: 'Markdown' 
+        });
+        console.log(`✅ [HANDLER] Notificação 1 enviada ao usuário com sucesso`);
+      } catch (err) {
+        console.error('❌ [HANDLER] Erro ao enviar notificação:', err.message);
+        // Tentar novamente
+        try {
+          await ctx.telegram.sendMessage(ctx.chat.id, '✅ *Comprovante recebido!*\n\n⏳ *Analisando pagamento...*\n\n🔍 Verificando comprovante automaticamente.\n\n🆔 TXID: ' + transaction.txid, { 
+            parse_mode: 'Markdown' 
+          });
+          console.log(`✅ [HANDLER] Notificação enviada na segunda tentativa`);
+        } catch (retryErr) {
+          console.error('❌ [HANDLER] Erro na segunda tentativa:', retryErr.message);
+        }
+      }
+      
+      // 🆕 DETECÇÃO MELHORADA DE TIPO DE ARQUIVO (PDF vs Imagem)
+      let fileUrl = null;
+      let fileType = 'image'; // 'image' ou 'pdf'
+      let fileExtension = '';
+      // 🔑 CRÍTICO: se veio como Document, SEMPRE usar sendDocument (mesmo que seja JPG/PNG)
+      // Telegram não aceita file_id de Document no sendPhoto — são tipos distintos na API
+      let isDocumentSource = !!ctx.message.document;
+      
+      try {
+        const file = await ctx.telegram.getFile(fileId);
+        fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        
+        // Detectar tipo de arquivo (PDF ou imagem) - múltiplos critérios
+        if (ctx.message.document) {
+          const mimeType = (ctx.message.document.mime_type || '').toLowerCase();
+          const fileName = (ctx.message.document.file_name || '').toLowerCase();
+          const filePath = (file.file_path || '').toLowerCase();
+          
+          // Extrair extensão do arquivo
+          if (fileName) {
+            const parts = fileName.split('.');
+            fileExtension = parts.length > 1 ? parts[parts.length - 1] : '';
+          } else if (filePath) {
+            const parts = filePath.split('.');
+            fileExtension = parts.length > 1 ? parts[parts.length - 1] : '';
+          }
+          
+          // 🔍 VERIFICAÇÃO ROBUSTA: Verificar se é PDF por múltiplos critérios
+          const isPDF = (
+            mimeType === 'application/pdf' ||
+            mimeType.includes('pdf') ||
+            fileName.endsWith('.pdf') ||
+            filePath.includes('.pdf') ||
+            fileExtension === 'pdf'
+          );
+          
+          if (isPDF) {
+            fileType = 'pdf';
+            console.log('📄 [HANDLER] PDF DETECTADO:', { 
+              mimeType, 
+              fileName, 
+              filePath, 
+              fileExtension,
+              fileSize: ctx.message.document.file_size 
+            });
+          } else {
+            // Se não é PDF, verificar se é imagem
+            const isImage = (
+              mimeType.startsWith('image/') ||
+              ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension)
+            );
+            
+            if (isImage) {
+              fileType = 'image';
+              console.log('🖼️ [HANDLER] IMAGEM DETECTADA (documento):', { 
+                mimeType, 
+                fileName, 
+                fileExtension 
+              });
+            } else {
+              console.warn('⚠️ [HANDLER] TIPO DE ARQUIVO DESCONHECIDO:', { 
+                mimeType, 
+                fileName, 
+                fileExtension 
+              });
+              // Assumir imagem como fallback
+              fileType = 'image';
+            }
+          }
+        } else if (ctx.message.photo) {
+          // Se for foto (não documento), sempre é imagem
+          fileType = 'image';
+          console.log('📷 [HANDLER] FOTO DETECTADA (photo)');
+        }
+        
+        console.log(`✅ [HANDLER] Tipo de arquivo determinado: ${fileType.toUpperCase()}`);
+      } catch (err) {
+        console.error('❌ [HANDLER] Erro ao obter URL do arquivo:', err.message);
+        console.error('Stack:', err.stack);
+      }
+      
+      // 🆕 NOTIFICAR ADMIN IMEDIATAMENTE (ANTES DE QUALQUER ANÁLISE)
+      // Isso garante que o admin SEMPRE receba o comprovante, mesmo se a análise falhar ou der timeout
+      console.log(`📤 [HANDLER] NOTIFICANDO ADMIN IMEDIATAMENTE (sem esperar análise)...`);
+      console.log(`📤 [HANDLER] FileType detectado: ${fileType}, FileId: ${fileId?.substring(0, 30)}...`);
+      
+      // 🆕 FUNÇÃO PARA NOTIFICAR ADMINS COM COMPROVANTE (suporta imagens e PDFs)
+      // IMPORTANTE: Esta função DEVE ser chamada em TODOS os casos (aprovado, rejeitado, pendente, erro)
+      const notifyAdmins = async (status, analysisData = null) => {
+        try {
+          console.log(`📤 [NOTIFY] Iniciando notificação - Status: ${status}, FileType: ${fileType}`);
+          console.log(`📤 [NOTIFY] FileId: ${fileId?.substring(0, 30)}...`);
+          console.log(`📤 [NOTIFY] TXID: ${transaction.txid}`);
+          
+          const admins = await db.getAllAdmins();
+          console.log(`👥 [NOTIFY] Admins encontrados: ${admins.length}`);
+          
+          if (admins.length === 0) {
+            console.warn('⚠️ [NOTIFY] Nenhum admin encontrado para notificar');
+            return;
+          }
+          
+          // 🆕 Verificar se é grupo, media pack ou produto normal
+          let productName = 'Produto não encontrado';
+          try {
+            // 🆕 PRIMEIRO: Verificar se é grupo (prioridade)
+            if (transaction.group_id) {
+              console.log(`👥 [NOTIFY] Transação é de grupo (group_id: ${transaction.group_id})`);
+              try {
+                const { data: groupData, error: groupError } = await db.supabase
+                  .from('groups')
+                  .select('group_name, group_id')
+                  .eq('id', transaction.group_id)
+                  .single();
+                
+                if (!groupError && groupData) {
+                  productName = groupData.group_name || `Grupo ${groupData.group_id}` || 'Grupo';
+                  console.log(`✅ [NOTIFY] Grupo encontrado: ${productName}`);
+                } else {
+                  // Fallback: tentar buscar pelo product_id se começar com "group_"
+                  if (transaction.product_id && transaction.product_id.startsWith('group_')) {
+                    const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+                    const group = await db.getGroupById(groupTelegramId);
+                    productName = group ? (group.group_name || `Grupo ${group.group_id}`) : transaction.product_id || 'Grupo';
+                  } else {
+                    productName = 'Grupo (não encontrado)';
+                  }
+                }
+              } catch (groupErr) {
+                console.error('Erro ao buscar grupo:', groupErr);
+                productName = 'Grupo (erro ao buscar)';
+              }
+            } else if (transaction.media_pack_id) {
+              // É um media pack
+              const pack = await db.getMediaPackById(transaction.media_pack_id);
+              productName = pack ? pack.name : transaction.media_pack_id || 'Media Pack';
+            } else if (transaction.product_id) {
+              // É um produto normal - verificar se não é grupo antigo
+              if (transaction.product_id.startsWith('group_')) {
+                // Formato antigo de grupo - tentar buscar
+                const groupTelegramId = parseInt(transaction.product_id.replace('group_', ''));
+                const group = await db.getGroupById(groupTelegramId);
+                productName = group ? (group.group_name || `Grupo ${group.group_id}`) : transaction.product_id || 'Grupo';
+              } else {
+                // Produto normal - buscar incluindo inativos (transação antiga pode ter produto desativado)
+          const product = await db.getProduct(transaction.product_id, true);
+              productName = product ? product.name : transaction.product_id || 'Produto';
+              }
+            }
+          } catch (err) {
+            console.error('Erro ao buscar produto/pack/grupo:', err);
+            // Usar fallback baseado no que temos
+            productName = transaction.group_id 
+              ? 'Grupo' 
+              : (transaction.media_pack_id || transaction.product_id || 'Produto não encontrado');
+          }
+          
+          // Garantir que productName nunca seja null ou undefined
+          if (!productName || productName === 'null' || productName === 'undefined') {
+            productName = transaction.group_id 
+              ? 'Grupo' 
+              : (transaction.media_pack_id || transaction.product_id || 'Produto não encontrado');
+          }
+          
+          const statusEmoji = status === 'approved' ? '✅' : status === 'rejected' ? '❌' : '⚠️';
+          const statusText = status === 'approved' ? 'APROVADO AUTOMATICAMENTE' : status === 'rejected' ? 'REJEITADO' : 'PENDENTE DE VALIDAÇÃO';
+          
+          // 🆕 INCLUIR TIPO DE ARQUIVO CLARAMENTE NA MENSAGEM
+          const fileTypeEmoji = fileType === 'pdf' ? '📄' : '🖼️';
+          const fileTypeText = fileType === 'pdf' ? 'PDF' : 'Imagem';
+          
+          // 🆕 Detectar se é grupo para mensagem especial
+          const isGroupTransaction = transaction.group_id || (transaction.product_id && transaction.product_id.startsWith('group_'));
+          const productLabel = isGroupTransaction ? '👥 Grupo' : '📦 Produto';
+          
+          const caption = `${statusEmoji} *COMPROVANTE RECEBIDO - ${statusText}*
+
+${analysisData ? `🤖 Análise automática: ${analysisData.confidence}% de confiança\n` : ''}💰 Valor: R$ ${transaction.amount}
+👤 Usuário: ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 ID Usuário: ${ctx.from.id}
+${productLabel}: ${productName}
+${fileTypeEmoji} Tipo: *${fileTypeText}*
+📅 Enviado: ${new Date().toLocaleString('pt-BR')}
+
+🆔 TXID: ${transaction.txid}`;
+          
+          // 🆕 BOTÕES PARA TODOS OS STATUS (pending e rejected) - admin pode revisar
+          const replyMarkup = (status === 'pending' || status === 'rejected') ? {
+            inline_keyboard: [
+              [
+                { text: '✅ Aprovar', callback_data: `approve_${transaction.txid}` },
+                { text: '❌ Rejeitar', callback_data: `reject_${transaction.txid}` }
+              ],
+              [
+                { text: '📋 Ver detalhes', callback_data: `details_${transaction.txid}` }
+              ]
+            ]
+          } : undefined;
+          
+          console.log(`📋 [NOTIFY] Preparando envio: Tipo=${fileTypeText}, Botões=${replyMarkup ? 'Sim' : 'Não'}`);
+          console.log(`📋 [NOTIFY] Caption (primeiros 100 chars): ${caption.substring(0, 100)}...`);
+          
+          let successCount = 0;
+          let failureCount = 0;
+          
+          for (const admin of admins) {
+            try {
+              console.log(`📨 [NOTIFY] Enviando para admin ${admin.telegram_id} (${admin.first_name || admin.username || 'N/A'})...`);
+              
+              // ✅ CORREÇÃO: se o comprovante veio como Document (mesmo sendo JPG/PNG),
+              // DEVE usar sendDocument. sendPhoto com file_id de Document causa erro 400.
+              const useDocument = fileType === 'pdf' || isDocumentSource;
+
+              if (useDocument) {
+                console.log(`📄 [NOTIFY] Usando sendDocument para admin ${admin.telegram_id} (pdf=${fileType==='pdf'}, doc=${isDocumentSource})`);
+                await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                  caption: caption,
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                console.log(`✅ [NOTIFY] Documento enviado com sucesso para admin ${admin.telegram_id}`);
+              } else {
+                console.log(`🖼️ [NOTIFY] Usando sendPhoto (foto comprimida) para admin ${admin.telegram_id}`);
+                await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                  caption: caption,
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                console.log(`✅ [NOTIFY] Foto enviada com sucesso para admin ${admin.telegram_id}`);
+              }
+              
+              successCount++;
+            } catch (err) {
+              failureCount++;
+              console.error(`❌ [NOTIFY] Erro ao notificar admin ${admin.telegram_id}:`, err.message);
+              console.error(`❌ [NOTIFY] Erro completo:`, err);
+              
+              // 🆕 MÉTODO ALTERNATIVO: Enviar mensagem separada do arquivo
+              try {
+                console.log(`🔄 [NOTIFY] Tentando método alternativo (mensagem + arquivo séparados) para admin ${admin.telegram_id}...`);
+                
+                // Enviar mensagem com botões primeiro
+                await ctx.telegram.sendMessage(admin.telegram_id, caption, {
+                  parse_mode: 'Markdown',
+                  reply_markup: replyMarkup
+                });
+                
+                // Depois enviar arquivo separadamente (mesma lógica: document source = sendDocument)
+                const useDocFallback = fileType === 'pdf' || isDocumentSource;
+                if (useDocFallback) {
+                  await ctx.telegram.sendDocument(admin.telegram_id, fileId, {
+                    caption: `📎 Comprovante - TXID: ${transaction.txid}`
+                  });
+                } else {
+                  await ctx.telegram.sendPhoto(admin.telegram_id, fileId, {
+                    caption: `🖼️ Comprovante em imagem - TXID: ${transaction.txid}`
+                  });
+                }
+                
+                console.log(`✅ [NOTIFY] Método alternativo funcionou para admin ${admin.telegram_id}`);
+                successCount++;
+                failureCount--;
+              } catch (fallbackErr) {
+                console.error(`❌ [NOTIFY] Erro no fallback para admin ${admin.telegram_id}:`, fallbackErr.message);
+                console.error(`❌ [NOTIFY] Stack:`, fallbackErr.stack);
+              }
+            }
+          }
+          
+          console.log(`✅ [NOTIFY] Notificação concluída: ${successCount} sucesso(s), ${failureCount} falha(s) de ${admins.length} admin(s)`);
+        } catch (err) {
+          console.error('❌ [NOTIFY] Erro crítico ao buscar admins:', err.message);
+          console.error('Stack:', err.stack);
+        }
+      };
+      
+      // 🆕 CHAMAR NOTIFICAÇÃO IMEDIATAMENTE (SEM ESPERAR ANÁLISE)
+      console.log(`📤 [HANDLER] Chamando notifyAdmins AGORA...`);
+      
+      try {
+        await notifyAdmins('pending', null);
+        console.log(`✅ [HANDLER] Admin notificado com sucesso!`);
+      } catch (notifyErr) {
+        console.error(`❌ [HANDLER] Erro ao notificar admin:`, notifyErr.message);
+        console.error('Stack:', notifyErr.stack);
+        
+        // 🆕 MÉTODO ALTERNATIVO se falhar
+        try {
+          console.log(`🔄 [HANDLER] Tentando método alternativo...`);
+          // Aguardar 1 segundo e tentar novamente
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await notifyAdmins('pending', null);
+          console.log(`✅ [HANDLER] Admin notificado na segunda tentativa!`);
+        } catch (retryErr) {
+          console.error(`❌ [HANDLER] Erro na segunda tentativa:`, retryErr.message);
+        }
+      }
+      
+      // 🆕 ANÁLISE AUTOMÁTICA OCR DELEGADA AO CRON JOB (/api/jobs/process-proofs)
+      console.log(`⏳ [HANDLER] Comprovante agendado para análise OCR via cron job`);
+      console.log('✅ [HANDLER] Processo de recebimento concluído com sucesso!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+    } catch (err) {
+      console.error('❌ [HANDLER] Erro crítico ao receber comprovante:', err.message);
+      console.error('Stack:', err.stack);
+      
+      // 🆕 NOTIFICAÇÃO SIMPLES EM CASO DE ERRO
+      try {
+        await ctx.reply(`❌ *Erro ao processar comprovante*
+
+Ocorreu um erro inesperado, mas seu comprovante foi salvo.
+Um administrador irá validar manualmente.
+
+🔄 Tente novamente ou aguarde a validação.`, {
+          parse_mode: 'Markdown'
+        });
+      } catch (replyErr) {
+        console.error('❌ [HANDLER] Erro ao enviar mensagem de erro:', replyErr.message);
+      }
+    }
+  });
+
+  console.log('✅ [BOT-INIT] Handler de comprovantes registrado');
+  
+  // ===== REGISTRAR COMANDOS DE USUÁRIO ANTES DO ADMIN =====
+  // Isso garante que comandos como /meuspedidos e /renovar sejam processados antes do bot.on('text') do admin
+  console.log('✅ [BOT-INIT] Registrando comandos de usuário...');
+  
+  // ===== HISTÓRICO DE COMPRAS =====
+  console.log('✅ [BOT-INIT] Registrando comando /historico...');
+  bot.command('historico', async (ctx) => {
+    try {
+      console.log('📋 [HISTORICO] Comando /historico recebido de:', ctx.from.id);
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 50);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.reply(`📦 *Nenhuma compra encontrada*
+
+Você ainda não realizou nenhuma compra.
+
+🛍️ *Use:* /start para ver nossos produtos!`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      // Agrupar por status
+      const delivered = transactions.filter(t => t.status === 'delivered');
+      const pending = transactions.filter(t => ['pending', 'proof_sent'].includes(t.status));
+      const expired = transactions.filter(t => ['expired', 'cancelled', 'rejected'].includes(t.status));
+      
+      let message = `📋 *HISTÓRICO DE COMPRAS*
+
+✅ *Entregues:* ${delivered.length}
+⏳ *Pendentes:* ${pending.length}
+❌ *Canceladas:* ${expired.length}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+`;
+      
+      // Mostrar entregues primeiro
+      if (delivered.length > 0) {
+        message += `✅ *PRODUTOS ENTREGUES*\n\n`;
+        for (const tx of delivered.slice(0, 10)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const date = new Date(tx.delivered_at || tx.created_at).toLocaleDateString('pt-BR');
+          message += `✅ *${productName}*\n`;
+          message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)} | 📅 ${date}\n`;
+          message += `🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (delivered.length > 10) {
+          message += `_Mostrando 10 de ${delivered.length} entregues_\n\n`;
+        }
+      }
+      
+      // Mostrar pendentes
+      if (pending.length > 0) {
+        message += `⏳ *PAGAMENTOS PENDENTES*\n\n`;
+        for (const tx of pending.slice(0, 5)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const statusText = tx.status === 'proof_sent' ? '📸 Em análise' : '⏳ Aguardando pagamento';
+          message += `${statusText} *${productName}*\n`;
+          message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
+          message += `🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (pending.length > 5) {
+          message += `_Mostrando 5 de ${pending.length} pendentes_\n\n`;
+        }
+      }
+      
+      const keyboard = Markup.inlineKeyboard([
+        ...delivered.slice(0, 5).map(tx => [
+          Markup.button.callback(
+            `📦 Ver ${tx.product_name || 'Produto'} - ${tx.txid.substring(0, 8)}...`,
+            `view_transaction_${tx.txid}`
+          )
+        ]),
+        [
+          Markup.button.callback('🔄 Atualizar', 'refresh_history'),
+          Markup.button.callback('🏠 Início', 'back_to_start')
+        ]
+      ]);
+      
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [HISTORICO] Erro:', err);
+      return ctx.reply('❌ Erro ao buscar histórico. Tente novamente.');
+    }
+  });
+  
+  // ===== MEUS PEDIDOS =====
+  console.log('✅ [BOT-INIT] Registrando comando /meuspedidos...');
+  bot.command('meuspedidos', async (ctx) => {
+    try {
+      console.log('📋 [MEUS-PEDIDOS] Comando /meuspedidos recebido de:', ctx.from.id);
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [MEUS-PEDIDOS] Usuário ${ctx.from.id} está BLOQUEADO`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      console.log('📋 [MEUS-PEDIDOS] Transações encontradas:', transactions?.length || 0);
+      
+      if (!transactions || transactions.length === 0) {
+        console.log('📦 [MEUS-PEDIDOS] Nenhum pedido encontrado - enviando mensagem de incentivo');
+        const response = await ctx.reply(`📦 *Nenhum pedido encontrado*
+
+Você ainda não realizou nenhuma compra.
+
+🛍️ *Que tal começar agora?*
+
+*Use o comando:* /start
+
+Para ver nossos produtos disponíveis e fazer sua primeira compra!
+
+✨ *Ofertas especiais esperando por você!*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }]
+            ]
+          }
+        });
+        console.log('✅ [MEUS-PEDIDOS] Mensagem enviada com sucesso');
+        return response;
+      }
+      
+      // Agrupar transações por status
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada'
+      };
+      
+      let message = `📋 *MEUS PEDIDOS*\n\n`;
+      
+      // Mostrar últimas 10 transações
+      const recentTransactions = transactions.slice(0, 10);
+      
+      for (const tx of recentTransactions) {
+        const emoji = statusEmoji[tx.status] || '📦';
+        const status = statusText[tx.status] || tx.status;
+        const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+        const date = new Date(tx.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        message += `${emoji} *${productName}*\n`;
+        message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
+        message += `📊 ${status}\n`;
+        message += `📅 ${date}\n`;
+        message += `🆔 \`${tx.txid}\`\n\n`;
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
+      }
+      
+      console.log('📋 [MEUS-PEDIDOS] Enviando lista de pedidos');
+      const response = await ctx.reply(message, { parse_mode: 'Markdown' });
+      console.log('✅ [MEUS-PEDIDOS] Lista de pedidos enviada com sucesso');
+      return response;
+    } catch (err) {
+      console.error('❌ [MEUS-PEDIDOS] Erro no comando meuspedidos:', err);
+      console.error('❌ [MEUS-PEDIDOS] Stack:', err.stack);
+      return ctx.reply('❌ Erro ao buscar seus pedidos. Tente novamente.');
+    }
+  });
+
+  // ===== RENOVAR ASSINATURA =====
+  console.log('✅ [BOT-INIT] Registrando comando /renovar...');
+  bot.command('renovar', async (ctx) => {
+    try {
+      console.log('🔄 [RENOVAR] Comando /renovar recebido de:', ctx.from.id);
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [RENOVAR] Usuário ${ctx.from.id} está BLOQUEADO`);
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const groups = await db.getAllGroups();
+      console.log('🔄 [RENOVAR] Grupos encontrados:', groups?.length || 0);
+      const activeGroups = groups.filter(g => g.is_active);
+      
+      if (activeGroups.length === 0) {
+        console.log('🔥 [RENOVAR] Nenhum grupo ativo - enviando mensagem de promoção');
+        const response = await ctx.reply(`🔥 *PROMOÇÃO ESPECIAL!*
+
+📦 Nenhum grupo disponível para renovação no momento.
+
+✨ *Mas temos ofertas incríveis esperando por você!*
+
+🛍️ *Use o comando:* /start
+
+Para ver nossos produtos em promoção e fazer sua compra agora!
+
+💎 *Ofertas limitadas - Não perca!*`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🛍️ Ver Produtos em Promoção', callback_data: 'back_to_start' }]
+            ]
+          }
+        });
+        console.log('✅ [RENOVAR] Mensagem de promoção enviada com sucesso');
+        return response;
+      }
+      
+      // Verificar se tem assinatura ativa
+      let hasActiveSubscription = false;
+      for (const group of activeGroups) {
+        const member = await db.getGroupMember(ctx.from.id, group.id);
+        if (member) {
+          const expiresAt = new Date(member.expires_at);
+          const now = new Date();
+          if (expiresAt > now) {
+            hasActiveSubscription = true;
+            const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+            
+            // Mensagem única com todas as informações + link oculto (gera card automático)
+            const zwsp = '\u200B'; // Zero-width space
+            const zwnj = '\u200C'; // Zero-width non-joiner
+            await ctx.reply(`✅ *Você já tem assinatura ativa!*
+
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+⏰ Faltam: ${daysLeft} dias
+
+${zwsp}${zwnj}${zwsp}
+${group.group_link}
+${zwsp}${zwnj}${zwsp}`, {
+              parse_mode: 'Markdown',
+              disable_web_page_preview: false
+            });
+            return;
+          }
+        }
+      }
+      
+      // Se não tem assinatura ativa, mostrar opção para renovar
+      const group = activeGroups[0];
+      return ctx.reply(`🔄 *RENOVAR ASSINATURA*
+
+👥 Grupo: ${group.group_name}
+💰 Preço: R$ ${group.subscription_price.toFixed(2)}/mês
+📅 Duração: ${group.subscription_days} dias
+
+Clique no botão abaixo para renovar:`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `👥 Renovar Assinatura (R$${group.subscription_price.toFixed(2)})`, callback_data: `subscribe:${group.group_id}` }]
+          ]
+        }
+      });
+    } catch (err) {
+      console.error('Erro no comando renovar:', err);
+      return ctx.reply('❌ Erro ao processar renovação.');
+    }
+  });
+  
+  console.log('✅ [BOT-INIT] Comandos de usuário registrados');
+  
+  // Registrar comandos admin DEPOIS do handler de comprovantes E dos comandos de usuário
+  admin.registerAdminCommands(bot);
+  console.log('✅ [BOT-INIT] Comandos do admin registrados');
+
+  bot.action(/buy:(.+)/, async (ctx) => {
+    try {
+      const productId = ctx.match[1];
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [BUY] Usuário ${ctx.from.id} está BLOQUEADO - não pode comprar`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledBuy = await db.getSetting('shop_enabled');
+      if (shopEnabledBuy === 'false') {
+        console.log(`🔒 [BUY] Loja FECHADA — usuário ${ctx.from.id} tentou comprar ${productId}`);
+        await ctx.answerCbQuery('🔒 Loja fechada', { show_alert: true });
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      // OTIMIZAÇÃO #1: Responder imediatamente ao clique (feedback visual instantâneo)
+      await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
+      
+      // OTIMIZAÇÃO #4: Paralelizar busca de produto e usuário
+      const [product, user] = await Promise.all([
+        db.getProduct(productId),
+        db.getOrCreateUser(ctx.from)
+      ]);
+      
+      if (!product) {
+        return ctx.reply('❌ Produto não encontrado.');
+      }
+      
+      // Verificar se há promoção ativa (broadcast com cupom) para este produto
+      let finalPrice = product.price;
+      let appliedCoupon = null;
+      
+      try {
+        // PRIORIDADE 1: Verificar se há cupom ativo de broadcast para este produto
+        // Aplicar desconto apenas se o usuário recebeu o broadcast
+        const { data: autoCoupon, error: autoCouponError } = await db.supabase
+          .from('coupons')
+          .select('*')
+          .eq('product_id', productId)
+          .eq('is_active', true)
+          .eq('is_broadcast_coupon', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (!autoCouponError && autoCoupon) {
+          // Encontrou cupom de broadcast! Extrair campaign_id do código do cupom
+          // Formato: BROADCAST_{campaign_id}_{product_id}
+          const codeParts = autoCoupon.code.split('_');
+          if (codeParts.length >= 2 && codeParts[0] === 'BROADCAST') {
+            const campaignId = codeParts[1];
+            
+            // Verificar se o usuário recebeu essa campanha específica
+            const { data: recipient, error: recipientError } = await db.supabase
+              .from('broadcast_recipients')
+              .select('broadcast_campaign_id')
+              .eq('telegram_id', ctx.from.id)
+              .eq('broadcast_campaign_id', campaignId)
+              .limit(1)
+              .single();
+            
+            if (!recipientError && recipient) {
+              // Usuário recebeu o broadcast! Aplicar desconto
+              finalPrice = product.price * (1 - autoCoupon.discount_percentage / 100);
+              appliedCoupon = autoCoupon;
+              
+              console.log(`🎁 [BUY] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast ${campaignId})`);
+            } else {
+              console.log(`ℹ️ [BUY] Usuário ${ctx.from.id} não recebeu o broadcast ${campaignId} - sem desconto`);
+            }
+          }
+        }
+        
+      } catch (err) {
+        console.error('Erro ao verificar cupons:', err);
+        // Continuar sem desconto em caso de erro
+      }
+      
+      const amount = finalPrice.toString();
+
+      // Gerar cobrança PIX e salvar transação em paralelo
+      const resp = await manualPix.createManualCharge({ amount, productId });
+      const charge = resp.charge;
+      const txid = charge.txid;
+      
+      // Salvar no banco (não precisa aguardar para enviar QR Code)
+      db.createTransaction({
+        txid,
+        userId: user.id,
+        telegramId: ctx.chat.id,
+        productId,
+        amount,
+        pixKey: charge.key,
+        pixPayload: charge.copiaCola
+      }).catch(err => console.error('Erro ao salvar transação:', err));
+
+      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
+      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
+      
+      // 🆕 Salvar valores antes do setTimeout (ctx pode não estar disponível após 15 min)
+      const chatId = ctx.chat.id;
+      const reminderAmount = amount;
+      const reminderKey = charge.key;
+      const reminderCopiaCola = charge.copiaCola;
+      
+      // Agendar lembretes de pagamento
+      // Lembrete aos 15 minutos (15 minutos restantes)
+      console.log(`⏰ [LEMBRETE] Agendando lembrete de 15min para TXID: ${txid}, Chat: ${chatId}`);
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [LEMBRETE] Executando lembrete de 15min para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          // Verificar se ainda está pendente e não paga
+          if (trans && trans.status === 'pending') {
+            console.log(`✅ [LEMBRETE] Enviando lembrete de 15min para chat ${chatId}, TXID: ${txid}`);
+            await bot.telegram.sendMessage(chatId, `⏰ *LEMBRETE DE PAGAMENTO*
+
+⚠️ *Faltam 15 minutos* para expirar!
+
+💰 Valor: R$ ${reminderAmount}
+🔑 Chave: ${reminderKey}
+
+📋 Cópia & Cola:
+\`${reminderCopiaCola}\`
+
+⏰ *Expira às:* ${expirationStr}
+
+📸 Após pagar, envie o comprovante.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+            console.log(`✅ [LEMBRETE] Lembrete enviado com sucesso para chat ${chatId}`);
+          } else {
+            console.log(`⏭️ [LEMBRETE] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - lembrete não enviado`);
+          }
+        } catch (err) {
+          // Tratar especificamente quando o bot foi bloqueado pelo usuário
+          if (err.response && err.response.error_code === 403) {
+            console.log(`ℹ️ [LEMBRETE] Bot bloqueado pelo usuário ${chatId} - lembrete não enviado`);
+          } else {
+            console.error(`❌ [LEMBRETE] Erro no lembrete 15 min para TXID ${txid}:`, err.message);
+          }
+        }
+      }, 15 * 60 * 1000); // 15 minutos
+      
+      // Aviso de expiração e cancelamento automático aos 30 minutos
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [EXPIRAÇÃO] Verificando expiração para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          // Se ainda está pendente, cancelar
+          if (trans && trans.status === 'pending') {
+            console.log(`❌ [EXPIRAÇÃO] Cancelando transação ${txid} por expiração de 30min`);
+            await db.cancelTransaction(txid);
+            
+            try {
+              await bot.telegram.sendMessage(chatId, `⏰ *TRANSAÇÃO EXPIRADA*
+
+❌ O prazo de 30 minutos foi atingido.
+Esta transação foi cancelada automaticamente.
+
+🔄 *Para comprar novamente:*
+1. Use o comando /start
+2. Selecione o produto desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+💰 Valor: R$ ${reminderAmount}
+🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+              console.log(`✅ [EXPIRAÇÃO] Mensagem de expiração enviada para chat ${chatId}`);
+            } catch (sendErr) {
+              // Tratar especificamente quando o bot foi bloqueado pelo usuário
+              if (sendErr.response && sendErr.response.error_code === 403) {
+                console.log(`ℹ️ [EXPIRAÇÃO] Bot bloqueado pelo usuário ${chatId} - mensagem de expiração não enviada`);
+              } else {
+                console.error(`❌ [EXPIRAÇÃO] Erro ao enviar mensagem de expiração para TXID ${txid}:`, sendErr.message);
+              }
+            }
+          } else {
+            console.log(`⏭️ [EXPIRAÇÃO] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - cancelamento não necessário`);
+          }
+        } catch (err) {
+          console.error(`❌ [EXPIRAÇÃO] Erro no cancelamento automático para TXID ${txid}:`, err.message);
+        }
+      }, 30 * 60 * 1000); // 30 minutos
+      
+      // Montar mensagem com informação de desconto se aplicado
+      let paymentMessage = '';
+      
+      if (appliedCoupon) {
+        const originalPrice = product.price;
+        const discount = appliedCoupon.discount_percentage;
+        paymentMessage = `🎁 *PROMOÇÃO ATIVA!*
+
+📦 Produto: ${product.name}
+💵 Preço original: R$ ${originalPrice.toFixed(2)}
+🎉 Desconto: ${discount}% OFF
+💰 *Você paga: R$ ${finalPrice.toFixed(2)}*
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 Pague R$ ${formatAmount(amount)} usando PIX
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\``;
+      } else {
+        paymentMessage = `💰 Pague R$ ${formatAmount(amount)} usando PIX
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\``;
+      }
+
+      paymentMessage += `
+
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+
+📸 Após pagar, envie o comprovante (foto) aqui.
+
+🆔 TXID: ${txid}`;
+
+      // Enviar QR Code imediatamente
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: paymentMessage,
+            parse_mode: 'Markdown'
+          }
+        );
+      } else {
+        return await ctx.reply(paymentMessage, { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Erro na compra:', err.message);
+      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
+    }
+  });
+  
+  // ===== MEDIA PACK (Packs de Agora) =====
+  bot.action(/buy_media:(.+)/, async (ctx) => {
+    try {
+      const packId = ctx.match[1];
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [BUY-MEDIA] Usuário ${ctx.from.id} está BLOQUEADO - não pode comprar`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledMedia = await db.getSetting('shop_enabled');
+      if (shopEnabledMedia === 'false') {
+        console.log(`🔒 [BUY-MEDIA] Loja FECHADA — usuário ${ctx.from.id} tentou comprar pack ${packId}`);
+        await ctx.answerCbQuery('🔒 Loja fechada', { show_alert: true });
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      // Responder imediatamente ao clique
+      await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
+      
+      // Buscar media pack e usuário em paralelo
+      const [pack, user] = await Promise.all([
+        db.getMediaPackById(packId),
+        db.getOrCreateUser(ctx.from)
+      ]);
+      
+      if (!pack || !pack.is_active) {
+        return ctx.reply('❌ Pack não encontrado ou inativo.');
+      }
+      
+      // Usar valor aleatório se houver valores variados, senão usar preço fixo
+      let baseAmount;
+      if (pack.variable_prices && Array.isArray(pack.variable_prices) && pack.variable_prices.length > 0) {
+        // Selecionar valor aleatório do array
+        const randomIndex = Math.floor(Math.random() * pack.variable_prices.length);
+        baseAmount = parseFloat(pack.variable_prices[randomIndex]);
+        console.log(`🎲 [MEDIA-PACK] Valor aleatório selecionado: R$ ${baseAmount} (de ${pack.variable_prices.length} opções)`);
+      } else {
+        // Usar preço fixo
+        baseAmount = parseFloat(pack.price);
+      }
+      
+      // Verificar se há promoção ativa (broadcast com cupom) para este pack
+      let finalPackPrice = baseAmount;
+      let appliedPackCoupon = null;
+      
+      try {
+        // PRIORIDADE 1: Verificar se há cupom ativo de broadcast para este pack
+        // Aplicar desconto apenas se o usuário recebeu o broadcast
+        const { data: autoCoupon, error: autoCouponError } = await db.supabase
+          .from('coupons')
+          .select('*')
+          .eq('media_pack_id', packId)
+          .eq('is_active', true)
+          .eq('is_broadcast_coupon', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (!autoCouponError && autoCoupon) {
+          // Encontrou cupom de broadcast! Extrair campaign_id do código do cupom
+          // Formato: BROADCAST_{campaign_id}_{pack_id}
+          const codeParts = autoCoupon.code.split('_');
+          if (codeParts.length >= 2 && codeParts[0] === 'BROADCAST') {
+            const campaignId = codeParts[1];
+            
+            // Verificar se o usuário recebeu essa campanha específica
+            const { data: recipient, error: recipientError } = await db.supabase
+              .from('broadcast_recipients')
+              .select('broadcast_campaign_id')
+              .eq('telegram_id', ctx.from.id)
+              .eq('broadcast_campaign_id', campaignId)
+              .limit(1)
+              .single();
+            
+            if (!recipientError && recipient) {
+              // Usuário recebeu o broadcast! Aplicar desconto
+              finalPackPrice = baseAmount * (1 - autoCoupon.discount_percentage / 100);
+              appliedPackCoupon = autoCoupon;
+              
+              console.log(`🎁 [BUY-MEDIA] Promoção ativa detectada - Desconto ${autoCoupon.discount_percentage}% aplicado para ${ctx.from.id} (recebeu broadcast ${campaignId})`);
+            } else {
+              console.log(`ℹ️ [BUY-MEDIA] Usuário ${ctx.from.id} não recebeu o broadcast ${campaignId} - sem desconto`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao verificar desconto automático para pack:', err);
+        // Continuar sem desconto em caso de erro
+      }
+      
+      const amount = finalPackPrice.toString();
+
+      // Gerar cobrança PIX
+      const resp = await manualPix.createManualCharge({ amount, productId: `media_${packId}` });
+      const charge = resp.charge;
+      const txid = charge.txid;
+      
+      // Salvar transação com media_pack_id
+      db.createTransaction({
+        txid,
+        userId: user.id,
+        telegramId: ctx.chat.id,
+        mediaPackId: packId,
+        amount,
+        pixKey: charge.key,
+        pixPayload: charge.copiaCola
+      }).catch(err => console.error('Erro ao salvar transação:', err));
+
+      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
+      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
+      
+      // 🆕 Salvar valores antes do setTimeout (ctx pode não estar disponível após 15 min)
+      const chatIdMediaPack = ctx.chat.id;
+      const reminderAmountMediaPack = amount;
+      const reminderKeyMediaPack = charge.key;
+      const reminderCopiaColaMediaPack = charge.copiaCola;
+      
+      // Agendar lembretes de pagamento
+      console.log(`⏰ [LEMBRETE-MEDIAPACK] Agendando lembrete de 15min para TXID: ${txid}, Chat: ${chatIdMediaPack}`);
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [LEMBRETE-MEDIAPACK] Executando lembrete de 15min para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          if (trans && trans.status === 'pending') {
+            console.log(`✅ [LEMBRETE-MEDIAPACK] Enviando lembrete de 15min para chat ${chatIdMediaPack}, TXID: ${txid}`);
+            await bot.telegram.sendMessage(chatIdMediaPack, `⏰ *LEMBRETE DE PAGAMENTO*
+
+⚠️ *Faltam 15 minutos* para expirar!
+
+💰 Valor: R$ ${reminderAmountMediaPack}
+🔑 Chave: ${reminderKeyMediaPack}
+
+📋 Cópia & Cola:
+\`${reminderCopiaColaMediaPack}\`
+
+⏰ *Expira às:* ${expirationStr}
+
+📸 Após pagar, envie o comprovante.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+            console.log(`✅ [LEMBRETE-MEDIAPACK] Lembrete enviado com sucesso para chat ${chatIdMediaPack}`);
+          } else {
+            console.log(`⏭️ [LEMBRETE-MEDIAPACK] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - lembrete não enviado`);
+          }
+        } catch (err) {
+          // Tratar especificamente quando o bot foi bloqueado pelo usuário
+          if (err.response && err.response.error_code === 403) {
+            console.log(`ℹ️ [LEMBRETE-MEDIAPACK] Bot bloqueado pelo usuário ${chatIdMediaPack} - lembrete não enviado`);
+          } else {
+            console.error(`❌ [LEMBRETE-MEDIAPACK] Erro no lembrete 15 min para TXID ${txid}:`, err.message);
+          }
+        }
+      }, 15 * 60 * 1000);
+      
+      // Cancelamento automático aos 30 minutos
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [EXPIRAÇÃO-MEDIAPACK] Verificando expiração para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          if (trans && trans.status === 'pending') {
+            console.log(`❌ [EXPIRAÇÃO-MEDIAPACK] Cancelando transação ${txid} por expiração de 30min`);
+            await db.cancelTransaction(txid);
+            
+            try {
+              await bot.telegram.sendMessage(chatIdMediaPack, `⏰ *TRANSAÇÃO EXPIRADA*
+
+❌ O prazo de 30 minutos foi atingido.
+Esta transação foi cancelada automaticamente.
+
+🔄 *Para comprar novamente:*
+1. Use o comando /start
+2. Selecione o pack desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+💰 Valor: R$ ${reminderAmountMediaPack}
+🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+              console.log(`✅ [EXPIRAÇÃO-MEDIAPACK] Mensagem de expiração enviada para chat ${chatIdMediaPack}`);
+            } catch (sendErr) {
+              // Tratar especificamente quando o bot foi bloqueado pelo usuário
+              if (sendErr.response && sendErr.response.error_code === 403) {
+                console.log(`ℹ️ [EXPIRAÇÃO-MEDIAPACK] Bot bloqueado pelo usuário ${chatIdMediaPack} - mensagem de expiração não enviada`);
+              } else {
+                console.error(`❌ [EXPIRAÇÃO-MEDIAPACK] Erro ao enviar mensagem de expiração para TXID ${txid}:`, sendErr.message);
+              }
+            }
+          } else {
+            console.log(`⏭️ [EXPIRAÇÃO-MEDIAPACK] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - cancelamento não necessário`);
+          }
+        } catch (err) {
+          console.error(`❌ [EXPIRAÇÃO-MEDIAPACK] Erro no cancelamento automático para TXID ${txid}:`, err.message);
+        }
+      }, 30 * 60 * 1000);
+      
+      // Montar mensagem com informação de desconto se aplicado
+      let packPaymentMessage = '';
+      
+      if (appliedPackCoupon) {
+        const originalPrice = baseAmount;
+        const discount = appliedPackCoupon.discount_percentage;
+        packPaymentMessage = `🎁 *PROMOÇÃO ATIVA!*
+
+📸 Pack: ${pack.name}
+💵 Preço original: R$ ${originalPrice.toFixed(2)}
+🎉 Desconto: ${discount}% OFF
+💰 *Você paga: R$ ${finalPackPrice.toFixed(2)}*
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 Pague R$ ${formatAmount(amount)} usando PIX
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\``;
+      } else {
+        packPaymentMessage = `📸 *${pack.name}*
+
+💰 Pague R$ ${formatAmount(amount)} usando PIX
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\``;
+      }
+
+      packPaymentMessage += `
+
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+📦 *Entrega:* ${pack.items_per_delivery} itens aleatórios
+
+📸 Após pagar, envie o comprovante (foto) aqui.
+
+🆔 TXID: ${txid}`;
+
+      // Enviar QR Code
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: packPaymentMessage,
+            parse_mode: 'Markdown'
+          }
+        );
+      } else {
+        return await ctx.reply(packPaymentMessage, { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Erro na compra de media pack:', err.message);
+      console.error('Stack:', err.stack);
+      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
+    }
+  });
+
+  // ===== ASSINATURA DE GRUPO =====
+  bot.action(/subscribe:(.+)/, async (ctx) => {
+    try {
+      const groupId = parseInt(ctx.match[1]);
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [SUBSCRIBE] Usuário ${ctx.from.id} está BLOQUEADO - não pode assinar`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledSub = await db.getSetting('shop_enabled');
+      if (shopEnabledSub === 'false') {
+        console.log(`🔒 [SUBSCRIBE] Loja FECHADA — usuário ${ctx.from.id} tentou assinar grupo ${groupId}`);
+        await ctx.answerCbQuery('🔒 Loja fechada', { show_alert: true });
+        return ctx.reply(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      await ctx.answerCbQuery('⏳ Gerando cobrança PIX...');
+      
+      const group = await db.getGroupById(groupId);
+      
+      if (!group || !group.is_active) {
+        return ctx.reply('❌ Grupo não encontrado ou inativo.');
+      }
+      
+      // Verificar se já é membro ativo
+      const existingMember = await db.getGroupMember(ctx.from.id, group.id);
+      if (existingMember) {
+        const expiresAt = new Date(existingMember.expires_at);
+        const now = new Date();
+        if (expiresAt > now) {
+          // Mensagem única com todas as informações + link oculto (gera card automático)
+          const zwsp = '\u200B'; // Zero-width space
+          const zwnj = '\u200C'; // Zero-width non-joiner
+          await ctx.reply(`✅ *Você já é membro!*
+
+👥 Grupo: ${group.group_name}
+📅 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
+
+${zwsp}${zwnj}${zwsp}
+${group.group_link}
+${zwsp}${zwnj}${zwsp}`, {
+            parse_mode: 'Markdown',
+            disable_web_page_preview: false
+          });
+          return;
+        }
+      }
+      
+      const [user] = await Promise.all([
+        db.getOrCreateUser(ctx.from)
+      ]);
+      
+      const amount = group.subscription_price.toString();
+      const productId = `group_${group.group_id}`; // Para o manualPix
+      
+      // Gerar cobrança PIX
+      const resp = await manualPix.createManualCharge({ amount, productId });
+      const charge = resp.charge;
+      const txid = charge.txid;
+      
+      // 🆕 Salvar transação com referência ao grupo (usando UUID interno do grupo)
+      await db.createTransaction({
+        txid,
+        userId: user.id,
+        telegramId: ctx.chat.id,
+        groupId: group.id, // 🆕 Usar UUID interno do grupo (não productId)
+        amount,
+        pixKey: charge.key,
+        pixPayload: charge.copiaCola
+      }).catch(err => console.error('Erro ao salvar transação:', err));
+      
+      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
+      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
+      
+      // 🆕 Salvar valores antes do setTimeout (ctx pode não estar disponível após 15 min)
+      const chatIdGroup = ctx.chat.id;
+      const reminderAmountGroup = amount;
+      const reminderKeyGroup = charge.key;
+      const reminderCopiaColaGroup = charge.copiaCola;
+      
+      // Agendar lembretes de pagamento (o job também enviará, mas manter setTimeout como backup)
+      console.log(`⏰ [LEMBRETE-GROUP] Agendando lembrete de 15min para TXID: ${txid}, Chat: ${chatIdGroup}`);
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [LEMBRETE-GROUP] Executando lembrete de 15min para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          if (trans && trans.status === 'pending') {
+            console.log(`✅ [LEMBRETE-GROUP] Enviando lembrete de 15min para chat ${chatIdGroup}, TXID: ${txid}`);
+            await bot.telegram.sendMessage(chatIdGroup, `⏰ *LEMBRETE DE PAGAMENTO*
+
+⚠️ *Faltam 15 minutos* para expirar!
+
+💰 Valor: R$ ${reminderAmountGroup}
+🔑 Chave: ${reminderKeyGroup}
+
+📋 Cópia & Cola:
+\`${reminderCopiaColaGroup}\`
+
+⏰ *Expira às:* ${expirationStr}
+
+📸 Após pagar, envie o comprovante.
+
+🆔 TXID: ${txid}`, { parse_mode: 'Markdown' });
+            console.log(`✅ [LEMBRETE-GROUP] Lembrete enviado com sucesso para chat ${chatIdGroup}`);
+          } else {
+            console.log(`⏭️ [LEMBRETE-GROUP] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - lembrete não enviado`);
+          }
+        } catch (err) {
+          if (err.response && err.response.error_code === 403) {
+            console.log(`ℹ️ [LEMBRETE-GROUP] Bot bloqueado pelo usuário ${chatIdGroup} - lembrete não enviado`);
+          } else {
+            console.error(`❌ [LEMBRETE-GROUP] Erro no lembrete 15 min para TXID ${txid}:`, err.message);
+          }
+        }
+      }, 15 * 60 * 1000); // 15 minutos
+      
+      // Cancelamento automático aos 30 minutos
+      setTimeout(async () => {
+        try {
+          console.log(`⏰ [EXPIRAÇÃO-GROUP] Verificando expiração para TXID: ${txid}`);
+          const trans = await db.getTransactionByTxid(txid);
+          if (trans && trans.status === 'pending') {
+            console.log(`❌ [EXPIRAÇÃO-GROUP] Cancelando transação ${txid} por expiração de 30min`);
+            await db.cancelTransaction(txid);
+            
+            try {
+              await bot.telegram.sendMessage(chatIdGroup, `⏰ *TRANSAÇÃO EXPIRADA*
+
+❌ O prazo de 30 minutos foi atingido.
+Esta transação foi cancelada automaticamente.
+
+🔄 *Para assinar novamente:*
+1. Use o comando /start
+2. Selecione o grupo desejado
+3. Realize o pagamento em até 30 minutos
+4. Envie o comprovante
+
+💰 Valor: R$ ${reminderAmountGroup}
+🆔 TXID cancelado: ${txid}`, { parse_mode: 'Markdown' });
+              console.log(`✅ [EXPIRAÇÃO-GROUP] Mensagem de expiração enviada para chat ${chatIdGroup}`);
+            } catch (sendErr) {
+              if (sendErr.response && sendErr.response.error_code === 403) {
+                console.log(`ℹ️ [EXPIRAÇÃO-GROUP] Bot bloqueado pelo usuário ${chatIdGroup} - mensagem de expiração não enviada`);
+              } else {
+                console.error(`❌ [EXPIRAÇÃO-GROUP] Erro ao enviar mensagem de expiração para TXID ${txid}:`, sendErr.message);
+              }
+            }
+          } else {
+            console.log(`⏭️ [EXPIRAÇÃO-GROUP] Transação ${txid} não está mais pendente (status: ${trans?.status || 'não encontrada'}) - cancelamento não necessário`);
+          }
+        } catch (err) {
+          console.error(`❌ [EXPIRAÇÃO-GROUP] Erro no cancelamento automático para TXID ${txid}:`, err.message);
+        }
+      }, 30 * 60 * 1000); // 30 minutos
+      
+      // Enviar QR Code
+      if (charge.qrcodeBuffer) {
+        return await ctx.replyWithPhoto(
+          { source: charge.qrcodeBuffer },
+          {
+            caption: `👥 *ASSINATURA DE GRUPO*
+
+💰 Pague R$ ${formatAmount(amount)} para acessar o grupo
+
+🔑 Chave: ${charge.key}
+
+📋 Cópia & Cola:
+\`${charge.copiaCola}\`
+
+⏰ *VÁLIDO ATÉ:* ${expirationStr}
+⚠️ *Prazo:* 30 minutos para pagamento
+📅 *Duração:* ${group.subscription_days} dias de acesso
+
+📸 Após pagar, envie o comprovante (foto) aqui.
+
+🆔 TXID: ${txid}`,
+            parse_mode: 'Markdown'
+          }
+        );
+      }
+    } catch (err) {
+      console.error('Erro na assinatura:', err.message);
+      await ctx.reply('❌ Erro ao gerar cobrança. Tente novamente.');
+    }
+  });
+
+  // ===== COMANDO /suporte (Sistema de Tickets) =====
+  console.log('✅ [BOT-INIT] Registrando comando /suporte...');
+  // ============================================================
+  // /planos — mostra grupos ativos cadastrados
+  // ============================================================
+  bot.command('planos', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck?.is_blocked) return ctx.reply('⚠️ Serviço temporariamente indisponível.');
+
+      const grupos = await db.getAllGroups();
+      const ativos = grupos.filter(g => g.is_active !== false);
+
+      if (ativos.length === 0) {
+        return ctx.reply('📋 *PLANOS DISPONÍVEIS*\n\nNenhum plano disponível no momento.\nVolte em breve! 🙏', { parse_mode: 'Markdown' });
+      }
+
+      let msg = '📋 *PLANOS DISPONÍVEIS*\n\n';
+      for (const g of ativos) {
+        msg += `👥 *${g.group_name}*
+`;
+        msg += `💰 Valor: R$ ${parseFloat(g.subscription_price).toFixed(2)}
+`;
+        msg += `📅 Duração: ${g.subscription_days} dias
+
+`;
+      }
+      msg += '💳 Para assinar, acesse o menu principal com /start';
+
+      return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ [PLANOS]', err.message);
+      return ctx.reply('❌ Erro ao carregar planos. Tente novamente.');
+    }
+  });
+
+  // ============================================================
+  // /status — mostra assinatura ativa do usuário
+  // ============================================================
+  bot.command('status', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck?.is_blocked) return ctx.reply('⚠️ Serviço temporariamente indisponível.');
+
+      // Buscar assinaturas ativas do usuário
+      const { data: memberships, error } = await db.supabase
+        .from('group_members')
+        .select('*, group:group_id(group_name, group_link, subscription_price)')
+        .eq('telegram_id', ctx.from.id)
+        .eq('status', 'active')
+        .order('expires_at', { ascending: true });
+
+      if (error) throw error;
+
+      if (!memberships || memberships.length === 0) {
+        return ctx.reply(
+          '✅ *MINHA ASSINATURA*\n\n' +
+          '📭 Você não possui nenhuma assinatura ativa no momento.\n\n' +
+          '📋 Veja os planos disponíveis com /planos',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      let msg = '✅ *MINHA ASSINATURA*\n\n';
+      for (const m of memberships) {
+        const expires = new Date(m.expires_at);
+        const now = new Date();
+        const diasRestantes = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
+        const emoji = diasRestantes <= 3 ? '🔴' : diasRestantes <= 7 ? '🟡' : '🟢';
+
+        msg += `${emoji} *${m.group?.group_name || 'Grupo'}*
+`;
+        msg += `📅 Expira em: ${expires.toLocaleDateString('pt-BR')}
+`;
+        msg += `⏳ ${diasRestantes} dia(s) restante(s)
+
+`;
+      }
+
+      return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ [STATUS]', err.message);
+      return ctx.reply('❌ Erro ao buscar assinatura. Tente novamente.');
+    }
+  });
+
+  // ============================================================
+  // /meusconteudos — mostra compras aprovadas e entregues
+  // ============================================================
+  bot.command('meusconteudos', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck?.is_blocked) return ctx.reply('⚠️ Serviço temporariamente indisponível.');
+
+      const { data: compras, error } = await db.supabase
+        .from('transactions')
+        .select('txid, amount, delivered_at, product_id, media_pack_id, group_id')
+        .eq('telegram_id', ctx.from.id)
+        .eq('status', 'delivered')
+        .order('delivered_at', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+
+      if (!compras || compras.length === 0) {
+        return ctx.reply(
+          '📦 *MEUS CONTEÚDOS*\n\n' +
+          'Você ainda não possui compras aprovadas.\n\n' +
+          '📋 Veja o que temos disponível com /start',
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      let msg = '📦 *MEUS CONTEÚDOS*\n\n';
+      msg += `✅ Você tem *${compras.length}* compra(s) aprovada(s):\n\n`;
+
+      for (const c of compras) {
+        const data = c.delivered_at ? new Date(c.delivered_at).toLocaleDateString('pt-BR') : 'N/A';
+        const tipo = c.media_pack_id ? '📸 Pack de mídia'
+                   : c.group_id ? '👥 Acesso a grupo'
+                   : '📦 Produto digital';
+        msg += `${tipo}
+💰 R$ ${parseFloat(c.amount).toFixed(2)} — 📅 ${data}
+`;
+        msg += `🆔 \`${c.txid?.substring(0, 16)}...\`
+
+`;
+      }
+
+      msg += '💡 Para rever conteúdos de mídia, entre em contato com /suporte';
+
+      return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ [MEUSCONTEUDOS]', err.message);
+      return ctx.reply('❌ Erro ao buscar seus conteúdos. Tente novamente.');
+    }
+  });
+
+  // ============================================================
+  // /sobre — informações sobre a plataforma
+  // ============================================================
+  bot.command('sobre', async (ctx) => {
+    const msg =
+      'ℹ️ *SOBRE A PLATAFORMA*\n\n' +
+      'Somos uma plataforma de vendas automatizada via Telegram, ' +
+      'especializada em entrega digital de conteúdos exclusivos.\n\n' +
+      '🔒 *Como funciona?*\n' +
+      'Você escolhe um plano, realiza o pagamento via PIX e recebe ' +
+      'acesso imediato ao conteúdo — tudo de forma automática e segura.\n\n' +
+      '📦 *O que oferecemos?*\n' +
+      '• Grupos VIP com conteúdo exclusivo\n' +
+      '• Packs de mídia personalizados\n' +
+      '• Produtos digitais com entrega automática\n\n' +
+      '💬 *Precisa de ajuda?*\n' +
+      'Use o comando /suporte para abrir um ticket e nossa equipe ' +
+      'irá te atender o mais rápido possível.\n\n' +
+      '🤖 _Plataforma operada com tecnologia Bot PIX_';
+
+    return ctx.reply(msg, { parse_mode: 'Markdown' });
+  });
+
+
+    bot.command('suporte', async (ctx) => {
+    try {
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const tickets = await db.getUserTickets(ctx.from.id, 10);
+      
+      let message = `💬 *SUPORTE - SISTEMA DE TICKETS*\n\n`;
+      message += `📋 *Seus Tickets:* ${tickets.length}\n\n`;
+      
+      if (tickets.length > 0) {
+        message += `📝 *Tickets Recentes:*\n\n`;
+        for (const t of tickets.slice(0, 5)) {
+          const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
+          const statusText = t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado';
+          const ticketNumber = (t.ticket_number || '').replace(/\*/g, '\\*').replace(/_/g, '\\_'); // Escapar caracteres Markdown
+          const dateStr = new Date(t.created_at).toLocaleDateString('pt-BR');
+          message += `${statusEmoji} *${ticketNumber}*\n📅 ${dateStr}\n📊 ${statusText}\n\n`;
+        }
+      }
+      
+      message += `*O que deseja fazer?*`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Novo Ticket', 'create_ticket')],
+        ...(tickets.length > 0 ? [[Markup.button.callback('📋 Ver Meus Tickets', 'view_my_tickets')]] : []),
+        [Markup.button.url('💬 Falar com a Criadora', 'https://wa.me/5598984232496')],
+        [Markup.button.callback('🏠 Voltar', 'back_to_start')]
+      ]);
+      
+      return ctx.reply(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [SUPORTE] Erro:', err);
+      return ctx.reply('❌ Erro ao acessar suporte. Tente novamente.');
+    }
+  });
+  
+  // ===== SISTEMA DE SUPORTE INTERNO (LEGADO - MANTIDO PARA COMPATIBILIDADE) =====
+  bot.action('support_menu', async (ctx) => {
+    try {
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [SUPPORT] Usuário ${ctx.from.id} está BLOQUEADO`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      await ctx.answerCbQuery();
+      
+      // Redirecionar para novo sistema de tickets
+      const user = await db.getOrCreateUser(ctx.from);
+      const tickets = await db.getUserTickets(ctx.from.id, 10);
+      
+      let message = `💬 *SUPORTE - SISTEMA DE TICKETS*\n\n`;
+      message += `📋 *Seus Tickets:* ${tickets.length}\n\n`;
+      
+      if (tickets.length > 0) {
+        message += `📝 *Tickets Recentes:*\n\n`;
+        for (const t of tickets.slice(0, 5)) {
+          const statusEmoji = t.status === 'open' ? '🟢' : t.status === 'in_progress' ? '🟡' : t.status === 'resolved' ? '✅' : '🔴';
+          const statusText = t.status === 'open' ? 'Aberto' : t.status === 'in_progress' ? 'Em andamento' : t.status === 'resolved' ? 'Resolvido' : 'Fechado';
+          const ticketNumber = (t.ticket_number || '').replace(/\*/g, '\\*').replace(/_/g, '\\_'); // Escapar caracteres Markdown
+          const dateStr = new Date(t.created_at).toLocaleDateString('pt-BR');
+          message += `${statusEmoji} *${ticketNumber}*\n📅 ${dateStr}\n📊 ${statusText}\n\n`;
+        }
+      }
+      
+      message += `*O que deseja fazer?*`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Novo Ticket', 'create_ticket')],
+        ...(tickets.length > 0 ? [[Markup.button.callback('📋 Ver Meus Tickets', 'view_my_tickets')]] : []),
+        [Markup.button.url('💬 Falar com a Criadora', 'https://wa.me/5598984232496')],
+        [
+          Markup.button.callback('📋 Meus Pedidos', 'action_meuspedidos'),
+          Markup.button.callback('🔄 Renovar', 'action_renovar')
+        ],
+        [Markup.button.callback('🏠 Voltar', 'back_to_start')]
+      ]);
+      
+      return ctx.editMessageText(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+      
+      console.log(`💬 [SUPPORT] Usuário ${ctx.from.id} acessou suporte`);
+      
+      // Buscar transações pendentes do usuário
+      const { data: pendingTransactions, error } = await db.supabase
+        .from('transactions')
+        .select('*')
+        .eq('telegram_id', ctx.from.id)
+        .in('status', ['pending', 'proof_sent'])
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      if (error) {
+        console.error('Erro ao buscar transações:', error);
+      }
+      
+      const hasPending = pendingTransactions && pendingTransactions.length > 0;
+      
+      if (hasPending) {
+        // TEM TRANSAÇÃO PENDENTE - Pedir comprovante automaticamente
+        const transaction = pendingTransactions[0]; // Mais recente
+        const createdAt = new Date(transaction.created_at);
+        const minutesAgo = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60));
+        const minutesRemaining = Math.max(0, 30 - minutesAgo);
+        
+        let statusText = '';
+        if (transaction.status === 'pending') {
+          statusText = '⏳ *Aguardando pagamento*';
+        } else if (transaction.status === 'proof_sent') {
+          statusText = '📸 *Comprovante recebido - Em análise*';
+        }
+        
+        const message = `💬 *SUPORTE ON-LINE*
+
+${statusText}
+
+🆔 TXID: \`${transaction.txid}\`
+💰 Valor: R$ ${transaction.amount}
+⏰ Expira em: ${minutesRemaining} minutos
+
+${transaction.status === 'pending' ? 
+`📸 *ENVIE SEU COMPROVANTE:*
+Após realizar o pagamento PIX, envie a foto ou PDF do comprovante aqui no chat.
+
+💡 *Dica:* Tire uma foto clara e legível do comprovante.` : 
+`✅ Comprovante já foi recebido!
+Um admin está analisando e aprovará em breve.`}
+
+❓ *Precisa de ajuda?*
+Entre em contato: @suportedireto`;
+
+        const buttons = [];
+        
+        if (transaction.status === 'pending') {
+          buttons.push([Markup.button.callback('🔄 Verificar Status', `check_status:${transaction.txid}`)]);
+        }
+        
+        buttons.push([Markup.button.url('💬 Falar com Suporte', 'https://t.me/suportedireto')]);
+        buttons.push([Markup.button.callback('🏠 Voltar ao Menu', 'back_to_start')]);
+        
+        return ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard(buttons)
+        });
+        
+      } else {
+        // SEM TRANSAÇÃO PENDENTE - Menu de ajuda
+        const message = `💬 *SUPORTE ON-LINE*
+
+👋 Olá! Como posso ajudar?
+
+📋 *Opções disponíveis:*
+
+1️⃣ Fazer uma nova compra
+   Use /start e escolha um produto
+
+2️⃣ Ver seus pedidos
+   Use /meuspedidos para ver histórico
+
+3️⃣ Renovar assinatura
+   Use /renovar para grupos
+
+❓ *Dúvidas frequentes:*
+• Quanto tempo demora a entrega?
+  → Imediata após aprovação do pagamento
+
+• Como funciona o PIX?
+  → Gere o QR Code, pague e envie o comprovante
+
+• Não recebi meu produto
+  → Envie seu TXID para @suportedireto
+
+💬 *Falar com atendente:*
+Clique no botão abaixo para contato direto`;
+
+        return ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('💬 Falar com Suporte', 'https://t.me/suportedireto')],
+            [Markup.button.callback('🏠 Voltar ao Menu', 'back_to_start')]
+          ])
+        });
+      }
+      
+    } catch (err) {
+      console.error('Erro no suporte:', err);
+      return ctx.reply('❌ Erro ao carregar suporte. Tente novamente.');
+    }
+  });
+  
+  // Handler para verificar status de transação
+  bot.action(/^check_status:(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Verificando status...');
+      
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada'
+      };
+      
+      return ctx.reply(`📊 *STATUS DA TRANSAÇÃO*
+
+${statusEmoji[transaction.status]} *${statusText[transaction.status]}*
+
+🆔 TXID: \`${txid}\`
+💰 Valor: R$ ${transaction.amount}
+📅 Criada: ${new Date(transaction.created_at).toLocaleString('pt-BR')}
+
+${transaction.status === 'delivered' ? '✅ Seu produto foi entregue com sucesso!' : 
+  transaction.status === 'validated' ? '⏳ Produto será entregue em instantes!' :
+  transaction.status === 'proof_sent' ? '📸 Aguarde a análise do comprovante...' :
+  transaction.status === 'pending' ? '⏳ Realize o pagamento e envie o comprovante!' :
+  '❌ Entre em contato com o suporte: @suportedireto'}`, {
+        parse_mode: 'Markdown'
+      });
+      
+    } catch (err) {
+      console.error('Erro ao verificar status:', err);
+      return ctx.reply('❌ Erro ao verificar status.');
+    }
+  });
+  
+  // Handler para botão "Meus Pedidos" - reutilizar lógica do comando
+  bot.action('action_meuspedidos', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('📋 Carregando seus pedidos...');
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*\n\nNo momento, não conseguimos processar seu acesso.', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.reply('📦 *Nenhum pedido encontrado*\n\nVocê ainda não realizou nenhuma compra.\n\n🛍️ Use o menu para ver nossos produtos!', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      // Agrupar transações por status
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌',
+        'rejected': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada',
+        'rejected': 'Transação rejeitada'
+      };
+      
+      const delivered = transactions.filter(t => t.status === 'delivered');
+      const pending = transactions.filter(t => ['pending', 'proof_sent'].includes(t.status));
+      const expired = transactions.filter(t => ['expired', 'cancelled', 'rejected'].includes(t.status));
+      
+      let message = `📋 *MEUS PEDIDOS*\n\n✅ *Entregues:* ${delivered.length}\n⏳ *Pendentes:* ${pending.length}\n❌ *Canceladas:* ${expired.length}\n\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      const buttons = [];
+      
+      // Mostrar últimas 10 transações
+      for (const transaction of transactions.slice(0, 10)) {
+        const emoji = statusEmoji[transaction.status] || '📦';
+        const status = statusText[transaction.status] || transaction.status;
+        const productName = transaction.product_name || transaction.product_id || transaction.media_pack_id || (transaction.group_id ? 'Grupo' : 'Produto');
+        const date = new Date(transaction.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        message += `${emoji} *${productName}*\n`;
+        message += `💰 R$ ${parseFloat(transaction.amount).toFixed(2)}\n`;
+        message += `📊 ${status}\n`;
+        message += `📅 ${date}\n`;
+        message += `🆔 \`${transaction.txid}\`\n\n`;
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
+      }
+      
+      buttons.push([Markup.button.callback('🏠 Voltar', 'back_to_start')]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ACTION] Erro ao executar meuspedidos:', err);
+      return ctx.reply('❌ Erro ao carregar pedidos. Use /meuspedidos');
+    }
+  });
+  
+  // Handler para botão "Renovar" - reutilizar lógica do comando
+  bot.action('action_renovar', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Carregando renovações...');
+      
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        return ctx.reply('⚠️ *Serviço Temporariamente Indisponível*\n\nNo momento, não conseguimos processar seu acesso.', { parse_mode: 'Markdown' });
+      }
+      
+      const user = await db.getOrCreateUser(ctx.from);
+      const groups = await db.getAllGroups();
+      const activeGroups = groups.filter(g => g.is_active);
+      
+      if (activeGroups.length === 0) {
+        return ctx.reply('📋 *Nenhum grupo disponível para renovação*\n\nNo momento, não há grupos ativos.', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos em Promoção', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      // Verificar se tem assinatura ativa
+      let hasActiveSubscription = false;
+      const subscriptionInfo = [];
+      
+      for (const group of activeGroups) {
+        const member = await db.getGroupMember(ctx.from.id, group.id);
+        if (member && member.expires_at && new Date(member.expires_at) > new Date()) {
+          hasActiveSubscription = true;
+          const expiresAt = new Date(member.expires_at);
+          const daysLeft = Math.ceil((expiresAt - new Date()) / (1000 * 60 * 60 * 24));
+          subscriptionInfo.push({
+            group: group,
+            expiresAt: expiresAt,
+            daysLeft: daysLeft
+          });
+        }
+      }
+      
+      if (!hasActiveSubscription) {
+        return ctx.reply('📋 *Nenhuma assinatura ativa*\n\nVocê não possui assinaturas ativas no momento.\n\n🛍️ Use o menu para assinar um grupo!', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Grupos Disponíveis', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      let message = `🔄 *RENOVAR ASSINATURA*\n\n📋 *Grupos com assinatura ativa:*\n\n`;
+      const buttons = [];
+      
+      for (const info of subscriptionInfo) {
+        const group = info.group;
+        const groupName = group.group_name || `Grupo ${group.group_id}`;
+        
+        message += `👥 *${groupName}*\n`;
+        message += `💰 R$ ${parseFloat(group.subscription_price).toFixed(2)}/mês\n`;
+        message += `⏰ Expira em: ${info.daysLeft} dia(s)\n\n`;
+        
+        buttons.push([Markup.button.callback(`🔄 Renovar ${groupName}`, `subscribe:${group.group_id}`)]);
+      }
+      
+      buttons.push([Markup.button.callback('🏠 Voltar', 'back_to_start')]);
+      
+      return ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [ACTION] Erro ao executar renovar:', err);
+      return ctx.reply('❌ Erro ao carregar renovações. Use /renovar');
+    }
+  });
+  
+  // Handler para voltar ao menu inicial
+  bot.action('back_to_start', async (ctx) => {
+    try {
+      // 🚫 VERIFICAR SE USUÁRIO ESTÁ BLOQUEADO INDIVIDUALMENTE
+      const userCheck = await db.getUserByTelegramId(ctx.from.id).catch(() => null);
+      if (userCheck && userCheck.is_blocked === true) {
+        console.log(`🚫 [BACK-TO-START] Usuário ${ctx.from.id} está BLOQUEADO`);
+        await ctx.answerCbQuery('⚠️ Acesso negado', { show_alert: true });
+        return ctx.reply(
+          '⚠️ *Serviço Temporariamente Indisponível*\n\n' +
+          'No momento, não conseguimos processar seu acesso.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      await ctx.answerCbQuery();
+
+      // 🔒 VERIFICAR SE LOJA ESTÁ HABILITADA
+      const shopEnabledBack = await db.getSetting('shop_enabled');
+      if (shopEnabledBack === 'false') {
+        console.log(`🔒 [BACK-TO-START] Loja FECHADA — usuário ${ctx.from.id}`);
+        return ctx.editMessageText(
+          '🔒 *Loja temporariamente fechada*\n\nNo momento não estamos aceitando novos pedidos.\n\nTente novamente mais tarde ou use /suporte.',
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      // Buscar dados novamente
+      const [products, groups, mediaPacks] = await Promise.all([
+        db.getAllProducts(),
+        db.getAllGroups(),
+        db.getAllMediaPacks()
+      ]);
+      
+      // Gerar botões
+      const buttons = products.map(product => {
+        const buttonText = `${product.name} (R$${parseFloat(product.price).toFixed(2)})`;
+        return [Markup.button.callback(buttonText, `buy:${product.product_id}`)];
+      });
+      
+      const activeMediaPacks = mediaPacks.filter(p => p.is_active);
+      for (const pack of activeMediaPacks) {
+        buttons.push([Markup.button.callback(pack.name, `buy_media:${pack.pack_id}`)]);
+      }
+      
+      // Adicionar botões de grupos ativos (um botão por grupo, usando o nome cadastrado)
+      const activeGroups = groups.filter(g => g.is_active);
+      for (const group of activeGroups) {
+        // Usar o nome do grupo cadastrado no admin, ou um padrão se não tiver nome
+        const groupButtonText = group.group_name || `👥 Grupo (R$${parseFloat(group.subscription_price).toFixed(2)}/mês)`;
+        buttons.push([Markup.button.callback(groupButtonText, `subscribe:${group.group_id}`)]);
+      }
+      
+      buttons.push([Markup.button.callback('💬 Suporte On-line', 'support_menu')]);
+      
+      const text = `👋 Olá! Bem-vindo ao Bot da Val 🌶️🔥\n\nEscolha uma opção abaixo:`;
+      
+      return ctx.editMessageText(text, Markup.inlineKeyboard(buttons));
+      
+    } catch (err) {
+      console.error('Erro ao voltar ao menu:', err);
+      return ctx.reply('Use /start para ver o menu novamente.');
+    }
+  });
+
+  // ===== HANDLERS DE TICKETS =====
+  
+  // Criar novo ticket
+  bot.action('create_ticket', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const user = await db.getOrCreateUser(ctx.from);
+      
+      const message = `💬 *NOVO TICKET DE SUPORTE*
+
+📝 *Selecione o tipo de problema:*
+
+Clique em uma das opções abaixo:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('📦 P/Entrega', 'ticket_create_entrega'),
+          Markup.button.callback('❓ D/Produtos', 'ticket_create_produto')
+        ],
+        [
+          Markup.button.callback('💳 P/Pagamentos', 'ticket_create_pagamento'),
+          Markup.button.callback('🔐 P/Acesso', 'ticket_create_acesso')
+        ],
+        [
+          Markup.button.callback('📝 Outros', 'ticket_create_outro')
+        ],
+        [
+          Markup.button.callback('❌ Cancelar', 'back_to_start')
+        ]
+      ]);
+      
+      // Tentar editar a mensagem, se falhar, enviar nova mensagem
+      try {
+        return await ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard.reply_markup
+        });
+      } catch (editErr) {
+        // Se falhar ao editar, enviar nova mensagem
+        if (editErr.message && (editErr.message.includes('can\'t parse entities') || editErr.message.includes('message is not modified'))) {
+          return ctx.reply(message, {
+            parse_mode: 'Markdown',
+            reply_markup: keyboard.reply_markup
+          });
+        }
+        throw editErr;
+      }
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao criar ticket. Tente novamente.');
+    }
+  });
+  
+  // Handlers para criar tickets diretamente
+  bot.action(/^ticket_create_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const ticketType = ctx.match[1];
+      
+      const subjectMap = {
+        'entrega': 'P/Entrega',
+        'produto': 'D/Produtos',
+        'pagamento': 'P/Pagamentos',
+        'acesso': 'P/Acesso',
+        'outro': 'Outros'
+      };
+      
+      const subject = subjectMap[ticketType] || 'Outros';
+      
+      // Se for "outro", redirecionar para @suportedireto
+      if (ticketType === 'outro') {
+        return ctx.editMessageText(`💬 *SUPORTE DIRETO*
+
+Para outros assuntos, entre em contato diretamente:
+
+👉 @suportedireto
+
+Envie sua mensagem para o suporte direto acima.`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🏠 Voltar', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      // Para os outros tipos, criar ticket direto
+      const user = await db.getOrCreateUser(ctx.from);
+      const ticket = await db.createSupportTicket(
+        ctx.from.id,
+        user.id,
+        subject,
+        `Ticket criado automaticamente - Tipo: ${subject}`
+      );
+      
+      // Notificar admins
+      const admins = await db.getAllAdmins();
+      for (const admin of admins) {
+        try {
+          await ctx.telegram.sendMessage(admin.telegram_id, `🆕 *NOVO TICKET DE SUPORTE*
+
+📋 *Ticket:* ${ticket.ticket_number}
+👤 *Usuário:* ${ctx.from.first_name} (@${ctx.from.username || 'N/A'})
+🆔 *ID:* ${ctx.from.id}
+📝 *Assunto:* ${ticket.subject}
+
+📅 ${new Date().toLocaleString('pt-BR')}`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticket.id}` },
+                { text: '✅ Atribuir a Mim', callback_data: `admin_assign_ticket_${ticket.id}` }
+              ]]
+            }
+          });
+        } catch (err) {
+          console.error('Erro ao notificar admin:', err);
+        }
+      }
+      
+      return ctx.editMessageText(`✅ *Ticket criado com sucesso!*
+
+📋 *Número:* ${ticket.ticket_number}
+📝 *Assunto:* ${ticket.subject}
+
+⏳ Um admin irá responder em breve.
+
+💬 *Use:* /suporte para ver seus tickets`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📋 Ver Meus Tickets', callback_data: 'view_my_tickets' },
+            { text: '🏠 Voltar', callback_data: 'back_to_start' }
+          ]]
+        }
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao criar ticket. Tente novamente.');
+    }
+  });
+  
+  // Ver tickets do usuário
+  bot.action('view_my_tickets', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const tickets = await db.getUserTickets(ctx.from.id, 20);
+      
+      if (tickets.length === 0) {
+        return ctx.editMessageText('📋 *Nenhum ticket encontrado*\n\nUse "➕ Novo Ticket" para criar um.', {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '➕ Novo Ticket', callback_data: 'create_ticket' },
+              { text: '🏠 Voltar', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      let message = `📋 *MEUS TICKETS*\n\n`;
+      const buttons = [];
+      
+      for (const ticket of tickets.slice(0, 10)) {
+        const statusEmoji = ticket.status === 'open' ? '🟢' : ticket.status === 'in_progress' ? '🟡' : ticket.status === 'resolved' ? '✅' : '🔴';
+        const statusText = ticket.status === 'open' ? 'Aberto' : ticket.status === 'in_progress' ? 'Em andamento' : ticket.status === 'resolved' ? 'Resolvido' : 'Fechado';
+        
+        message += `${statusEmoji} *${ticket.ticket_number}*\n`;
+        message += `📝 ${ticket.subject || 'Sem assunto'}\n`;
+        message += `📊 ${statusText}\n`;
+        message += `📅 ${new Date(ticket.created_at).toLocaleDateString('pt-BR')}\n\n`;
+        
+        buttons.push([Markup.button.callback(
+          `📋 Ver ${ticket.ticket_number}`,
+          `view_ticket_${ticket.id}`
+        )]);
+      }
+      
+      buttons.push([
+        Markup.button.callback('➕ Novo Ticket', 'create_ticket'),
+        Markup.button.callback('🏠 Voltar', 'back_to_start')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao buscar tickets.');
+    }
+  });
+  
+  // Ver detalhes de um ticket
+  bot.action(/^view_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      if (!ticket || ticket.telegram_id !== ctx.from.id) {
+        return ctx.reply('❌ Ticket não encontrado.');
+      }
+      
+      const messages = await db.getTicketMessages(ticketId);
+      
+      let message = `📋 *TICKET ${ticket.ticket_number}*\n\n`;
+      message += `📝 *Assunto:* ${ticket.subject || 'Sem assunto'}\n`;
+      message += `📊 *Status:* ${ticket.status === 'open' ? '🟢 Aberto' : ticket.status === 'in_progress' ? '🟡 Em andamento' : ticket.status === 'resolved' ? '✅ Resolvido' : '🔴 Fechado'}\n`;
+      message += `📅 *Criado:* ${new Date(ticket.created_at).toLocaleString('pt-BR')}\n\n`;
+      message += `💬 *Mensagens:*\n\n`;
+      
+      for (const msg of messages) {
+        const sender = msg.is_admin ? '👨‍💼 Admin' : '👤 Você';
+        message += `${sender} (${new Date(msg.created_at).toLocaleString('pt-BR')}):\n`;
+        message += `${msg.message}\n\n`;
+      }
+      
+      const buttons = [];
+      if (ticket.status !== 'closed') {
+        buttons.push([Markup.button.callback('💬 Responder', `reply_ticket_${ticketId}`)]);
+      }
+      buttons.push([
+        Markup.button.callback('📋 Meus Tickets', 'view_my_tickets'),
+        Markup.button.callback('🏠 Voltar', 'back_to_start')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao visualizar ticket.');
+    }
+  });
+  
+  // Handler para criar ticket (texto) - já existe no código, mas vou verificar se está completo
+  // Atualizar histórico
+  bot.action('refresh_history', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Atualizando...');
+      // Recarregar comando /historico
+      const user = await db.getOrCreateUser(ctx.from);
+      const transactions = await db.getUserTransactions(ctx.from.id, 50);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.editMessageText(`📦 *Nenhuma compra encontrada*\n\nVocê ainda não realizou nenhuma compra.\n\n🛍️ *Use:* /start para ver nossos produtos!`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      const delivered = transactions.filter(t => t.status === 'delivered');
+      const pending = transactions.filter(t => ['pending', 'proof_sent'].includes(t.status));
+      const expired = transactions.filter(t => ['expired', 'cancelled', 'rejected'].includes(t.status));
+      
+      let message = `📋 *HISTÓRICO DE COMPRAS*\n\n✅ *Entregues:* ${delivered.length}\n⏳ *Pendentes:* ${pending.length}\n❌ *Canceladas:* ${expired.length}\n\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      if (delivered.length > 0) {
+        message += `✅ *PRODUTOS ENTREGUES*\n\n`;
+        for (const tx of delivered.slice(0, 10)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const date = new Date(tx.delivered_at || tx.created_at).toLocaleDateString('pt-BR');
+          message += `✅ *${productName}*\n💰 R$ ${parseFloat(tx.amount).toFixed(2)} | 📅 ${date}\n🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (delivered.length > 10) {
+          message += `_Mostrando 10 de ${delivered.length} entregues_\n\n`;
+        }
+      }
+      
+      if (pending.length > 0) {
+        message += `⏳ *PAGAMENTOS PENDENTES*\n\n`;
+        for (const tx of pending.slice(0, 5)) {
+          const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+          const statusText = tx.status === 'proof_sent' ? '📸 Em análise' : '⏳ Aguardando pagamento';
+          message += `${statusText} *${productName}*\n💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n🆔 \`${tx.txid}\`\n\n`;
+        }
+        if (pending.length > 5) {
+          message += `_Mostrando 5 de ${pending.length} pendentes_\n\n`;
+        }
+      }
+      
+      const keyboard = Markup.inlineKeyboard([
+        ...delivered.slice(0, 5).map(tx => [
+          Markup.button.callback(
+            `📦 Ver ${tx.product_name || 'Produto'} - ${tx.txid.substring(0, 8)}...`,
+            `view_transaction_${tx.txid}`
+          )
+        ]),
+        [
+          Markup.button.callback('🔄 Atualizar', 'refresh_history'),
+          Markup.button.callback('🏠 Início', 'back_to_start')
+        ]
+      ]);
+      
+      return ctx.editMessageText(message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [HISTORICO] Erro:', err);
+      return ctx.answerCbQuery('❌ Erro ao atualizar', { show_alert: true });
+    }
+  });
+  
+  // Ver detalhes de transação
+  bot.action(/^view_transaction_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const txid = ctx.match[1];
+      const transaction = await db.getTransactionByTxid(txid);
+      
+      if (!transaction || transaction.telegram_id !== ctx.from.id) {
+        return ctx.reply('❌ Transação não encontrada.');
+      }
+      
+      const productName = transaction.product_name || transaction.product_id || transaction.media_pack_id || (transaction.group_id ? 'Grupo' : 'Produto');
+      const statusEmoji = transaction.status === 'delivered' ? '✅' : transaction.status === 'pending' ? '⏳' : transaction.status === 'proof_sent' ? '📸' : '❌';
+      const statusText = transaction.status === 'delivered' ? 'Entregue' : transaction.status === 'pending' ? 'Aguardando pagamento' : transaction.status === 'proof_sent' ? 'Em análise' : 'Cancelada';
+      
+      let message = `📦 *DETALHES DA COMPRA*\n\n`;
+      message += `${statusEmoji} *${productName}*\n\n`;
+      message += `💰 *Valor:* R$ ${parseFloat(transaction.amount).toFixed(2)}\n`;
+      message += `📊 *Status:* ${statusText}\n`;
+      message += `📅 *Data:* ${new Date(transaction.created_at).toLocaleString('pt-BR')}\n`;
+      if (transaction.delivered_at) {
+        message += `✅ *Entregue em:* ${new Date(transaction.delivered_at).toLocaleString('pt-BR')}\n`;
+      }
+      message += `🆔 *TXID:* \`${transaction.txid}\`\n`;
+      
+      const buttons = [];
+      if (transaction.status === 'delivered') {
+        // Botão para ver detalhes (rebaixar pode ser feito pelo admin)
+        buttons.push([Markup.button.callback('📋 Ver Detalhes', `view_transaction_${transaction.txid}`)]);
+      }
+      buttons.push([
+        Markup.button.callback('📋 Histórico', 'refresh_history'),
+        Markup.button.callback('🏠 Início', 'back_to_start')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [TRANSACTION] Erro:', err);
+      return ctx.reply('❌ Erro ao visualizar transação.');
+    }
+  });
+  
+  // Atualizar pedidos
+  bot.action('refresh_orders', async (ctx) => {
+    try {
+      await ctx.answerCbQuery('🔄 Atualizando...');
+      // Recarregar comando /meuspedidos
+      const transactions = await db.getUserTransactions(ctx.from.id, 20);
+      
+      if (!transactions || transactions.length === 0) {
+        return ctx.editMessageText(`📦 *Nenhum pedido encontrado*\n\nVocê ainda não realizou nenhuma compra.\n\n🛍️ *Use:* /start para ver nossos produtos!`, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🛍️ Ver Produtos', callback_data: 'back_to_start' }
+            ]]
+          }
+        });
+      }
+      
+      const statusEmoji = {
+        'pending': '⏳',
+        'proof_sent': '📸',
+        'validated': '✅',
+        'delivered': '✅',
+        'expired': '❌',
+        'cancelled': '❌'
+      };
+      
+      const statusText = {
+        'pending': 'Aguardando pagamento',
+        'proof_sent': 'Comprovante em análise',
+        'validated': 'Pagamento aprovado',
+        'delivered': 'Produto entregue',
+        'expired': 'Transação expirada',
+        'cancelled': 'Transação cancelada'
+      };
+      
+      let message = `📋 *MEUS PEDIDOS*\n\n`;
+      const buttons = [];
+      const recentTransactions = transactions.slice(0, 10);
+      
+      for (const tx of recentTransactions) {
+        const emoji = statusEmoji[tx.status] || '📦';
+        const status = statusText[tx.status] || tx.status;
+        const productName = tx.product_name || tx.product_id || tx.media_pack_id || (tx.group_id ? 'Grupo' : 'Produto');
+        const date = new Date(tx.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        message += `${emoji} *${productName}*\n`;
+        message += `💰 R$ ${parseFloat(tx.amount).toFixed(2)}\n`;
+        message += `📊 ${status}\n`;
+        message += `📅 ${date}\n`;
+        message += `🆔 \`${tx.txid}\`\n\n`;
+        
+        if (tx.status === 'delivered') {
+          buttons.push([
+            Markup.button.callback(
+              `📦 Ver ${productName.substring(0, 20)}...`,
+              `view_transaction_${tx.txid}`
+            )
+          ]);
+        }
+      }
+      
+      if (transactions.length > 10) {
+        message += `\n_Mostrando 10 de ${transactions.length} pedidos_`;
+      }
+      
+      buttons.push([
+        Markup.button.callback('📋 Ver Histórico', 'refresh_history'),
+        Markup.button.callback('🔄 Atualizar', 'refresh_orders')
+      ]);
+      
+      return ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+      });
+    } catch (err) {
+      console.error('❌ [PEDIDOS] Erro:', err);
+      return ctx.answerCbQuery('❌ Erro ao atualizar', { show_alert: true });
+    }
+  });
+  
+  // Handler para responder ticket (usuário)
+  bot.action(/^reply_ticket_(.+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const ticketId = ctx.match[1];
+      const ticket = await db.getSupportTicket(ticketId);
+      
+      if (!ticket || ticket.telegram_id !== ctx.from.id || ticket.status === 'closed') {
+        return ctx.reply('❌ Ticket não encontrado ou já fechado.');
+      }
+      
+      global._SESSIONS = global._SESSIONS || {};
+      global._SESSIONS[ctx.from.id] = {
+        type: 'reply_ticket',
+        ticketId: ticketId
+      };
+      
+      return ctx.editMessageText(`💬 *RESPONDER TICKET*
+
+📋 Ticket: ${ticket.ticket_number}
+
+Digite sua resposta:
+
+_Cancelar: /cancelar`, {
+        parse_mode: 'Markdown'
+      });
+    } catch (err) {
+      console.error('❌ [TICKET] Erro:', err);
+      return ctx.reply('❌ Erro ao responder ticket.');
+    }
+  });
+  
+  // Handler para texto - criar ticket e responder ticket
+  bot.on('text', async (ctx, next) => {
+    // 🆕 DEBUG: Log SEMPRE para verificar se o handler está sendo executado
+    console.log(`🔍 [BOT-TEXT-HANDLER] Handler do bot.js executado para usuário ${ctx.from.id}`);
+    console.log(`🔍 [BOT-TEXT-HANDLER] Mensagem: ${ctx.message.text?.substring(0, 50)}`);
+    
+    const session = global._SESSIONS?.[ctx.from.id];
+    console.log(`🔍 [BOT-TEXT-HANDLER] Sessão: ${session ? JSON.stringify(session) : 'nenhuma'}`);
+    
+    // 🆕 RESPOSTAS AUTOMÁTICAS/FAQ - Verificar antes de processar sessões
+    // Se for sessão admin (incluindo admin_reply_ticket), passar para próximo handler (admin.js)
+    const isAdminSession = session && ['create_product', 'edit_product', 'admin_broadcast', 'admin_reply_ticket', 'add_auto_response'].includes(session.type);
+    const isTicketSession = session && (session.type === 'create_ticket' || session.type === 'reply_ticket');
+    
+    // Se for sessão admin, passar para handler do admin.js
+    if (isAdminSession) {
+      console.log(`🔍 [BOT-TEXT-HANDLER] Passando para próximo handler (admin.js) para sessão: ${session.type}`);
+      return next();
+    }
+    
+    if (!isTicketSession && !ctx.message.text.startsWith('/')) {
+      // Verificar se há resposta automática para a mensagem
+      try {
+        const autoResponse = await db.getAutoResponse(ctx.message.text);
+        if (autoResponse) {
+          await db.updateAutoResponseUsage(autoResponse.id);
+          return ctx.reply(autoResponse.response, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '💬 Abrir Ticket', callback_data: 'create_ticket' },
+                { text: '🏠 Voltar', callback_data: 'back_to_start' }
+              ]]
+            }
+          });
+        }
+      } catch (err) {
+        console.error('Erro ao buscar resposta automática:', err);
+      }
+    }
+    
+    if (session && (session.type === 'create_ticket' || session.type === 'reply_ticket')) {
+      if (ctx.message.text.startsWith('/')) {
+        if (ctx.message.text === '/cancelar') {
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Operação cancelada.');
+        }
+        return next();
+      }
+      
+      // Removido: sessão de criação de ticket (agora é direto via botões)
+      if (session.type === 'create_ticket') {
+        // Limpar sessão antiga se existir
+        delete global._SESSIONS[ctx.from.id];
+        return ctx.reply('❌ Sessão expirada. Use /suporte para criar um novo ticket.');
+      } else if (session.type === 'reply_ticket') {
+        try {
+          const ticketId = session.ticketId;
+          const user = await db.getOrCreateUser(ctx.from);
+          const ticket = await db.getSupportTicket(ticketId);
+          
+          if (!ticket || ticket.telegram_id !== ctx.from.id) {
+            delete global._SESSIONS[ctx.from.id];
+            return ctx.reply('❌ Ticket não encontrado.');
+          }
+          
+          // Adicionar mensagem do usuário
+          await db.addTicketMessage(ticketId, user.id, ctx.message.text, false);
+          
+          delete global._SESSIONS[ctx.from.id];
+          
+          // Notificar admins
+          const admins = await db.getAllAdmins();
+          for (const admin of admins) {
+            try {
+              await ctx.telegram.sendMessage(admin.telegram_id, 
+                `💬 *Nova mensagem no ticket*\n\n📋 Ticket: ${ticket.ticket_number}\n\n👤 *Cliente:*\n${ctx.message.text}\n\n📋 Use o painel admin para responder.`, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [[
+                    { text: '📋 Ver Ticket', callback_data: `admin_view_ticket_${ticketId}` }
+                  ]]
+                }
+              });
+            } catch (err) {
+              console.error('Erro ao notificar admin:', err);
+            }
+          }
+          
+          return ctx.reply(`✅ Mensagem enviada ao ticket ${ticket.ticket_number}!`, {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '📋 Ver Ticket', callback_data: `view_ticket_${ticketId}` }
+              ]]
+            }
+          });
+        } catch (err) {
+          console.error('❌ [TICKET] Erro ao responder:', err);
+          delete global._SESSIONS[ctx.from.id];
+          return ctx.reply('❌ Erro ao responder ticket.');
+        }
+      }
+      return;
+    }
+    
+    return next();
+  });
+  
+
+  // ⚠️ CONTROLE DE GRUPOS DESATIVADO NO BOT (roda via cron externo)
+  // Em ambiente serverless (Vercel), setInterval não funciona.
+  // O controle de expiração roda via cron job externo: /api/jobs/expire-members
+  // const groupControl = require('./groupControl');
+  // groupControl.startGroupControl(bot);
+
+  return bot;
+}
+
+module.exports = { createBot };
