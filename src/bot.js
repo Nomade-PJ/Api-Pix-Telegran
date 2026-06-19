@@ -180,7 +180,7 @@ function createBot(token) {
           pixPayload: charge.copiaCola
         }).catch(err => console.error('Erro ao salvar transação deep link:', err));
 
-        const expirationStr = new Date(Date.now() + 30 * 60 * 1000)
+        const expirationStr = new Date(Date.now() + 60 * 60 * 1000)
           .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
         const itemName = targetItem.group_name || targetItem.name || 'Conteúdo';
@@ -190,7 +190,7 @@ function createBot(token) {
         await ctx.replyWithPhoto(
           { source: charge.qrcodeBuffer },
           {
-            caption: `✅ *[${formattedType}] ${itemName}*\n\n💰 Pague R$ ${parseFloat(amount).toFixed(2)} usando PIX\n\n🔑 Chave: \`${charge.key}\`\n\n📋 *Cópia & Cola:*\n\`${charge.copiaCola}\`\n\n⏰ *Expira às:* ${expirationStr}\n⚠️ Prazo: 30 minutos\n\n📸 Após pagar, envie o comprovante aqui.\n\n🆔 TXID: ${txid}`,
+            caption: `✅ *[${formattedType}] ${itemName}*\n\n💰 Pague R$ ${parseFloat(amount).toFixed(2)} usando PIX\n\n🔑 Chave: \`${charge.key}\`\n\n📋 *Cópia & Cola:*\n\`${charge.copiaCola}\`\n\n⏰ *Expira às:* ${expirationStr}\n⚠️ Prazo: 60 minutos\n\n📸 Após pagar, envie o comprovante aqui.\n\n🆔 TXID: ${txid}`,
             parse_mode: 'Markdown'
           }
         );
@@ -617,7 +617,7 @@ Selecione uma opção abaixo:`;
         amount: transaction.amount
       });
 
-      // Verificar se a transação está expirada (30 minutos)
+      // Verificar se a transação está expirada (60 minutos)
       const createdAt = new Date(transaction.created_at);
       const now = new Date();
       const diffMinutes = (now - createdAt) / (1000 * 60);
@@ -628,12 +628,12 @@ Selecione uma opção abaixo:`;
         
         return ctx.reply(`⏰ *Transação expirada!*
 
-❌ Esta transação ultrapassou o prazo de 30 minutos para pagamento.
+❌ Esta transação ultrapassou o prazo de 60 minutos para pagamento.
 
 🔄 *Para comprar novamente:*
 1. Use o comando /start
 2. Selecione o produto desejado
-3. Realize o pagamento em até 30 minutos
+3. Realize o pagamento em até 60 minutos
 4. Envie o comprovante
 
 🆔 Transação expirada: ${transaction.txid}`, {
@@ -1480,8 +1480,8 @@ Clique no botão abaixo para renovar:`, {
         pixPayload: charge.copiaCola
       }).catch(err => console.error('Erro ao salvar transação:', err));
 
-      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
-      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      // Calcular tempo de expiração (60 minutos) - usar fuso horário correto
+      const expirationTime = new Date(Date.now() + 60 * 60 * 1000);
       const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
         hour: '2-digit', 
         minute: '2-digit',
@@ -1533,7 +1533,7 @@ Clique no botão abaixo para renovar:`, {
         }
       }, 15 * 60 * 1000); // 15 minutos
       
-      // Aviso de expiração e cancelamento automático aos 30 minutos
+      // Aviso de expiração e cancelamento automático aos 60 minutos
       setTimeout(async () => {
         try {
           console.log(`⏰ [EXPIRAÇÃO] Verificando expiração para TXID: ${txid}`);
@@ -1546,13 +1546,13 @@ Clique no botão abaixo para renovar:`, {
             try {
               await bot.telegram.sendMessage(chatId, `⏰ *TRANSAÇÃO EXPIRADA*
 
-❌ O prazo de 30 minutos foi atingido.
+❌ O prazo de 60 minutos foi atingido.
 Esta transação foi cancelada automaticamente.
 
 🔄 *Para comprar novamente:*
 1. Use o comando /start
 2. Selecione o produto desejado
-3. Realize o pagamento em até 30 minutos
+3. Realize o pagamento em até 60 minutos
 4. Envie o comprovante
 
 💰 Valor: R$ ${reminderAmount}
@@ -1572,7 +1572,7 @@ Esta transação foi cancelada automaticamente.
         } catch (err) {
           console.error(`❌ [EXPIRAÇÃO] Erro no cancelamento automático para TXID ${txid}:`, err.message);
         }
-      }, 30 * 60 * 1000); // 30 minutos
+      }, 60 * 60 * 1000); // 60 minutos
       
       // Montar mensagem com informação de desconto se aplicado
       let paymentMessage = '';
@@ -1607,7 +1607,7 @@ Esta transação foi cancelada automaticamente.
       paymentMessage += `
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
+⚠️ *Prazo:* 60 minutos para pagamento
 
 📸 Após pagar, envie o comprovante (foto) aqui.
 
@@ -1751,8 +1751,8 @@ Esta transação foi cancelada automaticamente.
         pixPayload: charge.copiaCola
       }).catch(err => console.error('Erro ao salvar transação:', err));
 
-      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
-      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      // Calcular tempo de expiração (60 minutos) - usar fuso horário correto
+      const expirationTime = new Date(Date.now() + 60 * 60 * 1000);
       const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
         hour: '2-digit', 
         minute: '2-digit',
@@ -1802,7 +1802,7 @@ Esta transação foi cancelada automaticamente.
         }
       }, 15 * 60 * 1000);
       
-      // Cancelamento automático aos 30 minutos
+      // Cancelamento automático aos 60 minutos
       setTimeout(async () => {
         try {
           console.log(`⏰ [EXPIRAÇÃO-MEDIAPACK] Verificando expiração para TXID: ${txid}`);
@@ -1814,13 +1814,13 @@ Esta transação foi cancelada automaticamente.
             try {
               await bot.telegram.sendMessage(chatIdMediaPack, `⏰ *TRANSAÇÃO EXPIRADA*
 
-❌ O prazo de 30 minutos foi atingido.
+❌ O prazo de 60 minutos foi atingido.
 Esta transação foi cancelada automaticamente.
 
 🔄 *Para comprar novamente:*
 1. Use o comando /start
 2. Selecione o pack desejado
-3. Realize o pagamento em até 30 minutos
+3. Realize o pagamento em até 60 minutos
 4. Envie o comprovante
 
 💰 Valor: R$ ${reminderAmountMediaPack}
@@ -1840,7 +1840,7 @@ Esta transação foi cancelada automaticamente.
         } catch (err) {
           console.error(`❌ [EXPIRAÇÃO-MEDIAPACK] Erro no cancelamento automático para TXID ${txid}:`, err.message);
         }
-      }, 30 * 60 * 1000);
+      }, 60 * 60 * 1000);
       
       // Montar mensagem com informação de desconto se aplicado
       let packPaymentMessage = '';
@@ -1877,7 +1877,7 @@ Esta transação foi cancelada automaticamente.
       packPaymentMessage += `
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
+⚠️ *Prazo:* 60 minutos para pagamento
 📦 *Entrega:* ${pack.items_per_delivery} itens aleatórios
 
 📸 Após pagar, envie o comprovante (foto) aqui.
@@ -1986,8 +1986,8 @@ ${zwsp}${zwnj}${zwsp}`, {
         pixPayload: charge.copiaCola
       }).catch(err => console.error('Erro ao salvar transação:', err));
       
-      // Calcular tempo de expiração (30 minutos) - usar fuso horário correto
-      const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
+      // Calcular tempo de expiração (60 minutos) - usar fuso horário correto
+      const expirationTime = new Date(Date.now() + 60 * 60 * 1000);
       const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
         hour: '2-digit', 
         minute: '2-digit',
@@ -2036,7 +2036,7 @@ ${zwsp}${zwnj}${zwsp}`, {
         }
       }, 15 * 60 * 1000); // 15 minutos
       
-      // Cancelamento automático aos 30 minutos
+      // Cancelamento automático aos 60 minutos
       setTimeout(async () => {
         try {
           console.log(`⏰ [EXPIRAÇÃO-GROUP] Verificando expiração para TXID: ${txid}`);
@@ -2048,13 +2048,13 @@ ${zwsp}${zwnj}${zwsp}`, {
             try {
               await bot.telegram.sendMessage(chatIdGroup, `⏰ *TRANSAÇÃO EXPIRADA*
 
-❌ O prazo de 30 minutos foi atingido.
+❌ O prazo de 60 minutos foi atingido.
 Esta transação foi cancelada automaticamente.
 
 🔄 *Para assinar novamente:*
 1. Use o comando /start
 2. Selecione o grupo desejado
-3. Realize o pagamento em até 30 minutos
+3. Realize o pagamento em até 60 minutos
 4. Envie o comprovante
 
 💰 Valor: R$ ${reminderAmountGroup}
@@ -2073,7 +2073,7 @@ Esta transação foi cancelada automaticamente.
         } catch (err) {
           console.error(`❌ [EXPIRAÇÃO-GROUP] Erro no cancelamento automático para TXID ${txid}:`, err.message);
         }
-      }, 30 * 60 * 1000); // 30 minutos
+      }, 60 * 60 * 1000); // 60 minutos
       
       // Enviar QR Code
       if (charge.qrcodeBuffer) {
@@ -2090,7 +2090,7 @@ Esta transação foi cancelada automaticamente.
 \`${charge.copiaCola}\`
 
 ⏰ *VÁLIDO ATÉ:* ${expirationStr}
-⚠️ *Prazo:* 30 minutos para pagamento
+⚠️ *Prazo:* 60 minutos para pagamento
 📅 *Duração:* ${group.subscription_days} dias de acesso
 
 📸 Após pagar, envie o comprovante (foto) aqui.
