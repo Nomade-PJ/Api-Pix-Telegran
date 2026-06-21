@@ -1,10 +1,10 @@
 // src/jobs/expireTransactions.js
-// Job automático para expirar transações pendentes após 60 minutos
+// Job automático para expirar transações pendentes após 30 minutos
 
 const db = require('../database');
 
 /**
- * Expira transações pendentes que ultrapassaram 60 minutos
+ * Expira transações pendentes que ultrapassaram 30 minutos
  * Roda automaticamente a cada 5 minutos
  */
 async function expireOldTransactions() {
@@ -182,8 +182,8 @@ async function expireOldTransactions() {
       const createdAt = new Date(transaction.created_at);
       const diffMinutes = (now - createdAt) / (1000 * 60);
       
-      // Se passou de 60 minutos, expirar
-      if (diffMinutes > 60) {
+      // Se passou de 30 minutos, expirar
+      if (diffMinutes > 30) {
         console.log(`⏰ [EXPIRE-JOB] Expirando transação ${transaction.txid} (${Math.floor(diffMinutes)} minutos)`);
         
         // Cancelar transação com tratamento de erro silencioso para erros de conexão
@@ -213,7 +213,7 @@ async function expireOldTransactions() {
           }
         }
       } else {
-        const minutesLeft = Math.floor(60 - diffMinutes);
+        const minutesLeft = Math.floor(30 - diffMinutes);
         console.log(`⏳ [EXPIRE-JOB] Transação ${transaction.txid} ainda válida (${minutesLeft} minutos restantes)`);
       }
     }
