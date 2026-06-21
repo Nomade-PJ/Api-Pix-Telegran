@@ -1,29 +1,32 @@
 // src/jobs/sendPaymentReminders.js
-// Job automático para enviar lembretes de pagamento dentro da janela de 60 minutos
-// Agora envia 3 lembretes (aos 15, 30 e 45 minutos) em vez de apenas 1
+// Job automático para enviar lembretes de pagamento dentro da janela de 30 minutos
+// Envia 3 lembretes: aos 5, 15 e 27 minutos. O último (27 min) reenvia QR Code + Copia e Cola.
 
 const db = require('../database');
 const QRCode = require('qrcode');
 
-// Checkpoints de lembrete: minuto alvo, janela mínima, janela máxima, marcador no banco, minutos restantes informados ao cliente
+// Checkpoints de lembrete: minuto alvo, janela mínima, janela máxima, marcador no banco,
+// minutos restantes informados ao cliente, e se deve reenviar QR Code + Copia e Cola
 const REMINDER_CHECKPOINTS = [
-  { min: 12, max: 18, marker: '[REMINDER_SENT_15]', minutesLeftLabel: 45 },
-  { min: 27, max: 33, marker: '[REMINDER_SENT_30]', minutesLeftLabel: 30 },
-  { min: 42, max: 48, marker: '[REMINDER_SENT_45]', minutesLeftLabel: 15 }
+  { min: 4, max: 7, marker: '[REMINDER_SENT_5]', minutesLeftLabel: 25, resendPix: false },
+  { min: 13, max: 17, marker: '[REMINDER_SENT_15]', minutesLeftLabel: 15, resendPix: false },
+  { min: 25, max: 29, marker: '[REMINDER_SENT_27]', minutesLeftLabel: 3, resendPix: true }
 ];
 
 /**
  * Envia lembretes de pagamento para transações pendentes em até 3 momentos
- * dentro da janela de 60 minutos (15, 30 e 45 minutos de idade)
+ * dentro da janela de 30 minutos (5, 15 e 27 minutos de idade).
+ * O lembrete de 27 minutos reenvia o QR Code e o Copia e Cola, já que é o último aviso
+ * antes da expiração.
  * Rodado via Serverless Cron (ex: cron-job.org)
  */
 async function sendPaymentReminders(bot) {
   try {
     console.log('⏰ [REMINDER-JOB] Iniciando verificação de lembretes de pagamento...');
 
-    // Buscar todas as transações pendentes criadas nos últimos 60 minutos
-    const sixtyMinutesAgo = new Date();
-    sixtyMinutesAgo.setMinutes(sixtyMinutesAgo.getMinutes() - 60);
+    // Buscar todas as transações pendentes criadas nos últimos 30 minutos
+    const thirtyMinutesAgo = new Date();
+    thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
 
     let transactions = [];
     let retries = 3;
@@ -35,7 +38,7 @@ async function sendPaymentReminders(bot) {
           .from('transactions')
           .select('*')
           .eq('status', 'pending')
-          .gte('created_at', sixtyMinutesAgo.toISOString())
+          .gte('created_at', thirtyMinutesAgo.toISOString())
           .order('created_at', { ascending: true });
 
         if (result.error) {
@@ -103,26 +106,45 @@ async function sendPaymentReminders(bot) {
         }
 
         const amountFormatted = parseFloat(transaction.amount).toFixed(2).replace('.', ',');
+        const pixPayload = transaction.pix_payload || transaction.pixPayload || 'N/A';
 
-        const reminderMessage = `⏰ *LEMBRETE DE PAGAMENTO*
+        // Mensagem varia: nos 5 e 15 min é só aviso; nos 27 min reenvia QR Code + Copia e Cola
+        let reminderMessage;
+        if (checkpoint.resendPix) {
+          reminderMessage = `⏰ *ÚLTIMO AVISO DE PAGAMENTO*
 
-⚠️ *Seu prazo de pagamento expira em ${checkpoint.minutesLeftLabel} minutos!*
+🚨 *Faltam apenas ${checkpoint.minutesLeftLabel} minutos para expirar!*
 
 💰 *Valor:* R$ ${amountFormatted}
 
 📋 *Copia e Cola:*
-\`${transaction.pix_payload || transaction.pixPayload || 'N/A'}\`
+\`${pixPayload}\`
 
 📸 *Escaneie o QR Code acima para pagar.*
 Após realizar o pagamento, envie o comprovante por aqui.
 
 🆔 *ID:* \`${transaction.txid}\``;
+        } else {
+          reminderMessage = `⏰ *LEMBRETE DE PAGAMENTO*
 
+⚠️ *Faltam ${checkpoint.minutesLeftLabel} minutos para expirar.*
+
+💰 *Valor:* R$ ${amountFormatted}
+
+📸 Pague usando o QR Code ou o Copia e Cola que enviamos antes.
+Após realizar o pagamento, envie o comprovante por aqui.
+
+🆔 *ID:* \`${transaction.txid}\``;
+        }
+
+        // Gerar QR Code só quando for o lembrete que reenvia o pagamento (27 min)
         let qrcodeBuffer = null;
-        try {
-          qrcodeBuffer = await QRCode.toBuffer(transaction.pix_payload || transaction.pixPayload);
-        } catch (qrErr) {
-          console.error(`❌ [REMINDER-JOB] Erro ao gerar QRCode para txid ${transaction.txid}:`, qrErr.message);
+        if (checkpoint.resendPix) {
+          try {
+            qrcodeBuffer = await QRCode.toBuffer(pixPayload);
+          } catch (qrErr) {
+            console.error(`❌ [REMINDER-JOB] Erro ao gerar QRCode para txid ${transaction.txid}:`, qrErr.message);
+          }
         }
 
         let sentSuccessfully = false;
@@ -203,7 +225,7 @@ function startReminderJob(bot) {
     return null;
   }
 
-  console.log('🚀 [REMINDER-JOB] Job de lembretes iniciado localmente (setInterval de 2 min, 3 checkpoints: 15/30/45 min)');
+  console.log('🚀 [REMINDER-JOB] Job de lembretes iniciado localmente (setInterval de 2 min, 3 checkpoints: 5/15/27 min)');
 
   sendPaymentReminders(bot);
 
