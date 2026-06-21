@@ -145,7 +145,7 @@ module.exports = async function handler(req, res) {
             });
             
             const txid = charge.charge.txid;
-            const expirationTime = new Date(Date.now() + 60 * 60 * 1000);
+            const expirationTime = new Date(Date.now() + 30 * 60 * 1000);
             const expirationStr = expirationTime.toLocaleTimeString('pt-BR', { 
               hour: '2-digit', 
               minute: '2-digit',
