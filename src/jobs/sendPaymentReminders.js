@@ -8,9 +8,9 @@ const QRCode = require('qrcode');
 // Checkpoints de lembrete: minuto alvo, janela mínima, janela máxima, marcador no banco,
 // minutos restantes informados ao cliente, e se deve reenviar QR Code + Copia e Cola
 const REMINDER_CHECKPOINTS = [
-  { min: 4, max: 7, marker: '[REMINDER_SENT_5]', minutesLeftLabel: 25, resendPix: false },
-  { min: 13, max: 17, marker: '[REMINDER_SENT_15]', minutesLeftLabel: 15, resendPix: false },
-  { min: 25, max: 29, marker: '[REMINDER_SENT_27]', minutesLeftLabel: 3, resendPix: true }
+  { min: 4, max: 7, marker: '[REMINDER_SENT_5]', minutesLeftLabel: 25, resendPix: true, isFinal: false },
+  { min: 13, max: 17, marker: '[REMINDER_SENT_15]', minutesLeftLabel: 15, resendPix: true, isFinal: false },
+  { min: 25, max: 29, marker: '[REMINDER_SENT_27]', minutesLeftLabel: 3, resendPix: true, isFinal: true }
 ];
 
 /**
@@ -108,9 +108,10 @@ async function sendPaymentReminders(bot) {
         const amountFormatted = parseFloat(transaction.amount).toFixed(2).replace('.', ',');
         const pixPayload = transaction.pix_payload || transaction.pixPayload || 'N/A';
 
-        // Mensagem varia: nos 5 e 15 min é só aviso; nos 27 min reenvia QR Code + Copia e Cola
+        // Mensagem varia o tom: 5 e 15 min usam aviso normal; 27 min usa tom de "último aviso".
+        // Em todos os casos agora reenviamos QR Code + Copia e Cola, pra evitar o cliente perder a transação de vista.
         let reminderMessage;
-        if (checkpoint.resendPix) {
+        if (checkpoint.isFinal) {
           reminderMessage = `⏰ *ÚLTIMO AVISO DE PAGAMENTO*
 
 🚨 *Faltam apenas ${checkpoint.minutesLeftLabel} minutos para expirar!*
@@ -131,13 +132,16 @@ Após realizar o pagamento, envie o comprovante por aqui.
 
 💰 *Valor:* R$ ${amountFormatted}
 
-📸 Pague usando o QR Code ou o Copia e Cola que enviamos antes.
+📋 *Copia e Cola:*
+\`${pixPayload}\`
+
+📸 *Escaneie o QR Code acima para pagar.*
 Após realizar o pagamento, envie o comprovante por aqui.
 
 🆔 *ID:* \`${transaction.txid}\``;
         }
 
-        // Gerar QR Code só quando for o lembrete que reenvia o pagamento (27 min)
+        // Gerar QR Code em todos os lembretes agora (5, 15 e 27 min)
         let qrcodeBuffer = null;
         if (checkpoint.resendPix) {
           try {
