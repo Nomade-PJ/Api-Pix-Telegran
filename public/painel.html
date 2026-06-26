@@ -1199,6 +1199,7 @@ function go(sec,el){
   if(el)el.classList.add('on');
   document.getElementById('pgTit').textContent=meta[sec]||sec;
   cur=sec;
+  history.replaceState(null,'','#'+sec);
   if(isMob())closeSB();
   if(loads[sec])loads[sec]();
 }
@@ -1808,7 +1809,15 @@ function cycleTheme() {
   },{passive:true});
 })();
 
-checkAuth().then(()=>loadDash());
+checkAuth().then(()=>{
+  const sec=(location.hash||'').replace('#','');
+  if(sec && document.getElementById('s-'+sec)){
+    const el=document.querySelector('.ni[onclick*="\''+sec+'\'"]');
+    go(sec,el);
+  } else {
+    loadDash();
+  }
+});
 setInterval(()=>{if(cur==='dashboard')loadDash();},60000);
 </script>
 </div><!-- /wrap -->
