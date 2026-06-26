@@ -661,24 +661,32 @@ module.exports = (req, res) => {
     </div>
 
     <script>
-        // Validar senha e verificar status do contrato
+        // Validar senha junto com o servidor (a senha é checada de verdade no backend agora,
+        // não mais só aqui no navegador — antes dava pra pular essa tela chamando a API direto)
+        let CONTRACT_PASSWORD_CACHE = null;
+
         async function validatePassword() {
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('loginError');
             const btn = document.querySelector('.btn');
 
-            if (password !== 'valdirene2026') {
-                errorDiv.innerHTML = '<span style="color:#e74c3c;">❌ Senha incorreta. Por favor, tente novamente.</span>';
-                return;
-            }
-
-            // Mostrar loading no botão
             btn.disabled = true;
             btn.textContent = '⏳ Verificando...';
             errorDiv.textContent = '';
 
             try {
-                const response = await fetch('/api/check-contract?clientName=VALDIRENE%20SOUZA%20DOS%20SANTOS');
+                const response = await fetch('/api/check-contract', {
+                    headers: { 'X-Contract-Password': password }
+                });
+
+                if (response.status === 401) {
+                    errorDiv.innerHTML = '<span style="color:#e74c3c;">❌ Senha incorreta. Por favor, tente novamente.</span>';
+                    btn.disabled = false;
+                    btn.textContent = 'Acessar Contrato';
+                    return;
+                }
+
+                CONTRACT_PASSWORD_CACHE = password;
                 const data = await response.json();
 
                 if (data.alreadySigned && data.isExpired) {
@@ -790,16 +798,11 @@ module.exports = (req, res) => {
                 const response = await fetch('/api/sign-contract', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'X-Contract-Password': CONTRACT_PASSWORD_CACHE || ''
                     },
                     body: JSON.stringify({
-                        clientName: 'VALDIRENE SOUZA DOS SANTOS',
-                        clientFullName: fullName,
-                        startDate: '2025-12-01',
-                        endDate: '2026-03-01',
-                        monthlyValue: 800,
-                        initialValue: 600,
-                        totalValue: 2200
+                        clientFullName: fullName
                     })
                 });
 

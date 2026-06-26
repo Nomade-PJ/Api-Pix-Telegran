@@ -828,19 +828,16 @@ td b{color:var(--fg);font-weight:500}
 
     <!-- ═══ TICKETS ═══ -->
     <div id="s-tickets" class="sec">
-      <div class="filters" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select class="fi fi-sm" id="tickSt" onchange="loadTickets()">
-            <option value="all">Todos</option><option value="open">Abertos</option>
-            <option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option>
-          </select>
-          <select class="fi fi-sm" id="tickPri" onchange="loadTickets()">
-            <option value="">Prioridade</option>
-            <option value="urgent">🔴 Urgente</option><option value="high">🟡 Alta</option>
-            <option value="normal">⚪ Normal</option><option value="low">🟢 Baixa</option>
-          </select>
-        </div>
-        <button class="btn bp bsm" onclick="openBulkTicketMsg()" style="white-space:nowrap">✉ Msg para tickets abertos</button>
+      <div class="filters">
+        <select class="fi fi-sm" id="tickSt" onchange="loadTickets()">
+          <option value="all">Todos</option><option value="open">Abertos</option>
+          <option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option>
+        </select>
+        <select class="fi fi-sm" id="tickPri" onchange="loadTickets()">
+          <option value="">Prioridade</option>
+          <option value="urgent">🔴 Urgente</option><option value="high">🟡 Alta</option>
+          <option value="normal">⚪ Normal</option><option value="low">🟢 Baixa</option>
+        </select>
       </div>
       <div class="card tbl-w hm" id="tickTable"><div class="loader"><div class="spin"></div></div></div>
       <div class="mrows sm" id="tickCards" style="display:none"></div>
@@ -1107,75 +1104,48 @@ td b{color:var(--fg);font-weight:500}
   <div class="mfoot"><button class="btn bgh" onclick="closeM('mBC')">Fechar</button><button class="btn br bxs" id="btnCBC" style="display:none">✕ Cancelar campanha</button></div>
 </div></div>
 
-<div class="ov" id="mBulkTicket"><div class="modal xl"><div class="mdrag"></div>
-  <div class="mtitle">✉ Mensagem para todos os tickets abertos</div>
-  <div style="font-size:12px;color:var(--fg3);margin-bottom:14px">Esta mensagem será enviada para <b>todos os tickets com status "aberto"</b>. Após o envio, cada ticket será marcado como <b>resolvido e fechado</b> automaticamente.</div>
-  <div class="frow"><label>Mensagem *</label><textarea class="fi" id="bulkTickMsg" rows="6"></textarea></div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-    <button class="btn bgh bxs" onclick="setBulkPreset()" style="font-size:11px">↺ Restaurar mensagem padrão</button>
-  </div>
-  <div id="bulkTickProgress" style="display:none;margin-top:14px">
-    <div style="font-size:12px;color:var(--fg3);margin-bottom:6px" id="bulkTickStatus">Processando...</div>
-    <div style="background:var(--line);border-radius:8px;height:6px;overflow:hidden"><div id="bulkTickBar" style="background:var(--purple);height:100%;width:0%;transition:width .3s"></div></div>
-  </div>
-  <div class="mfoot" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;align-items:center">
-    <button class="btn br bxs" id="btnBulkCloseAll" onclick="closeAllTickets()" style="font-size:12px">✕ Fechar todos (sem mensagem)</button>
-    <div style="display:flex;gap:8px">
-      <button class="btn bgh" id="btnBulkCancel" onclick="closeM('mBulkTicket')">Cancelar</button>
-      <button class="btn bp" id="btnBulkSend" onclick="sendBulkTicketMsg()">✉ Enviar e fechar todos os abertos</button>
-    </div>
-  </div>
-</div></div>
-
 <div class="toasts" id="toasts"></div>
 <script>
 const API='/api/panel/data';
-let TOKEN=localStorage.getItem('panel_token')||'';
+function getCookie(name){
+  const m=document.cookie.match('(?:^|; )'+name+'=([^;]*)');
+  return m?decodeURIComponent(m[1]):'';
+}
+// Escapa HTML para evitar XSS armazenado quando inserimos dados vindos
+// de usuários do bot (nome, username, assunto de ticket, mensagens) via innerHTML.
+function esc(str){
+  if(str===null||str===undefined) return '';
+  return String(str).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 let pg={tx:1,tick:1};
 let dbt={};
-// Detecta seção do hash ANTES de qualquer render
-const _initHash=(location.hash||'').replace('#','');
-let cur=_initHash||'dashboard';
+let cur='dashboard';
 let uState={loading:false,done:false,offset:0,limit:30,q:'',bl:''};
 let delData={product:[],mediapack:[],group:[]};
 
-// Aplica a seção inicial imediatamente (sem chamar loads ainda)
-(function _applyInitSec(){
-  const sec=cur;
-  document.querySelectorAll('.sec').forEach(s=>s.classList.remove('on'));
-  document.getElementById('s-'+sec)?.classList.add('on');
-  // Marca sidebar
-  const elNi=document.querySelector('.ni[onclick*="\''+sec+'\'"]');
-  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
-  if(elNi)elNi.classList.add('on');
-  const metaInit={dashboard:'dashboard',stats:'analytics',transactions:'transações',failures:'falhas',products:'produtos',mediapacks:'media packs',groups:'grupos VIP',coupons:'cupons',users:'usuários',trusted:'confiáveis',tickets:'tickets',broadcast:'broadcast',autoresponses:'auto respostas',deliver:'entrega manual',settings:'configurações',ddds:'DDDs bloqueados'};
-  const pgTit=document.getElementById('pgTit');
-  if(pgTit)pgTit.textContent=metaInit[sec]||sec;
-  // Mobile nav highlight
-  const mnMap={dashboard:'mn-d',transactions:'mn-t',users:'mn-u',tickets:'mn-tk'};
-  document.querySelectorAll('.mni').forEach(e=>e.classList.remove('on'));
-  document.getElementById(mnMap[sec]||'mn-more')?.classList.add('on');
-})();
-
 // ── AUTH ──────────────────────────────────────────────
 async function checkAuth(){
-  if(!TOKEN){location.href='/login';return;}
   try{
-    const r=await fetch('/api/panel/auth',{headers:{Authorization:'Bearer '+TOKEN}});
-    if(!r.ok){localStorage.clear();location.href='/login';return;}
-    const u=JSON.parse(localStorage.getItem('panel_user')||'{}');
-    document.getElementById('uName').textContent=u.name||'Admin';
-    document.getElementById('uAv').textContent=(u.name||'A')[0].toUpperCase();
-  }catch(e){localStorage.clear();location.href='/login';}
+    const r=await fetch('/api/panel/auth',{credentials:'include'});
+    if(!r.ok){location.href='/login';return;}
+    const d=await r.json();
+    document.getElementById('uName').textContent=d.name||'Admin';
+    document.getElementById('uAv').textContent=(d.name||'A')[0].toUpperCase();
+  }catch(e){location.href='/login';}
 }
-function logout(){localStorage.clear();location.href='/login';}
+async function logout(){
+  try{
+    await fetch('/api/panel/auth',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCookie('panel_csrf')},body:JSON.stringify({logout:true})});
+  }catch(e){}
+  location.href='/login';
+}
 
 async function api(action,opts={}){
   const{method='GET',body,params={}}=opts;
   const qs=new URLSearchParams({action,...params}).toString();
   try{
-    const r=await fetch(API+'?'+qs,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+TOKEN},body:body?JSON.stringify(body):undefined});
-    if(r.status===401){localStorage.clear();location.href='/login';}
+    const r=await fetch(API+'?'+qs,{method,credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCookie('panel_csrf')},body:body?JSON.stringify(body):undefined});
+    if(r.status===401){location.href='/login';}
     return r.json();
   }catch(e){return{error:e.message};}
 }
@@ -1229,8 +1199,6 @@ function go(sec,el){
   if(el)el.classList.add('on');
   document.getElementById('pgTit').textContent=meta[sec]||sec;
   cur=sec;
-  // Persiste a seção na URL sem rolar
-  history.replaceState(null,'','#'+sec);
   if(isMob())closeSB();
   if(loads[sec])loads[sec]();
 }
@@ -1316,15 +1284,15 @@ async function loadDash(){
   )).join('')||'<div class="empty" style="padding:24px"><div class="et">sem transações</div></div>';
   // Recent users — cards ricos
   document.getElementById('dUsers').innerHTML=(d.recentUsers||[]).map(function(u){
-    var nm=(u.first_name||'?')+(u.last_name?' '+u.last_name:'');
+    var nm=esc((u.first_name||'?')+(u.last_name?' '+u.last_name:''));
     var ini=nm.charAt(0).toUpperCase();
-    var tgLink=u.username?'https://t.me/'+u.username:'';
+    var tgLink=u.username?'https://t.me/'+encodeURIComponent(u.username):'';
     var badge=u.is_blocked?'<span class="tag t-blocked" style="font-size:9px;margin-left:4px">bloq</span>'
              :u.is_admin?'<span class="tag t-v" style="font-size:9px;margin-left:4px">admin</span>'
              :u.is_creator?'<span class="tag t-g" style="font-size:9px;margin-left:4px">creator</span>':'';
-    var phone=u.phone_number?'<span style="font-size:10px;color:var(--fg3)">📞 '+u.phone_number+'</span>':'';
-    var uname=u.username?'<a href="'+tgLink+'" target="_blank" class="mono" style="font-size:10.5px;color:var(--violl)" onclick="event.stopPropagation()">@'+u.username+'</a>':'';
-    var tid='<span class="mono" style="font-size:10px;color:var(--fg3)">'+u.telegram_id+'</span>';
+    var phone=u.phone_number?'<span style="font-size:10px;color:var(--fg3)">📞 '+esc(u.phone_number)+'</span>':'';
+    var uname=u.username?'<a href="'+tgLink+'" target="_blank" class="mono" style="font-size:10.5px;color:var(--violl)" onclick="event.stopPropagation()">@'+esc(u.username)+'</a>':'';
+    var tid='<span class="mono" style="font-size:10px;color:var(--fg3)">'+esc(u.telegram_id)+'</span>';
     return '<div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line2);cursor:pointer" onclick="viewUser('+u.telegram_id+')">'  
       +'<div style="width:36px;height:36px;border-radius:10px;background:var(--s3);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:var(--violl);flex-shrink:0">'+ini+'</div>'
       +'<div style="flex:1;min-width:0;overflow:hidden">'
@@ -1508,11 +1476,11 @@ async function loadMoreUsers(){
   if(uState.offset>=d.total){uState.done=true;document.getElementById('usersEnd').style.display='block';}
   document.getElementById('userLbl').textContent=d.total.toLocaleString()+' total';
   const rows=d.data.map(u=>{
-    const nm=(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'');
-    const tg=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
-    const ph=u.phone_number?'<a href="tel:'+u.phone_number+'" class="mono" style="color:var(--fg3);font-size:11px">'+u.phone_number+'</a>':'<span style="color:var(--fg3)">—</span>';
+    const nm=esc((u.first_name||'N/A')+(u.last_name?' '+u.last_name:''));
+    const tg=u.username?'https://t.me/'+encodeURIComponent(u.username):'tg://user?id='+u.telegram_id;
+    const ph=u.phone_number?'<a href="tel:'+encodeURIComponent(u.phone_number)+'" class="mono" style="color:var(--fg3);font-size:11px">'+esc(u.phone_number)+'</a>':'<span style="color:var(--fg3)">—</span>';
     return'<tr><td><a onclick="viewUser(\''+u.telegram_id+'\')" style="cursor:pointer;font-weight:500">'+nm+'</a></td>'
-      +'<td class="hm"><a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:11px">@'+(u.username||'—')+'</a></td>'
+      +'<td class="hm"><a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:11px">@'+esc(u.username||'—')+'</a></td>'
       +'<td class="hm mono" style="font-size:11px">'+u.telegram_id+'</td>'
       +'<td class="hm">'+ph+'</td>'
       +'<td>'+(u.is_blocked?tag('blocked'):tag('active'))+(u.is_admin?' '+tag('admin'):'')+(u.is_creator?' '+tag('creator'):'')+'</td>'
@@ -1532,8 +1500,8 @@ async function viewUser(tid){
   const u=d.user;
   const nm=(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'');
   document.getElementById('udName').textContent=nm;
-  const tg=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
-  document.getElementById('udMeta').innerHTML='<a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:12px">@'+(u.username||'—')+'</a> · <span class="mono" style="font-size:12px">'+u.telegram_id+'</span>';
+  const tg=u.username?'https://t.me/'+encodeURIComponent(u.username):'tg://user?id='+u.telegram_id;
+  document.getElementById('udMeta').innerHTML='<a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:12px">@'+esc(u.username||'—')+'</a> · <span class="mono" style="font-size:12px">'+esc(u.telegram_id)+'</span>';
   const tags=[];
   if(u.is_blocked)tags.push(tag('blocked'));
   if(u.is_admin)tags.push(tag('admin'));
@@ -1541,7 +1509,7 @@ async function viewUser(tid){
   if(!u.is_blocked&&!u.is_admin&&!u.is_creator)tags.push(tag('active'));
   document.getElementById('udTags').innerHTML=tags.join('');
   document.getElementById('udCreated').textContent=fmtDs(u.created_at);
-  document.getElementById('udPhone').innerHTML=u.phone_number?'<a href="tel:'+u.phone_number+'" style="color:var(--violl)" class="mono">'+u.phone_number+'</a>':'—';
+  document.getElementById('udPhone').innerHTML=u.phone_number?'<a href="tel:'+encodeURIComponent(u.phone_number)+'" style="color:var(--violl)" class="mono">'+esc(u.phone_number)+'</a>':'—';
   document.getElementById('udTx').innerHTML=(d.transactions||[]).map(t=>dli('<div class="mono" style="font-size:11px;color:var(--fg3)">'+(t.txid||'').substring(0,20)+'…</div>','<div style="display:flex;gap:6px;align-items:center"><span class="mono">'+fmtR(t.amount)+'</span>'+tag(t.status)+'</div>')).join('')||'<div class="empty" style="padding:16px"><div class="et">sem transações</div></div>';
   const acts=document.getElementById('udActs');
   acts.innerHTML='<button class="btn bgh" onclick="closeM(\'mUser\')">Fechar</button>';
@@ -1560,8 +1528,8 @@ async function loadTrusted(){
     +d.data.map(u=>{
       const sc=parseFloat(u.trust_score||0);
       const cl=sc>=80?'#10b981':sc>=50?'#f59e0b':'#ef4444';
-      const tg=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
-      return'<tr><td><a href="'+tg+'" target="_blank" style="font-weight:500;color:var(--fg)">'+u.telegram_id+'</a>'+(u.username?'<br><span class="mono" style="font-size:10px;color:var(--violl)">@'+u.username+'</span>':'')+'</td>'
+      const tg=u.username?'https://t.me/'+encodeURIComponent(u.username):'tg://user?id='+u.telegram_id;
+      return'<tr><td><a href="'+tg+'" target="_blank" style="font-weight:500;color:var(--fg)">'+esc(u.telegram_id)+'</a>'+(u.username?'<br><span class="mono" style="font-size:10px;color:var(--violl)">@'+esc(u.username)+'</span>':'')+'</td>'
       +'<td><div style="min-width:80px"><div style="display:flex;justify-content:space-between;margin-bottom:2px"><span class="mono" style="font-size:11px;color:'+cl+'">'+sc.toFixed(0)+'</span></div><div class="tbar"><div class="tfill" style="width:'+sc+'%;background:'+cl+'"></div></div></div></td>'
       +'<td class="hm mono">'+( u.approved_transactions||0)+'</td>'
       +'<td class="hm mono">'+(u.rejected_transactions||0)+'</td>'
@@ -1587,12 +1555,12 @@ async function loadTickets(p){
   document.getElementById('tickTable').innerHTML='<table><thead><tr><th>#</th><th>Usuário</th><th class="hm">Assunto</th><th>Prioridade</th><th>Status</th><th>Ação</th></tr></thead><tbody>'
     +d.data.map(t=>'<tr><td class="mono" style="font-size:11px">'+t.id+'</td>'
     +'<td class="mono" style="font-size:11px">'+t.telegram_id+'</td>'
-    +'<td class="hm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t.subject||'—')+'</td>'
+    +'<td class="hm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.subject||'—')+'</td>'
     +'<td>'+tag(t.priority||'normal')+'</td>'
     +'<td>'+tag(t.status)+'</td>'
     +'<td><button class="btn bd bxs" onclick="viewTicket(\''+t.id+'\')">Ver</button></td></tr>'
     ).join('')+'</tbody></table>';
-  document.getElementById('tickCards').innerHTML=d.data.map(t=>'<div class="mrow" onclick="viewTicket(\''+t.id+'\')"><div class="mr-top"><div><div class="mr-id">#'+t.id+' · '+t.telegram_id+'</div><div style="font-size:12px;font-weight:500;margin-top:2px;color:var(--fg)">'+(t.subject||'sem assunto')+'</div></div></div><div class="mr-mid">'+tag(t.status)+tag(t.priority||'normal')+'</div><div class="mr-bot"><div class="mr-date">'+fmtD(t.created_at)+'</div></div></div>').join('');
+  document.getElementById('tickCards').innerHTML=d.data.map(t=>'<div class="mrow" onclick="viewTicket(\''+t.id+'\')"><div class="mr-top"><div><div class="mr-id">#'+t.id+' · '+esc(t.telegram_id)+'</div><div style="font-size:12px;font-weight:500;margin-top:2px;color:var(--fg)">'+esc(t.subject||'sem assunto')+'</div></div></div><div class="mr-mid">'+tag(t.status)+tag(t.priority||'normal')+'</div><div class="mr-bot"><div class="mr-date">'+fmtD(t.created_at)+'</div></div></div>').join('');
   pager('tickPager',d.page,d.pages,'loadTickets');
 }
 async function viewTicket(id){
@@ -1602,7 +1570,7 @@ async function viewTicket(id){
   const t=d.ticket;if(!t)return;
   document.getElementById('mTickTit').textContent='Ticket #'+t.id+(t.subject?' — '+t.subject:'');
   document.getElementById('mTickInfo').innerHTML=[tag(t.status),tag(t.priority||'normal'),'<span class="mono">'+t.telegram_id+'</span>','<span>'+fmtD(t.created_at)+'</span>'].join('');
-  document.getElementById('mTickMsgs').innerHTML=(d.messages||[]).map(m=>'<div class="msg '+(m.sender_type==='admin'?'adm':'usr')+'">'+m.message+'<div class="msg-m">'+(m.sender_type==='admin'?'Admin · ':'')+fmtD(m.created_at)+'</div></div>').join('')||'<div style="text-align:center;padding:20px;color:var(--fg3);font-size:12px">sem mensagens</div>';
+  document.getElementById('mTickMsgs').innerHTML=(d.messages||[]).map(m=>'<div class="msg '+(m.sender_type==='admin'?'adm':'usr')+'">'+esc(m.message)+'<div class="msg-m">'+(m.sender_type==='admin'?'Admin · ':'')+fmtD(m.created_at)+'</div></div>').join('')||'<div style="text-align:center;padding:20px;color:var(--fg3);font-size:12px">sem mensagens</div>';
   const btnPT=document.getElementById('btnPT');
   btnPT.style.display=t.status==='open'?'inline-flex':'none';
   btnPT.onclick=()=>{progressT(id);};
@@ -1627,13 +1595,13 @@ async function loadBC(){
   const d=await api('broadcasts');
   if(!d.data?.length){document.getElementById('bcList').innerHTML='<div class="empty"><div class="ei">◎</div><div class="et">nenhuma campanha</div></div>';return;}
   const colDot={sending:'#10b981',sent:'#34d399',pending_broadcast:'#a78bfa',draft:'#606080',failed:'#f87171'};
-  document.getElementById('bcList').innerHTML=d.data.map(b=>'<div class="bc"><div class="bc-dot" style="background:'+(colDot[b.status]||'#606080')+'"></div><div class="bc-body"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><b style="font-size:13px">'+(b.campaign_name||'Sem nome')+'</b>'+tag(b.status)+'</div><div style="font-size:11px;color:var(--fg3);margin:4px 0">'+fmtD(b.created_at)+(b.target_audience?' · '+b.target_audience:'')+(b.coupon_code?' · 🏷'+b.coupon_code:'')+'</div><div style="font-size:11px;color:var(--fg3)">✓ '+(b.success_count||0)+' · ✗ '+(b.failed_count||0)+'</div><div style="margin-top:8px"><button class="btn bd bxs" onclick="viewBC(\''+b.id+'\')">Detalhes</button>'+(b.status==='sending'||b.status==='pending_broadcast'?' <button class="btn br bxs" onclick="cancelBC(\''+b.id+'\')">Cancelar</button>':'')+'</div></div></div>').join('');
+  document.getElementById('bcList').innerHTML=d.data.map(b=>'<div class="bc"><div class="bc-dot" style="background:'+(colDot[b.status]||'#606080')+'"></div><div class="bc-body"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><b style="font-size:13px">'+esc(b.campaign_name||'Sem nome')+'</b>'+tag(b.status)+'</div><div style="font-size:11px;color:var(--fg3);margin:4px 0">'+fmtD(b.created_at)+(b.target_audience?' · '+esc(b.target_audience):'')+(b.coupon_code?' · 🏷'+esc(b.coupon_code):'')+'</div><div style="font-size:11px;color:var(--fg3)">✓ '+(b.success_count||0)+' · ✗ '+(b.failed_count||0)+'</div><div style="margin-top:8px"><button class="btn bd bxs" onclick="viewBC(\''+b.id+'\')">Detalhes</button>'+(b.status==='sending'||b.status==='pending_broadcast'?' <button class="btn br bxs" onclick="cancelBC(\''+b.id+'\')">Cancelar</button>':'')+'</div></div></div>').join('');
 }
 async function viewBC(id){
   const d=await api('broadcasts');
   const b=(d.data||[]).find(x=>x.id==id);if(!b)return;
   document.getElementById('mBCTit').textContent=b.campaign_name||'Campanha #'+id;
-  document.getElementById('mBCBody').innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+tag(b.status)+(b.target_audience?'<span class="tag">'+b.target_audience+'</span>':'')+(b.coupon_code?'<span class="tag t-pending">🏷 '+b.coupon_code+'</span>':'')+'</div><div style="font-size:12px;color:var(--fg3);margin-bottom:8px">✓ '+(b.success_count||0)+' entregues &nbsp;·&nbsp; ✗ '+(b.failed_count||0)+' falhas</div>'+(b.message?'<div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Mensagem</div><div style="background:var(--s3);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;max-height:200px;overflow-y:auto">'+b.message+'</div>':'');
+  document.getElementById('mBCBody').innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+tag(b.status)+(b.target_audience?'<span class="tag">'+esc(b.target_audience)+'</span>':'')+(b.coupon_code?'<span class="tag t-pending">🏷 '+esc(b.coupon_code)+'</span>':'')+'</div><div style="font-size:12px;color:var(--fg3);margin-bottom:8px">✓ '+(b.success_count||0)+' entregues &nbsp;·&nbsp; ✗ '+(b.failed_count||0)+' falhas</div>'+(b.message?'<div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Mensagem</div><div style="background:var(--s3);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;max-height:200px;overflow-y:auto">'+esc(b.message)+'</div>':'');
   const btnC=document.getElementById('btnCBC');
   btnC.style.display=(b.status==='sending'||b.status==='pending_broadcast')?'inline-flex':'none';
   btnC.onclick=()=>{cancelBC(id);closeM('mBC');};
@@ -1673,7 +1641,7 @@ async function lookupDelUser(){
   if(!d.user){box.style.display='block';box.innerHTML='<span style="color:var(--danger)">❌ Usuário não encontrado</span>';return;}
   const u=d.user;
   box.style.display='block';
-  box.innerHTML='<b>'+(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'')+'</b>'+(u.username?' @'+u.username:'')+(u.is_blocked?' <span style="color:var(--danger)">(bloqueado)</span>':'');
+  box.innerHTML='<b>'+esc(u.first_name||'N/A')+(u.last_name?' '+esc(u.last_name):'')+'</b>'+(u.username?' @'+esc(u.username):'')+(u.is_blocked?' <span style="color:var(--danger)">(bloqueado)</span>':'');
 }
 async function doManualDeliver(){
   const tid=document.getElementById('delUserId').value;
@@ -1840,137 +1808,7 @@ function cycleTheme() {
   },{passive:true});
 })();
 
-// ── BULK TICKET MSG ──────────────────────────────────
-const BULK_MSG_DEFAULT=`Olá! Passando para informar que nosso suporte agora está centralizado no link abaixo:\n\n👉 https://t.me/suportedireto\n\nPor lá você consegue atendimento mais rápido e direto. Qualquer dúvida, pode chamar por lá!\n\nObrigado pela compreensão. 🙏`;
-function setBulkPreset(){
-  document.getElementById('bulkTickMsg').value=BULK_MSG_DEFAULT;
-}
-function openBulkTicketMsg(){
-  setBulkPreset();
-  document.getElementById('bulkTickProgress').style.display='none';
-  document.getElementById('bulkTickStatus').textContent='Processando...';
-  document.getElementById('bulkTickBar').style.width='0%';
-  document.getElementById('btnBulkSend').disabled=false;
-  document.getElementById('btnBulkCancel').disabled=false;
-  document.getElementById('btnBulkCloseAll').disabled=false;
-  openM('mBulkTicket');
-}
-function _setBulkBusy(busy){
-  document.getElementById('btnBulkSend').disabled=busy;
-  document.getElementById('btnBulkCancel').disabled=busy;
-  document.getElementById('btnBulkCloseAll').disabled=busy;
-}
-// Busca todos os tickets de todos os status EXCETO fechado
-async function _fetchAllNonClosed(){
-  const statuses=['open','in_progress','resolved'];
-  let all=[];
-  for(const st of statuses){
-    let page=1;
-    while(true){
-      const d=await api('tickets',{params:{page,limit:50,status:st,priority:''}});
-      if(!d||!d.data||d.data.length===0)break;
-      all=[...all,...d.data];
-      if(page>=(d.pages||1))break;
-      page++;
-    }
-  }
-  // Remove duplicados por id
-  const seen=new Set();
-  return all.filter(t=>{if(seen.has(t.id))return false;seen.add(t.id);return true;});
-}
-async function closeAllTickets(){
-  _setBulkBusy(true);
-  const prog=document.getElementById('bulkTickProgress');
-  const statusEl=document.getElementById('bulkTickStatus');
-  const barEl=document.getElementById('bulkTickBar');
-  prog.style.display='block';
-  barEl.style.width='0%';
-  statusEl.textContent='Buscando tickets não fechados...';
-  try{
-    const allTickets=await _fetchAllNonClosed();
-    if(allTickets.length===0){
-      toast('Nenhum ticket pendente encontrado.','warn');
-      _setBulkBusy(false);prog.style.display='none';return;
-    }
-    let ok=0,fail=0;
-    for(let i=0;i<allTickets.length;i++){
-      const t=allTickets[i];
-      const pct=Math.round(((i+1)/allTickets.length)*100);
-      statusEl.textContent=`Fechando ${i+1} de ${allTickets.length}... (${pct}%)`;
-      barEl.style.width=pct+'%';
-      try{
-        // Só fecha — sem mensagem, sem resolver
-        await api('closeTicket',{method:'POST',body:{ticket_id:t.id}});
-        ok++;
-      }catch(e){fail++;}
-    }
-    barEl.style.width='100%';
-    statusEl.textContent=`✓ Concluído! ${ok} ticket(s) fechados${fail>0?' · '+fail+' falhas':''}.`;
-    toast(`${ok} ticket(s) fechados${fail>0?', '+fail+' falharam':''}.`,fail>0?'warn':'ok');
-    setTimeout(()=>{closeM('mBulkTicket');loadTickets();},2000);
-  }catch(e){
-    toast('Erro ao fechar tickets.','err');
-    _setBulkBusy(false);prog.style.display='none';
-  }
-}
-async function sendBulkTicketMsg(){
-  const message=document.getElementById('bulkTickMsg').value.trim();
-  if(!message){toast('Digite uma mensagem.','err');return;}
-  _setBulkBusy(true);
-  const prog=document.getElementById('bulkTickProgress');
-  const statusEl=document.getElementById('bulkTickStatus');
-  const barEl=document.getElementById('bulkTickBar');
-  prog.style.display='block';
-  barEl.style.width='0%';
-  statusEl.textContent='Buscando tickets abertos...';
-  try{
-    // Busca só os tickets com status open
-    let page=1,allTickets=[];
-    while(true){
-      const d=await api('tickets',{params:{page,limit:50,status:'open',priority:''}});
-      if(!d||!d.data||d.data.length===0)break;
-      allTickets=[...allTickets,...d.data];
-      if(page>=(d.pages||1))break;
-      page++;
-    }
-    if(allTickets.length===0){
-      toast('Nenhum ticket aberto encontrado.','warn');
-      _setBulkBusy(false);prog.style.display='none';return;
-    }
-    let ok=0,fail=0;
-    for(let i=0;i<allTickets.length;i++){
-      const t=allTickets[i];
-      const pct=Math.round(((i+1)/allTickets.length)*100);
-      statusEl.textContent=`Processando ${i+1} de ${allTickets.length}... (${pct}%)`;
-      barEl.style.width=pct+'%';
-      try{
-        await api('replyTicket',{method:'POST',body:{ticket_id:t.id,message}});
-        await api('resolveTicket',{method:'POST',body:{ticket_id:t.id}});
-        await api('closeTicket',{method:'POST',body:{ticket_id:t.id}});
-        ok++;
-      }catch(e){fail++;}
-    }
-    barEl.style.width='100%';
-    statusEl.textContent=`✓ Concluído! ${ok} ticket(s) respondidos e fechados${fail>0?' · '+fail+' falhas':''}.`;
-    toast(`${ok} ticket(s) respondidos e fechados${fail>0?', '+fail+' falharam':''}.`,fail>0?'warn':'ok');
-    setTimeout(()=>{closeM('mBulkTicket');loadTickets();},2500);
-  }catch(e){
-    toast('Erro ao processar tickets.','err');
-    _setBulkBusy(false);prog.style.display='none';
-  }
-}
-
-checkAuth().then(()=>{
-  // A seção já foi aplicada visualmente no DOM via _applyInitSec().
-  // Aqui só carregamos os dados da seção atual sem renavegar.
-  const validSec=Object.keys(loads);
-  if(validSec.includes(cur)&&loads[cur]){
-    loads[cur]();
-  }else{
-    cur='dashboard';
-    go('dashboard',document.querySelector('.ni[onclick*="\'dashboard\'"]'));
-  }
-});
+checkAuth().then(()=>loadDash());
 setInterval(()=>{if(cur==='dashboard')loadDash();},60000);
 </script>
 </div><!-- /wrap -->

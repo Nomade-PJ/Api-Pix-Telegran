@@ -1,7 +1,22 @@
 const { Telegraf } = require('telegraf');
+const crypto = require('crypto');
 const BotLogic = require('../src/bot');
 
 let bot;
+
+// Comparação segura contra timing attack — sempre compara o mesmo número de bytes
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Compara contra um buffer do mesmo tamanho de A só pra gastar tempo equivalente,
+    // mas sempre retorna falso quando os tamanhos não coincidem.
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 // ============================================================
 // VALIDAÇÃO DE ASSINATURA DO TELEGRAM
@@ -11,11 +26,11 @@ let bot;
 function validateTelegramSignature(req) {
   const secretToken = process.env.WEBHOOK_SECRET_TOKEN;
 
-  // Se não tiver secret configurado, logar aviso mas não bloquear
-  // (compatibilidade durante deploy — remover após confirmar funcionamento)
+  // Se não tiver secret configurado, BLOQUEAR tudo (fail-closed).
+  // Sem isso, qualquer um poderia enviar updates falsos pro bot.
   if (!secretToken) {
-    console.warn('⚠️ [WEBHOOK] WEBHOOK_SECRET_TOKEN não configurado — validação desativada');
-    return true;
+    console.error('🚫 [WEBHOOK] WEBHOOK_SECRET_TOKEN não configurado — bloqueando TODAS as requisições por segurança. Configure a variável de ambiente e faça redeploy.');
+    return false;
   }
 
   const receivedToken = req.headers['x-telegram-bot-api-secret-token'];
@@ -25,7 +40,7 @@ function validateTelegramSignature(req) {
     return false;
   }
 
-  if (receivedToken !== secretToken) {
+  if (!safeCompare(receivedToken, secretToken)) {
     console.error('🚫 [WEBHOOK] Secret token inválido — bloqueada');
     return false;
   }

@@ -5,15 +5,39 @@ const crypto = require('crypto');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const JWT_SECRET = process.env.ADMIN_SECRET;
 
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 function verifyToken(token) {
   try {
     const [data, sig] = token.split('.');
     const expected = crypto.createHmac('sha256', JWT_SECRET).update(data).digest('hex');
-    if (sig !== expected) return null;
+    if (!safeCompare(sig, expected)) return null;
     const payload = JSON.parse(Buffer.from(data, 'base64').toString());
     if (payload.exp < Date.now()) return null;
     return payload;
   } catch { return null; }
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const out = {};
+  header.split(';').forEach(part => {
+    const idx = part.indexOf('=');
+    if (idx === -1) return;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) out[key] = decodeURIComponent(val);
+  });
+  return out;
 }
 
 function extractDDD(phone) {
@@ -41,13 +65,29 @@ function getBrasilStartOf(period) {
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const allowedOrigin = process.env.PANEL_ORIGIN || 'https://api-pix-telegran.vercel.app';
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-CSRF-Token');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const auth = req.headers.authorization?.replace('Bearer ', '');
-  if (!auth || !verifyToken(auth)) return res.status(401).json({ error: 'Unauthorized' });
+  // Autenticação via cookie httpOnly (não mais Authorization header / localStorage)
+  const cookies = parseCookies(req);
+  const sessionToken = cookies['panel_session'];
+  if (!sessionToken) return res.status(401).json({ error: 'Unauthorized' });
+
+  const payload = verifyToken(sessionToken);
+  if (!payload) return res.status(401).json({ error: 'Unauthorized' });
+
+  // Proteção CSRF: para métodos que alteram dados, exige o header X-CSRF-Token
+  // batendo com o csrf embutido no token de sessão (double-submit cookie pattern).
+  if (req.method !== 'GET') {
+    const csrfHeader = req.headers['x-csrf-token'];
+    if (!csrfHeader || !payload.csrf || !safeCompare(csrfHeader, payload.csrf)) {
+      return res.status(403).json({ error: 'CSRF token inválido ou ausente' });
+    }
+  }
 
   const { action } = req.query;
 

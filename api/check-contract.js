@@ -2,43 +2,54 @@
 // API para verificar status do contrato
 
 const { createClient } = require('@supabase/supabase-js');
+const crypto = require('crypto');
 
-// Inicializar Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 
-module.exports = async (req, res) => {
-  // Configurar CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
-  // Responder OPTIONS para CORS preflight
+module.exports = async (req, res) => {
+  const allowedOrigin = process.env.CONTRACT_ORIGIN || 'https://api-pix-telegran.vercel.app';
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Contract-Password');
+
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // Apenas GET permitido
   if (req.method !== 'GET') {
-    return res.status(405).json({ 
-      success: false, 
-      message: 'Método não permitido' 
-    });
+    return res.status(405).json({ success: false, message: 'Método não permitido' });
+  }
+
+  const CONTRACT_PASSWORD = process.env.CONTRACT_PASSWORD;
+  if (!CONTRACT_PASSWORD) {
+    console.error('❌ [CONTRACT] CONTRACT_PASSWORD não configurado — bloqueando consulta por segurança.');
+    return res.status(500).json({ success: false, message: 'Servidor mal configurado. Contate o administrador.' });
+  }
+
+  const providedPassword = req.headers['x-contract-password'];
+  if (!providedPassword || !safeCompare(providedPassword, CONTRACT_PASSWORD)) {
+    return res.status(401).json({ success: false, message: 'Senha incorreta' });
   }
 
   try {
-    const { clientName } = req.query;
+    // clientName não é mais lido da query string — fixo no servidor,
+    // já que esta página serve um único contrato específico.
+    const clientName = 'VALDIRENE SOUZA DOS SANTOS';
 
-    if (!clientName) {
-      return res.status(400).json({
-        success: false,
-        message: 'Nome do cliente é obrigatório'
-      });
-    }
-
-    // Buscar contrato ativo do cliente
     const { data: contract, error } = await supabase
       .from('contracts')
       .select('*')
@@ -46,12 +57,11 @@ module.exports = async (req, res) => {
       .eq('status', 'active')
       .single();
 
-    if (error && error.code !== 'PGRST116') { // PGRST116 = nenhum registro encontrado
+    if (error && error.code !== 'PGRST116') {
       console.error('Erro ao buscar contrato:', error);
       throw error;
     }
 
-    // Se não encontrou contrato, retorna disponível
     if (!contract) {
       return res.status(200).json({
         success: true,
@@ -60,13 +70,11 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Verificar se o contrato expirou
     const endDate = new Date(contract.end_date);
     const today = new Date();
     const isExpired = endDate < today;
 
     if (isExpired) {
-      // Atualizar status para expirado
       await supabase
         .from('contracts')
         .update({ status: 'expired', updated_at: new Date().toISOString() })
@@ -87,7 +95,6 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Contrato ativo
     return res.status(200).json({
       success: true,
       alreadySigned: true,
