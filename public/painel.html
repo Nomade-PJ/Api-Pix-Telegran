@@ -614,7 +614,8 @@ td b{color:var(--fg);font-weight:500}
 #dUsers>div:hover{background:var(--s3)}
 </style>
 </head>
-<body>
+<body style="visibility:hidden">
+<script>setTimeout(()=>{document.body.style.visibility='visible';},2000);</script>
 <div class="wrap">
 
 <!-- SIDEBAR -->
@@ -1825,7 +1826,14 @@ function applyHashSection(){
   }
   return 'dashboard';
 }
-const initialSec=applyHashSection();
+let initialSec='dashboard';
+try{
+  initialSec=applyHashSection();
+}catch(e){
+  console.error('Erro ao aplicar seção inicial:',e);
+}finally{
+  document.body.style.visibility='visible';
+}
 
 checkAuth().then(()=>{
   if(loads[initialSec])loads[initialSec]();
