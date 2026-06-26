@@ -950,6 +950,34 @@ td b{color:var(--fg);font-weight:500}
   </div><!-- /content -->
 </div><!-- /main -->
 
+<script>
+// Script LEVE e ANTECIPADO — roda assim que o menu e as seções existem no DOM,
+// sem esperar o resto da página (modais, etc.) carregar. Decide a seção certa
+// e revela a página imediatamente, eliminando o flash do Dashboard.
+(function(){
+  try{
+    var sec=(location.hash||'').replace('#','');
+    if(sec && document.getElementById('s-'+sec)){
+      var allSec=document.querySelectorAll('.sec');
+      for(var i=0;i<allSec.length;i++) allSec[i].classList.remove('on');
+      var allNi=document.querySelectorAll('.ni');
+      for(var j=0;j<allNi.length;j++) allNi[j].classList.remove('on');
+      document.getElementById('s-'+sec).classList.add('on');
+      var navEl=document.querySelector('.ni[onclick*="\'"+sec+"\'"]');
+      if(navEl) navEl.classList.add('on');
+      window.__initialSec=sec;
+    } else {
+      window.__initialSec='dashboard';
+    }
+  }catch(e){
+    console.error('Erro ao decidir seção inicial:',e);
+    window.__initialSec='dashboard';
+  }finally{
+    document.body.style.visibility='visible';
+  }
+})();
+</script>
+
 <!-- BOTTOM NAV MOBILE -->
 <nav class="mnav" id="mnav">
   <div class="mni on" id="mn-d" onclick="goMN('dashboard','mn-d')">
@@ -1810,30 +1838,12 @@ function cycleTheme() {
   },{passive:true});
 })();
 
-// Aplica a seção certa IMEDIATAMENTE (antes do checkAuth terminar), só pra eliminar
-// o "flash" visual do Dashboard aparecendo por um instante antes de trocar de seção.
-function applyHashSection(){
-  const sec=(location.hash||'').replace('#','');
-  if(sec && document.getElementById('s-'+sec)){
-    document.querySelectorAll('.sec').forEach(s=>s.classList.remove('on'));
-    document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
-    document.getElementById('s-'+sec).classList.add('on');
-    const el=document.querySelector('.ni[onclick*="\''+sec+'\'"]');
-    if(el)el.classList.add('on');
-    document.getElementById('pgTit').textContent=meta[sec]||sec;
-    cur=sec;
-    return sec;
-  }
-  return 'dashboard';
-}
-let initialSec='dashboard';
-try{
-  initialSec=applyHashSection();
-}catch(e){
-  console.error('Erro ao aplicar seção inicial:',e);
-}finally{
-  document.body.style.visibility='visible';
-}
+// A seção já foi decidida e revelada pelo script leve mais acima (logo após o
+// menu/conteúdo no HTML) — aqui só completamos o título da página e o estado 'cur',
+// que dependem de coisas definidas mais abaixo no código (meta, etc.)
+const initialSec=window.__initialSec||'dashboard';
+document.getElementById('pgTit').textContent=meta[initialSec]||initialSec;
+cur=initialSec;
 
 checkAuth().then(()=>{
   if(loads[initialSec])loads[initialSec]();
