@@ -963,7 +963,7 @@ td b{color:var(--fg);font-weight:500}
       var allNi=document.querySelectorAll('.ni');
       for(var j=0;j<allNi.length;j++) allNi[j].classList.remove('on');
       document.getElementById('s-'+sec).classList.add('on');
-      var navEl=document.querySelector('.ni[onclick*="\'"+sec+"\'"]');
+      var navEl=document.querySelector(".ni[onclick*='"+sec+"']");
       if(navEl) navEl.classList.add('on');
       window.__initialSec=sec;
     } else {
