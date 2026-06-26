@@ -1809,14 +1809,26 @@ function cycleTheme() {
   },{passive:true});
 })();
 
-checkAuth().then(()=>{
+// Aplica a seção certa IMEDIATAMENTE (antes do checkAuth terminar), só pra eliminar
+// o "flash" visual do Dashboard aparecendo por um instante antes de trocar de seção.
+function applyHashSection(){
   const sec=(location.hash||'').replace('#','');
   if(sec && document.getElementById('s-'+sec)){
+    document.querySelectorAll('.sec').forEach(s=>s.classList.remove('on'));
+    document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
+    document.getElementById('s-'+sec).classList.add('on');
     const el=document.querySelector('.ni[onclick*="\''+sec+'\'"]');
-    go(sec,el);
-  } else {
-    loadDash();
+    if(el)el.classList.add('on');
+    document.getElementById('pgTit').textContent=meta[sec]||sec;
+    cur=sec;
+    return sec;
   }
+  return 'dashboard';
+}
+const initialSec=applyHashSection();
+
+checkAuth().then(()=>{
+  if(loads[initialSec])loads[initialSec]();
 });
 setInterval(()=>{if(cur==='dashboard')loadDash();},60000);
 </script>
