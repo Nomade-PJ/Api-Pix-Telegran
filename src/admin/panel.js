@@ -2799,16 +2799,9 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
       // Entregar produto via Storage (mesmo fluxo do automático)
       await deliver.deliverProductFromStorage(targetUserId, productId, product.name);
       
+      const escP = v => String(v||'').replace(/[_*[\]`]/g,'\\$&');
       // Mensagem de sucesso
-      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
-
-👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
-🆔 ID: ${targetUserId}
-📦 Produto: ${product.name}
-💰 Valor: R$ ${product.price}
-
-✅ Status: Entregue
-📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*\n\n👤 Usuário: ${escP(targetUser.first_name)}${targetUser.username ? ` (@${escP(targetUser.username)})` : ''}\n🆔 ID: ${targetUserId}\n📦 Produto: ${escP(product.name)}\n💰 Valor: R$ ${product.price}\n\n✅ Status: Entregue\n📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
@@ -2890,17 +2883,9 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
           // Marcar como entregue
           await db.markAsDelivered(existingTransaction.txid);
           
+          const escM = v => String(v||'').replace(/[_*[\]`]/g,'\\$&');
           // Mensagem de sucesso
-          return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
-
-👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
-🆔 ID: ${targetUserId}
-📸 Media Pack: ${pack.name}
-💰 Valor: R$ ${actualAmount}
-🆔 TXID: ${existingTransaction.txid}
-
-✅ Status: Entregue
-📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+          return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*\n\n👤 Usuário: ${escM(targetUser.first_name)}${targetUser.username ? ` (@${escM(targetUser.username)})` : ''}\n🆔 ID: ${targetUserId}\n📸 Media Pack: ${escM(pack.name)}\n💰 Valor: R$ ${actualAmount}\n🆔 TXID: ${escM(existingTransaction.txid)}\n\n✅ Status: Entregue\n📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [[
@@ -2951,17 +2936,9 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
         db
       );
       
+      const escM2 = v => String(v||'').replace(/[_*[\]`]/g,'\\$&');
       // Mensagem de sucesso
-      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
-
-👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
-🆔 ID: ${targetUserId}
-📸 Media Pack: ${pack.name}
-💰 Valor: R$ ${actualAmount}
-🆔 TXID: ${tempTxid}
-
-✅ Status: Entregue
-📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*\n\n👤 Usuário: ${escM2(targetUser.first_name)}${targetUser.username ? ` (@${escM2(targetUser.username)})` : ''}\n🆔 ID: ${targetUserId}\n📸 Media Pack: ${escM2(pack.name)}\n💰 Valor: R$ ${actualAmount}\n🆔 TXID: ${escM2(tempTxid)}\n\n✅ Status: Entregue\n📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
@@ -3026,30 +3003,14 @@ O grupo foi removido completamente do banco de dados.`, { parse_mode: 'Markdown'
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + group.subscription_days);
       
+      const escG = v => String(v||'').replace(/[_*[\]`]/g,'\\$&');
       // Notificar usuário
-      await ctx.telegram.sendMessage(targetUserId, `✅ *ASSINATURA APROVADA!*
-
-👥 Grupo: ${group.group_name}
-📅 Acesso válido por: ${group.subscription_days} dias
-🕐 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}
-
-${group.group_link ? `🔗 Link: ${group.group_link}` : ''}
-
-Obrigado pela preferência! 💚`, {
+      await ctx.telegram.sendMessage(targetUserId, `✅ *ASSINATURA APROVADA!*\n\n👥 Grupo: ${escG(group.group_name)}\n📅 Acesso válido por: ${group.subscription_days} dias\n🕐 Expira em: ${expiresAt.toLocaleDateString('pt-BR')}\n\n${group.group_link ? `🔗 Link: ${escG(group.group_link)}` : ''}\n\nObrigado pela preferência! 💚`, {
         parse_mode: 'Markdown'
       });
       
       // Mensagem de sucesso para admin
-      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*
-
-👤 Usuário: ${targetUser.first_name}${targetUser.username ? ` (@${targetUser.username})` : ''}
-🆔 ID: ${targetUserId}
-👥 Grupo: ${group.group_name}
-💰 Valor: R$ ${group.subscription_price}
-📅 Dias de acesso: ${group.subscription_days}
-
-✅ Status: Entregue
-📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
+      return ctx.reply(`✅ *ENTREGA REALIZADA COM SUCESSO!*\n\n👤 Usuário: ${escG(targetUser.first_name)}${targetUser.username ? ` (@${escG(targetUser.username)})` : ''}\n🆔 ID: ${targetUserId}\n👥 Grupo: ${escG(group.group_name)}\n💰 Valor: R$ ${group.subscription_price}\n📅 Dias de acesso: ${group.subscription_days}\n\n✅ Status: Entregue\n📅 Data: ${new Date().toLocaleString('pt-BR')}`, {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[

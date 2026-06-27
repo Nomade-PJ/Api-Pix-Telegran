@@ -402,7 +402,8 @@ Digite o ID do produto:
         // Botão de cancelar
         buttons.push([{ text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }]);
         
-        return ctx.reply(`✅ *Usuário encontrado!*\n\n👤 Nome: ${user.first_name}${user.username ? ` (@${user.username})` : ''}\n🆔 ID: ${userId}\n\n📦 *Selecione o produto/grupo para entregar:*`, {
+        const esc = v => String(v||'').replace(/[_*[\]`]/g,'\\$&');
+        return ctx.reply(`✅ *Usuário encontrado!*\n\n👤 Nome: ${esc(user.first_name)}${user.username ? ` (@${esc(user.username)})` : ''}\n🆔 ID: ${userId}\n\n📦 *Selecione o produto/grupo para entregar:*`, {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: buttons
@@ -537,7 +538,8 @@ Digite o ID do produto:
         // Botão de cancelar
         buttons.push([{ text: '❌ Cancelar', callback_data: 'cancel_entregar_txid' }]);
 
-        return ctx.reply(`✅ *Usuário encontrado!*\n\n👤 Nome: ${user.first_name}${user.username ? ` (@${user.username})` : ''}\n🆔 ID: ${tx.telegram_id}\n\n📦 *Selecione o produto/grupo para entregar:*`, {
+        const esc2 = v => String(v||'').replace(/[_*[\]`]/g,'\\$&');
+        return ctx.reply(`✅ *Usuário encontrado!*\n\n👤 Nome: ${esc2(user.first_name)}${user.username ? ` (@${esc2(user.username)})` : ''}\n🆔 ID: ${tx.telegram_id}\n\n📦 *Selecione o produto/grupo para entregar:*`, {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: buttons
