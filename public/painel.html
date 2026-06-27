@@ -1142,20 +1142,40 @@ async function checkAuth(){
   if(!TOKEN){location.href='/login';return;}
   try{
     const r=await fetch('/api/panel/auth',{headers:{Authorization:'Bearer '+TOKEN}});
-    if(!r.ok){localStorage.clear();location.href='/login';return;}
+    if(r.status===401){
+      // Token inválido ou expirado — limpa e redireciona
+      localStorage.removeItem('panel_token');
+      localStorage.removeItem('panel_user');
+      location.href='/login';
+      return;
+    }
+    if(!r.ok){
+      // Erro de servidor (500, etc) — NÃO desloga, só avisa
+      console.warn('[checkAuth] Erro de servidor:', r.status);
+      return;
+    }
     const u=JSON.parse(localStorage.getItem('panel_user')||'{}');
     document.getElementById('uName').textContent=u.name||'Admin';
     document.getElementById('uAv').textContent=(u.name||'A')[0].toUpperCase();
-  }catch(e){localStorage.clear();location.href='/login';}
+  }catch(e){
+    // Erro de rede — NÃO desloga, pode ser offline momentâneo
+    console.warn('[checkAuth] Erro de rede:', e.message);
+  }
 }
-function logout(){localStorage.clear();location.href='/login';}
+function logout(){localStorage.removeItem('panel_token');localStorage.removeItem('panel_user');location.href='/login';}
 
 async function api(action,opts={}){
   const{method='GET',body,params={}}=opts;
   const qs=new URLSearchParams({action,...params}).toString();
   try{
     const r=await fetch(API+'?'+qs,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+TOKEN},body:body?JSON.stringify(body):undefined});
-    if(r.status===401){localStorage.clear();location.href='/login';}
+    if(r.status===401){
+      // Só redireciona se o token foi explicitamente rejeitado
+      localStorage.removeItem('panel_token');
+      localStorage.removeItem('panel_user');
+      location.href='/login';
+      return null;
+    }
     return r.json();
   }catch(e){return{error:e.message};}
 }
@@ -1209,6 +1229,7 @@ function go(sec,el){
   if(el)el.classList.add('on');
   document.getElementById('pgTit').textContent=meta[sec]||sec;
   cur=sec;
+  history.replaceState(null,'','#'+sec);
   if(isMob())closeSB();
   if(loads[sec])loads[sec]();
 }
@@ -1860,7 +1881,16 @@ function cycleTheme() {
   },{passive:true});
 })();
 
-checkAuth().then(()=>loadDash());
+checkAuth().then(()=>{
+  // Restaura aba do hash da URL (ex: /painel#tickets)
+  const hash=(location.hash||'').replace('#','');
+  const validSec=Object.keys(loads);
+  if(hash&&validSec.includes(hash)){
+    go(hash,document.querySelector(`.ni[onclick*="'${hash}'"]`));
+  }else{
+    loadDash();
+  }
+});
 setInterval(()=>{if(cur==='dashboard')loadDash();},60000);
 </script>
 </div><!-- /wrap -->
