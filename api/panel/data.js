@@ -7,7 +7,10 @@ const JWT_SECRET = process.env.ADMIN_SECRET;
 
 function verifyToken(token) {
   try {
-    const [data, sig] = token.split('.');
+    const lastDot = token.lastIndexOf('.');
+    if (lastDot === -1) return null;
+    const data = token.substring(0, lastDot);
+    const sig = token.substring(lastDot + 1);
     const expected = crypto.createHmac('sha256', JWT_SECRET).update(data).digest('hex');
     if (sig !== expected) return null;
     const payload = JSON.parse(Buffer.from(data, 'base64').toString());
