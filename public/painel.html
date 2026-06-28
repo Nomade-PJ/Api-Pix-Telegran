@@ -614,7 +614,8 @@ td b{color:var(--fg);font-weight:500}
 #dUsers>div:hover{background:var(--s3)}
 </style>
 </head>
-<body>
+<body style="visibility:hidden">
+<script>setTimeout(()=>{document.body.style.visibility='visible';},2000);</script>
 <div class="wrap">
 
 <!-- SIDEBAR -->
@@ -846,10 +847,6 @@ td b{color:var(--fg);font-weight:500}
 
     <!-- ═══ BROADCAST ═══ -->
     <div id="s-broadcast" class="sec">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <span style="font-size:13px;font-weight:500">Campanhas de Broadcast</span>
-        <button class="btn bp bxs" onclick="openM('mNewBC')">+ Nova campanha</button>
-      </div>
       <div id="bcList"><div class="loader"><div class="spin"></div></div></div>
     </div>
 
@@ -952,6 +949,34 @@ td b{color:var(--fg);font-weight:500}
 
   </div><!-- /content -->
 </div><!-- /main -->
+
+<script>
+// Script LEVE e ANTECIPADO — roda assim que o menu e as seções existem no DOM,
+// sem esperar o resto da página (modais, etc.) carregar. Decide a seção certa
+// e revela a página imediatamente, eliminando o flash do Dashboard.
+(function(){
+  try{
+    var sec=(location.hash||'').replace('#','');
+    if(sec && document.getElementById('s-'+sec)){
+      var allSec=document.querySelectorAll('.sec');
+      for(var i=0;i<allSec.length;i++) allSec[i].classList.remove('on');
+      var allNi=document.querySelectorAll('.ni');
+      for(var j=0;j<allNi.length;j++) allNi[j].classList.remove('on');
+      document.getElementById('s-'+sec).classList.add('on');
+      var navEl=document.querySelector(".ni[onclick*='"+sec+"']");
+      if(navEl) navEl.classList.add('on');
+      window.__initialSec=sec;
+    } else {
+      window.__initialSec='dashboard';
+    }
+  }catch(e){
+    console.error('Erro ao decidir seção inicial:',e);
+    window.__initialSec='dashboard';
+  }finally{
+    document.body.style.visibility='visible';
+  }
+})();
+</script>
 
 <!-- BOTTOM NAV MOBILE -->
 <nav class="mnav" id="mnav">
@@ -1065,7 +1090,6 @@ td b{color:var(--fg);font-weight:500}
     <button class="btn bw bxs" id="btnPT" style="display:none" onclick="">▶ Iniciar</button>
     <button class="btn bd bxs" id="btnCT">✕ Fechar ticket</button>
     <button class="btn bg_ bxs" id="btnRT">✓ Resolver</button>
-    <button class="btn bp bxs" id="btnDT" style="display:none" onclick="">📦 Entregar produto</button>
   </div>
 </div></div>
 
@@ -1103,24 +1127,6 @@ td b{color:var(--fg);font-weight:500}
   <div class="mfoot"><button class="btn bgh" onclick="closeM('mMP')">Fechar</button></div>
 </div></div>
 
-<div class="ov" id="mNewBC"><div class="modal xl"><div class="mdrag"></div>
-  <div class="mtitle">◎ Nova campanha de broadcast</div>
-  <div class="frow"><label>Nome da campanha</label><input class="fi" id="bcName" placeholder="Ex: Promoção de junho"></div>
-  <div class="frow"><label>Mensagem *</label><textarea class="fi" id="bcMsg" rows="5" placeholder="Digite a mensagem que será enviada..."></textarea></div>
-  <div class="frow"><label>Público alvo</label>
-    <select class="fi" id="bcAudi">
-      <option value="todos">👥 Todos os usuários</option>
-      <option value="compradores">💳 Quem já comprou</option>
-      <option value="nao_compradores">👤 Quem nunca comprou</option>
-    </select>
-  </div>
-  <div class="frow"><label>Cupom (opcional)</label><input class="fi" id="bcCoupon" placeholder="Ex: PROMO10"></div>
-  <div class="mfoot">
-    <button class="btn bgh" onclick="closeM('mNewBC')">Cancelar</button>
-    <button class="btn bp" onclick="createBroadcast()">◎ Criar e agendar</button>
-  </div>
-</div></div>
-
 <div class="ov" id="mBC"><div class="modal xl"><div class="mdrag"></div>
   <div class="mtitle" id="mBCTit">Campanha</div>
   <div id="mBCBody"></div>
@@ -1130,7 +1136,16 @@ td b{color:var(--fg);font-weight:500}
 <div class="toasts" id="toasts"></div>
 <script>
 const API='/api/panel/data';
-let TOKEN=localStorage.getItem('panel_token')||'';
+function getCookie(name){
+  const m=document.cookie.match('(?:^|; )'+name+'=([^;]*)');
+  return m?decodeURIComponent(m[1]):'';
+}
+// Escapa HTML para evitar XSS armazenado quando inserimos dados vindos
+// de usuários do bot (nome, username, assunto de ticket, mensagens) via innerHTML.
+function esc(str){
+  if(str===null||str===undefined) return '';
+  return String(str).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 let pg={tx:1,tick:1};
 let dbt={};
 let cur='dashboard';
@@ -1139,31 +1154,27 @@ let delData={product:[],mediapack:[],group:[]};
 
 // ── AUTH ──────────────────────────────────────────────
 async function checkAuth(){
-  if(!TOKEN){location.href='/login';return;}
-  // Preenche nome sem validar no servidor — o servidor vai rejeitar nas chamadas de dados se inválido
-  const u=JSON.parse(localStorage.getItem('panel_user')||'{}');
-  if(u.name){
-    document.getElementById('uName').textContent=u.name||'Admin';
-    document.getElementById('uAv').textContent=(u.name||'A')[0].toUpperCase();
-  }
-  // Tenta validar mas NÃO desloga em nenhum cenário — só o botão logout desloga
   try{
-    const r=await fetch('/api/panel/auth',{headers:{Authorization:'Bearer '+TOKEN}});
-    if(r.ok){
-      const u2=JSON.parse(localStorage.getItem('panel_user')||'{}');
-      document.getElementById('uName').textContent=u2.name||'Admin';
-      document.getElementById('uAv').textContent=(u2.name||'A')[0].toUpperCase();
-    }
-  }catch(e){console.warn('[checkAuth]',e.message);}
+    const r=await fetch('/api/panel/auth',{credentials:'include'});
+    if(!r.ok){location.href='/login';return;}
+    const d=await r.json();
+    document.getElementById('uName').textContent=d.name||'Admin';
+    document.getElementById('uAv').textContent=(d.name||'A')[0].toUpperCase();
+  }catch(e){location.href='/login';}
 }
-function logout(){localStorage.removeItem('panel_token');localStorage.removeItem('panel_user');location.href='/login';}
+async function logout(){
+  try{
+    await fetch('/api/panel/auth',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCookie('panel_csrf')},body:JSON.stringify({logout:true})});
+  }catch(e){}
+  location.href='/login';
+}
 
 async function api(action,opts={}){
   const{method='GET',body,params={}}=opts;
   const qs=new URLSearchParams({action,...params}).toString();
   try{
-    const r=await fetch(API+'?'+qs,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+TOKEN},body:body?JSON.stringify(body):undefined});
-    if(!r.ok)return{error:'HTTP '+r.status};
+    const r=await fetch(API+'?'+qs,{method,credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-Token':getCookie('panel_csrf')},body:body?JSON.stringify(body):undefined});
+    if(r.status===401){location.href='/login';}
     return r.json();
   }catch(e){return{error:e.message};}
 }
@@ -1303,15 +1314,15 @@ async function loadDash(){
   )).join('')||'<div class="empty" style="padding:24px"><div class="et">sem transações</div></div>';
   // Recent users — cards ricos
   document.getElementById('dUsers').innerHTML=(d.recentUsers||[]).map(function(u){
-    var nm=(u.first_name||'?')+(u.last_name?' '+u.last_name:'');
+    var nm=esc((u.first_name||'?')+(u.last_name?' '+u.last_name:''));
     var ini=nm.charAt(0).toUpperCase();
-    var tgLink=u.username?'https://t.me/'+u.username:'';
+    var tgLink=u.username?'https://t.me/'+encodeURIComponent(u.username):'';
     var badge=u.is_blocked?'<span class="tag t-blocked" style="font-size:9px;margin-left:4px">bloq</span>'
              :u.is_admin?'<span class="tag t-v" style="font-size:9px;margin-left:4px">admin</span>'
              :u.is_creator?'<span class="tag t-g" style="font-size:9px;margin-left:4px">creator</span>':'';
-    var phone=u.phone_number?'<span style="font-size:10px;color:var(--fg3)">📞 '+u.phone_number+'</span>':'';
-    var uname=u.username?'<a href="'+tgLink+'" target="_blank" class="mono" style="font-size:10.5px;color:var(--violl)" onclick="event.stopPropagation()">@'+u.username+'</a>':'';
-    var tid='<span class="mono" style="font-size:10px;color:var(--fg3)">'+u.telegram_id+'</span>';
+    var phone=u.phone_number?'<span style="font-size:10px;color:var(--fg3)">📞 '+esc(u.phone_number)+'</span>':'';
+    var uname=u.username?'<a href="'+tgLink+'" target="_blank" class="mono" style="font-size:10.5px;color:var(--violl)" onclick="event.stopPropagation()">@'+esc(u.username)+'</a>':'';
+    var tid='<span class="mono" style="font-size:10px;color:var(--fg3)">'+esc(u.telegram_id)+'</span>';
     return '<div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line2);cursor:pointer" onclick="viewUser('+u.telegram_id+')">'  
       +'<div style="width:36px;height:36px;border-radius:10px;background:var(--s3);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:var(--violl);flex-shrink:0">'+ini+'</div>'
       +'<div style="flex:1;min-width:0;overflow:hidden">'
@@ -1388,7 +1399,7 @@ async function approveTx(txid){await api('approveTransaction',{method:'POST',bod
 async function rejectTx(txid){if(!confirm('Rejeitar?'))return;await api('rejectTransaction',{method:'POST',body:{txid}});toast('Rejeitada.','warn');loadTx();}
 async function deliverTx(txid){await api('deliverByTxid',{method:'POST',body:{txid}});toast('↓ Entregue.');loadTx();}
 function openRev(txid){document.getElementById('revTxid').value=txid;document.getElementById('revLbl').textContent=txid.substring(0,24)+'…';document.getElementById('revReason').value='';openM('mReverse');}
-async function doReverse(){const txid=document.getElementById('revTxid').value,r=document.getElementById('revReason').value;await api('reverseTransaction',{method:'POST',body:{txid,reason:r}});closeM('mReverse');toast('↩ Revertida.','warn');loadTx();}
+async function doReverse(){const txid=document.getElementById('revTxid').value,r=document.getElementById('revReason').value;const d=await api('reverseTransaction',{method:'POST',body:{txid,reason:r}});closeM('mReverse');const rev=d.revokedMessages||0;toast(rev>0?`↩ Revertida. ${rev} mídia(s) removida(s) do Telegram.`:'↩ Revertida.','warn');loadTx();}
 function setTxPg(p){loadTx(p);}
 
 // ── FALHAS ────────────────────────────────────────────
@@ -1495,11 +1506,11 @@ async function loadMoreUsers(){
   if(uState.offset>=d.total){uState.done=true;document.getElementById('usersEnd').style.display='block';}
   document.getElementById('userLbl').textContent=d.total.toLocaleString()+' total';
   const rows=d.data.map(u=>{
-    const nm=(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'');
-    const tg=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
-    const ph=u.phone_number?'<a href="tel:'+u.phone_number+'" class="mono" style="color:var(--fg3);font-size:11px">'+u.phone_number+'</a>':'<span style="color:var(--fg3)">—</span>';
+    const nm=esc((u.first_name||'N/A')+(u.last_name?' '+u.last_name:''));
+    const tg=u.username?'https://t.me/'+encodeURIComponent(u.username):'tg://user?id='+u.telegram_id;
+    const ph=u.phone_number?'<a href="tel:'+encodeURIComponent(u.phone_number)+'" class="mono" style="color:var(--fg3);font-size:11px">'+esc(u.phone_number)+'</a>':'<span style="color:var(--fg3)">—</span>';
     return'<tr><td><a onclick="viewUser(\''+u.telegram_id+'\')" style="cursor:pointer;font-weight:500">'+nm+'</a></td>'
-      +'<td class="hm"><a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:11px">@'+(u.username||'—')+'</a></td>'
+      +'<td class="hm"><a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:11px">@'+esc(u.username||'—')+'</a></td>'
       +'<td class="hm mono" style="font-size:11px">'+u.telegram_id+'</td>'
       +'<td class="hm">'+ph+'</td>'
       +'<td>'+(u.is_blocked?tag('blocked'):tag('active'))+(u.is_admin?' '+tag('admin'):'')+(u.is_creator?' '+tag('creator'):'')+'</td>'
@@ -1519,8 +1530,8 @@ async function viewUser(tid){
   const u=d.user;
   const nm=(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'');
   document.getElementById('udName').textContent=nm;
-  const tg=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
-  document.getElementById('udMeta').innerHTML='<a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:12px">@'+(u.username||'—')+'</a> · <span class="mono" style="font-size:12px">'+u.telegram_id+'</span>';
+  const tg=u.username?'https://t.me/'+encodeURIComponent(u.username):'tg://user?id='+u.telegram_id;
+  document.getElementById('udMeta').innerHTML='<a href="'+tg+'" target="_blank" class="mono" style="color:var(--violl);font-size:12px">@'+esc(u.username||'—')+'</a> · <span class="mono" style="font-size:12px">'+esc(u.telegram_id)+'</span>';
   const tags=[];
   if(u.is_blocked)tags.push(tag('blocked'));
   if(u.is_admin)tags.push(tag('admin'));
@@ -1528,7 +1539,7 @@ async function viewUser(tid){
   if(!u.is_blocked&&!u.is_admin&&!u.is_creator)tags.push(tag('active'));
   document.getElementById('udTags').innerHTML=tags.join('');
   document.getElementById('udCreated').textContent=fmtDs(u.created_at);
-  document.getElementById('udPhone').innerHTML=u.phone_number?'<a href="tel:'+u.phone_number+'" style="color:var(--violl)" class="mono">'+u.phone_number+'</a>':'—';
+  document.getElementById('udPhone').innerHTML=u.phone_number?'<a href="tel:'+encodeURIComponent(u.phone_number)+'" style="color:var(--violl)" class="mono">'+esc(u.phone_number)+'</a>':'—';
   document.getElementById('udTx').innerHTML=(d.transactions||[]).map(t=>dli('<div class="mono" style="font-size:11px;color:var(--fg3)">'+(t.txid||'').substring(0,20)+'…</div>','<div style="display:flex;gap:6px;align-items:center"><span class="mono">'+fmtR(t.amount)+'</span>'+tag(t.status)+'</div>')).join('')||'<div class="empty" style="padding:16px"><div class="et">sem transações</div></div>';
   const acts=document.getElementById('udActs');
   acts.innerHTML='<button class="btn bgh" onclick="closeM(\'mUser\')">Fechar</button>';
@@ -1547,8 +1558,8 @@ async function loadTrusted(){
     +d.data.map(u=>{
       const sc=parseFloat(u.trust_score||0);
       const cl=sc>=80?'#10b981':sc>=50?'#f59e0b':'#ef4444';
-      const tg=u.username?'https://t.me/'+u.username:'tg://user?id='+u.telegram_id;
-      return'<tr><td><a href="'+tg+'" target="_blank" style="font-weight:500;color:var(--fg)">'+u.telegram_id+'</a>'+(u.username?'<br><span class="mono" style="font-size:10px;color:var(--violl)">@'+u.username+'</span>':'')+'</td>'
+      const tg=u.username?'https://t.me/'+encodeURIComponent(u.username):'tg://user?id='+u.telegram_id;
+      return'<tr><td><a href="'+tg+'" target="_blank" style="font-weight:500;color:var(--fg)">'+esc(u.telegram_id)+'</a>'+(u.username?'<br><span class="mono" style="font-size:10px;color:var(--violl)">@'+esc(u.username)+'</span>':'')+'</td>'
       +'<td><div style="min-width:80px"><div style="display:flex;justify-content:space-between;margin-bottom:2px"><span class="mono" style="font-size:11px;color:'+cl+'">'+sc.toFixed(0)+'</span></div><div class="tbar"><div class="tfill" style="width:'+sc+'%;background:'+cl+'"></div></div></div></td>'
       +'<td class="hm mono">'+( u.approved_transactions||0)+'</td>'
       +'<td class="hm mono">'+(u.rejected_transactions||0)+'</td>'
@@ -1574,12 +1585,12 @@ async function loadTickets(p){
   document.getElementById('tickTable').innerHTML='<table><thead><tr><th>#</th><th>Usuário</th><th class="hm">Assunto</th><th>Prioridade</th><th>Status</th><th>Ação</th></tr></thead><tbody>'
     +d.data.map(t=>'<tr><td class="mono" style="font-size:11px">'+t.id+'</td>'
     +'<td class="mono" style="font-size:11px">'+t.telegram_id+'</td>'
-    +'<td class="hm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t.subject||'—')+'</td>'
+    +'<td class="hm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.subject||'—')+'</td>'
     +'<td>'+tag(t.priority||'normal')+'</td>'
     +'<td>'+tag(t.status)+'</td>'
     +'<td><button class="btn bd bxs" onclick="viewTicket(\''+t.id+'\')">Ver</button></td></tr>'
     ).join('')+'</tbody></table>';
-  document.getElementById('tickCards').innerHTML=d.data.map(t=>'<div class="mrow" onclick="viewTicket(\''+t.id+'\')"><div class="mr-top"><div><div class="mr-id">#'+t.id+' · '+t.telegram_id+'</div><div style="font-size:12px;font-weight:500;margin-top:2px;color:var(--fg)">'+(t.subject||'sem assunto')+'</div></div></div><div class="mr-mid">'+tag(t.status)+tag(t.priority||'normal')+'</div><div class="mr-bot"><div class="mr-date">'+fmtD(t.created_at)+'</div></div></div>').join('');
+  document.getElementById('tickCards').innerHTML=d.data.map(t=>'<div class="mrow" onclick="viewTicket(\''+t.id+'\')"><div class="mr-top"><div><div class="mr-id">#'+t.id+' · '+esc(t.telegram_id)+'</div><div style="font-size:12px;font-weight:500;margin-top:2px;color:var(--fg)">'+esc(t.subject||'sem assunto')+'</div></div></div><div class="mr-mid">'+tag(t.status)+tag(t.priority||'normal')+'</div><div class="mr-bot"><div class="mr-date">'+fmtD(t.created_at)+'</div></div></div>').join('');
   pager('tickPager',d.page,d.pages,'loadTickets');
 }
 async function viewTicket(id){
@@ -1589,16 +1600,12 @@ async function viewTicket(id){
   const t=d.ticket;if(!t)return;
   document.getElementById('mTickTit').textContent='Ticket #'+t.id+(t.subject?' — '+t.subject:'');
   document.getElementById('mTickInfo').innerHTML=[tag(t.status),tag(t.priority||'normal'),'<span class="mono">'+t.telegram_id+'</span>','<span>'+fmtD(t.created_at)+'</span>'].join('');
-  document.getElementById('mTickMsgs').innerHTML=(d.messages||[]).map(m=>'<div class="msg '+(m.sender_type==='admin'?'adm':'usr')+'">'+m.message+'<div class="msg-m">'+(m.sender_type==='admin'?'Admin · ':'')+fmtD(m.created_at)+'</div></div>').join('')||'<div style="text-align:center;padding:20px;color:var(--fg3);font-size:12px">sem mensagens</div>';
+  document.getElementById('mTickMsgs').innerHTML=(d.messages||[]).map(m=>'<div class="msg '+(m.sender_type==='admin'?'adm':'usr')+'">'+esc(m.message)+'<div class="msg-m">'+(m.sender_type==='admin'?'Admin · ':'')+fmtD(m.created_at)+'</div></div>').join('')||'<div style="text-align:center;padding:20px;color:var(--fg3);font-size:12px">sem mensagens</div>';
   const btnPT=document.getElementById('btnPT');
   btnPT.style.display=t.status==='open'?'inline-flex':'none';
   btnPT.onclick=()=>{progressT(id);};
   document.getElementById('btnCT').onclick=()=>{closeT(id);};
   document.getElementById('btnRT').onclick=()=>{resolveT(id);};
-  // Botão entregar produto — visível para tickets com usuário vinculado
-  const btnDT=document.getElementById('btnDT');
-  btnDT.style.display=t.telegram_id?'inline-flex':'none';
-  btnDT.onclick=()=>{deliverFromTicket(t.telegram_id,id);};
   document.getElementById('tickReply').value='';
 }
 async function replyTicket(){
@@ -1611,64 +1618,26 @@ async function replyTicket(){
 async function progressT(id){await api('progressTicket',{method:'POST',body:{ticket_id:id}});toast('Em andamento.','warn');closeM('mTicket');loadTickets();}
 async function closeT(id){await api('closeTicket',{method:'POST',body:{ticket_id:id}});toast('Fechado.','warn');closeM('mTicket');loadTickets();}
 async function resolveT(id){await api('resolveTicket',{method:'POST',body:{ticket_id:id}});toast('✓ Resolvido!');closeM('mTicket');loadTickets();}
-async function deliverFromTicket(telegramId,ticketId){
-  closeM('mTicket');
-  // Carrega opções e preenche o modal de entrega manual
-  const d=await api('manualDeliverOptions');
-  document.getElementById('delUserId').value=telegramId;
-  await loadDeliver();
-  go('deliver',document.querySelector('.ni[onclick*="\'deliver\'"]'));
-  toast('Preencha o tipo e item e clique em Entregar.','warn');
-}
 function setTickPg(p){loadTickets(p);}
 
 // ── BROADCAST ─────────────────────────────────────────
 async function loadBC(){
   const d=await api('broadcasts');
   if(!d.data?.length){document.getElementById('bcList').innerHTML='<div class="empty"><div class="ei">◎</div><div class="et">nenhuma campanha</div></div>';return;}
-  const colDot={sending:'#10b981',sent:'#34d399',pending_broadcast:'#a78bfa',draft:'#606080',failed:'#f87171',cancelled:'#f87171'};
-  document.getElementById('bcList').innerHTML=d.data.map(b=>{
-    const hasActive=b.status==='sending'||b.status==='pending_broadcast';
-    const total=b.total_users||0;
-    const done=(b.success_count||0)+(b.failed_count||0);
-    const pct=total>0?Math.round(done/total*100):0;
-    const prog=hasActive&&total>0?`<div style="margin:8px 0 4px"><div style="font-size:11px;color:var(--fg3);margin-bottom:4px">${done} de ${total} enviados (${pct}%)</div><div style="background:var(--line);border-radius:6px;height:5px;overflow:hidden"><div style="background:var(--purple);height:100%;width:${pct}%;transition:width .4s"></div></div></div>`:'';
-    return '<div class="bc"><div class="bc-dot" style="background:'+(colDot[b.status]||'#606080')+'"></div><div class="bc-body"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><b style="font-size:13px">'+(b.name||b.campaign_name||'Sem nome')+'</b>'+tag(b.status)+'</div><div style="font-size:11px;color:var(--fg3);margin:4px 0">'+fmtD(b.created_at)+(b.target_audience?' · '+b.target_audience:'')+(b.coupon_code?' · 🏷'+b.coupon_code:'')+'</div>'+prog+'<div style="font-size:11px;color:var(--fg3)">✓ '+(b.success_count||0)+' · ✗ '+(b.failed_count||0)+'</div><div style="margin-top:8px"><button class="btn bd bxs" onclick="viewBC(\''+b.id+'\')">Detalhes</button>'+(hasActive?' <button class="btn br bxs" onclick="cancelBC(\''+b.id+'\')">Cancelar</button>':'')+'</div></div></div>';
-  }).join('');
-  if(d.data.some(b=>b.status==='sending'||b.status==='pending_broadcast'))setTimeout(loadBC,5000);
+  const colDot={sending:'#10b981',sent:'#34d399',pending_broadcast:'#a78bfa',draft:'#606080',failed:'#f87171'};
+  document.getElementById('bcList').innerHTML=d.data.map(b=>'<div class="bc"><div class="bc-dot" style="background:'+(colDot[b.status]||'#606080')+'"></div><div class="bc-body"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><b style="font-size:13px">'+esc(b.campaign_name||'Sem nome')+'</b>'+tag(b.status)+'</div><div style="font-size:11px;color:var(--fg3);margin:4px 0">'+fmtD(b.created_at)+(b.target_audience?' · '+esc(b.target_audience):'')+(b.coupon_code?' · 🏷'+esc(b.coupon_code):'')+'</div><div style="font-size:11px;color:var(--fg3)">✓ '+(b.success_count||0)+' · ✗ '+(b.failed_count||0)+'</div><div style="margin-top:8px"><button class="btn bd bxs" onclick="viewBC(\''+b.id+'\')">Detalhes</button>'+(b.status==='sending'||b.status==='pending_broadcast'?' <button class="btn br bxs" onclick="cancelBC(\''+b.id+'\')">Cancelar</button>':'')+'</div></div></div>').join('');
 }
 async function viewBC(id){
   const d=await api('broadcasts');
   const b=(d.data||[]).find(x=>x.id==id);if(!b)return;
-  const total=b.total_users||0;
-  const done=(b.success_count||0)+(b.failed_count||0);
-  const pct=total>0?Math.round(done/total*100):0;
-  const hasActive=b.status==='sending'||b.status==='pending_broadcast';
-  const prog=hasActive&&total>0?`<div style="margin:12px 0"><div style="font-size:11px;color:var(--fg3);margin-bottom:6px">${done} de ${total} enviados (${pct}%)</div><div style="background:var(--line);border-radius:6px;height:6px;overflow:hidden"><div style="background:var(--purple);height:100%;width:${pct}%;transition:width .4s"></div></div></div>`:'';
-  document.getElementById('mBCTit').textContent=(b.name||b.campaign_name||'Campanha #'+id);
-  document.getElementById('mBCBody').innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+tag(b.status)+(b.target_audience?'<span class="tag">'+b.target_audience+'</span>':'')+(b.coupon_code?'<span class="tag t-pending">🏷 '+b.coupon_code+'</span>':'')+'</div><div style="font-size:12px;color:var(--fg3);margin-bottom:8px">✓ '+(b.success_count||0)+' entregues &nbsp;·&nbsp; ✗ '+(b.failed_count||0)+' falhas &nbsp;·&nbsp; total: '+(total||'?')+'</div>'+prog+(b.message?'<div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Mensagem</div><div style="background:var(--s3);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;max-height:200px;overflow-y:auto">'+b.message+'</div>':'');
+  document.getElementById('mBCTit').textContent=b.campaign_name||'Campanha #'+id;
+  document.getElementById('mBCBody').innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+tag(b.status)+(b.target_audience?'<span class="tag">'+esc(b.target_audience)+'</span>':'')+(b.coupon_code?'<span class="tag t-pending">🏷 '+esc(b.coupon_code)+'</span>':'')+'</div><div style="font-size:12px;color:var(--fg3);margin-bottom:8px">✓ '+(b.success_count||0)+' entregues &nbsp;·&nbsp; ✗ '+(b.failed_count||0)+' falhas</div>'+(b.message?'<div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Mensagem</div><div style="background:var(--s3);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;max-height:200px;overflow-y:auto">'+esc(b.message)+'</div>':'');
   const btnC=document.getElementById('btnCBC');
-  btnC.style.display=hasActive?'inline-flex':'none';
+  btnC.style.display=(b.status==='sending'||b.status==='pending_broadcast')?'inline-flex':'none';
   btnC.onclick=()=>{cancelBC(id);closeM('mBC');};
   openM('mBC');
 }
 async function cancelBC(id){if(!confirm('Cancelar campanha?'))return;await api('cancelBroadcast',{method:'POST',body:{id}});toast('Campanha cancelada.','warn');loadBC();}
-async function createBroadcast(){
-  const name=document.getElementById('bcName').value.trim();
-  const message=document.getElementById('bcMsg').value.trim();
-  const target_audience=document.getElementById('bcAudi').value;
-  const coupon_code=document.getElementById('bcCoupon').value.trim();
-  if(!message){toast('Digite a mensagem.','err');return;}
-  const r=await api('createBroadcast',{method:'POST',body:{name,message,target_audience,coupon_code:coupon_code||null}});
-  if(r?.ok){
-    toast('✓ Campanha criada e agendada!');
-    closeM('mNewBC');
-    document.getElementById('bcName').value='';
-    document.getElementById('bcMsg').value='';
-    document.getElementById('bcCoupon').value='';
-    loadBC();
-  } else toast('Erro ao criar campanha.','err');
-}
 
 // ── AUTO RESPOSTAS ────────────────────────────────────
 async function loadAR(){
@@ -1702,7 +1671,7 @@ async function lookupDelUser(){
   if(!d.user){box.style.display='block';box.innerHTML='<span style="color:var(--danger)">❌ Usuário não encontrado</span>';return;}
   const u=d.user;
   box.style.display='block';
-  box.innerHTML='<b>'+(u.first_name||'N/A')+(u.last_name?' '+u.last_name:'')+'</b>'+(u.username?' @'+u.username:'')+(u.is_blocked?' <span style="color:var(--danger)">(bloqueado)</span>':'');
+  box.innerHTML='<b>'+esc(u.first_name||'N/A')+(u.last_name?' '+esc(u.last_name):'')+'</b>'+(u.username?' @'+esc(u.username):'')+(u.is_blocked?' <span style="color:var(--danger)">(bloqueado)</span>':'');
 }
 async function doManualDeliver(){
   const tid=document.getElementById('delUserId').value;
@@ -1869,15 +1838,15 @@ function cycleTheme() {
   },{passive:true});
 })();
 
+// A seção já foi decidida e revelada pelo script leve mais acima (logo após o
+// menu/conteúdo no HTML) — aqui só completamos o título da página e o estado 'cur',
+// que dependem de coisas definidas mais abaixo no código (meta, etc.)
+const initialSec=window.__initialSec||'dashboard';
+document.getElementById('pgTit').textContent=meta[initialSec]||initialSec;
+cur=initialSec;
+
 checkAuth().then(()=>{
-  // Restaura aba do hash da URL (ex: /painel#tickets)
-  const hash=(location.hash||'').replace('#','');
-  const validSec=Object.keys(loads);
-  if(hash&&validSec.includes(hash)){
-    go(hash,document.querySelector(`.ni[onclick*="'${hash}'"]`));
-  }else{
-    loadDash();
-  }
+  if(loads[initialSec])loads[initialSec]();
 });
 setInterval(()=>{if(cur==='dashboard')loadDash();},60000);
 </script>
