@@ -221,220 +221,147 @@ _Cancelar: /cancelar_`, {
     });
   });
   
-  // ===== BROADCAST COM PRODUTO — SELEÇÃO MÚLTIPLA =====
+  // Broadcast com Produto
   bot.action('creator_broadcast_product', async (ctx) => {
     await ctx.answerCbQuery('🛍️ Carregando produtos...');
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
-
+    
     try {
       const products = await db.getAllProducts();
       const mediaPacks = await db.getAllMediaPacks();
-
+      
       if (products.length === 0 && mediaPacks.length === 0) {
         return ctx.editMessageText('📦 Nenhum produto disponível para broadcast.\n\nCrie produtos primeiro no painel admin.', {
-          ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Voltar', 'creator_broadcast')]])
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
+          ])
         });
       }
+      
+      let message = `🛍️ *BROADCAST COM PRODUTO*
 
-      // Inicializar sessão de seleção múltipla
-      global._SESSIONS = global._SESSIONS || {};
-      global._SESSIONS[ctx.from.id] = {
-        type: 'creator_broadcast_product_multi',
-        step: 'select_products',
-        selectedProducts: []
-      };
+Selecione o produto que deseja divulgar:
 
-      let message = `🛍️ *BROADCAST COM PRODUTO*\n\nSelecione os produtos que deseja divulgar:\n_(toque para marcar/desmarcar)_\n\n`;
+`;
+      
       const buttons = [];
-
+      
+      // Adicionar produtos
       for (const product of products) {
-        message += `• ${product.name} — R$ ${parseFloat(product.price).toFixed(2)}\n`;
-        buttons.push([Markup.button.callback(`📦 ${product.name}`, `bpm_select_product:${product.product_id}`)]);
+        message += `• ${product.name} - R$ ${parseFloat(product.price).toFixed(2)}\n`;
+        buttons.push([Markup.button.callback(
+          `📦 ${product.name}`, 
+          `creator_broadcast_select_product:${product.product_id}`
+        )]);
       }
+      
+      // Adicionar media packs
       for (const pack of mediaPacks) {
         if (pack.is_active) {
-          message += `• ${pack.name} — R$ ${parseFloat(pack.price).toFixed(2)}\n`;
-          buttons.push([Markup.button.callback(`📸 ${pack.name}`, `bpm_select_pack:${pack.pack_id}`)]);
+          message += `• ${pack.name} - R$ ${parseFloat(pack.price).toFixed(2)}\n`;
+          buttons.push([Markup.button.callback(
+            `📸 ${pack.name}`, 
+            `creator_broadcast_select_pack:${pack.pack_id}`
+          )]);
         }
       }
-
-      buttons.push(
-        [Markup.button.callback('✅ Continuar', 'bpm_continue')],
-        [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
-      );
-
+      
+      buttons.push([Markup.button.callback('🔙 Voltar', 'creator_broadcast')]);
+      
       return ctx.editMessageText(message, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard(buttons)
       });
     } catch (err) {
-      console.error('[BPM] Erro ao listar produtos:', err);
+      console.error('Erro ao listar produtos:', err);
       return ctx.reply('❌ Erro ao listar produtos.');
     }
   });
   
-  // Helper: re-renderiza lista de seleção BPM
-  async function _renderBpmList(ctx, session) {
-    try {
-      const products = await db.getAllProducts();
-      const mediaPacks = await db.getAllMediaPacks();
-
-      let message = `🛍️ *BROADCAST COM PRODUTO*\n\n`;
-      if (session.selectedProducts.length > 0) {
-        message += `*Selecionados (${session.selectedProducts.length}):*\n`;
-        session.selectedProducts.forEach(p => { message += `✅ ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}\n`; });
-        message += `\n`;
-      }
-      message += `*Disponíveis:*\n`;
-
-      const buttons = [];
-      for (const product of products) {
-        const isSel = session.selectedProducts.some(p => p.id === product.product_id && p.type === 'product');
-        const icon = isSel ? '✅' : '📦';
-        message += `${icon} ${product.name} — R$ ${parseFloat(product.price).toFixed(2)}\n`;
-        buttons.push([Markup.button.callback(`${icon} ${product.name}`, `bpm_select_product:${product.product_id}`)]);
-      }
-      for (const pack of mediaPacks) {
-        if (pack.is_active) {
-          const isSel = session.selectedProducts.some(p => p.id === pack.pack_id && p.type === 'pack');
-          const icon = isSel ? '✅' : '📸';
-          message += `${icon} ${pack.name} — R$ ${parseFloat(pack.price).toFixed(2)}\n`;
-          buttons.push([Markup.button.callback(`${icon} ${pack.name}`, `bpm_select_pack:${pack.pack_id}`)]);
-        }
-      }
-      buttons.push(
-        [Markup.button.callback('✅ Continuar', 'bpm_continue')],
-        [Markup.button.callback('🔙 Voltar', 'creator_broadcast')]
-      );
-      await ctx.editMessageText(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
-    } catch (e) { console.error('[BPM] _renderBpmList erro:', e.message); }
-  }
-
-  // Toggle produto (BPM)
-  bot.action(/^bpm_select_product:(.+)$/, async (ctx) => {
+  // Selecionar produto para broadcast
+  bot.action(/^creator_broadcast_select_product:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('✅ Produto selecionado');
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
-    const session = global._SESSIONS?.[ctx.from.id];
-    if (!session || session.type !== 'creator_broadcast_product_multi') {
-      return ctx.answerCbQuery('❌ Sessão expirada', { show_alert: true });
-    }
+    
     const productId = ctx.match[1];
     const product = await db.getProduct(productId);
-    if (!product) return ctx.answerCbQuery('❌ Produto não encontrado', { show_alert: true });
-    const idx = session.selectedProducts.findIndex(p => p.id === productId && p.type === 'product');
-    if (idx > -1) {
-      session.selectedProducts.splice(idx, 1);
-      await ctx.answerCbQuery(`❌ ${product.name} removido`);
-    } else {
-      session.selectedProducts.push({ id: productId, type: 'product', name: product.name, price: product.price });
-      await ctx.answerCbQuery(`✅ ${product.name} selecionado`);
+    
+    if (!product) {
+      return ctx.reply('❌ Produto não encontrado.');
     }
-    await _renderBpmList(ctx, session);
-  });
+    
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'creator_broadcast',
+      step: 'message',
+      broadcastType: 'product',
+      productId: productId,
+      productName: product.name,
+      productPrice: product.price
+    };
+    
+    return ctx.editMessageText(`🛍️ *BROADCAST: ${product.name}*
 
-  // Toggle media pack (BPM)
-  bot.action(/^bpm_select_pack:(.+)$/, async (ctx) => {
+💰 Preço: R$ ${parseFloat(product.price).toFixed(2)}
+
+📝 Agora envie a mensagem promocional:
+
+💡 *Exemplo:*
+"🔥 *BLACK FRIDAY 90% OFF!*
+
+${product.name} por apenas R$ ${parseFloat(product.price).toFixed(2)}!
+
+Promoção válida apenas hoje! 🎉
+
+Compre agora: /start"
+
+_Cancelar: /cancelar_`, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
+      ])
+    });
+  });
+  
+  // Selecionar media pack para broadcast
+  bot.action(/^creator_broadcast_select_pack:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('✅ Pack selecionado');
     const isCreator = await db.isUserCreator(ctx.from.id);
     if (!isCreator) return;
-    const session = global._SESSIONS?.[ctx.from.id];
-    if (!session || session.type !== 'creator_broadcast_product_multi') {
-      return ctx.answerCbQuery('❌ Sessão expirada', { show_alert: true });
-    }
+    
     const packId = ctx.match[1];
     const pack = await db.getMediaPackById(packId);
-    if (!pack) return ctx.answerCbQuery('❌ Pack não encontrado', { show_alert: true });
-    const idx = session.selectedProducts.findIndex(p => p.id === packId && p.type === 'pack');
-    if (idx > -1) {
-      session.selectedProducts.splice(idx, 1);
-      await ctx.answerCbQuery(`❌ ${pack.name} removido`);
-    } else {
-      session.selectedProducts.push({ id: packId, type: 'pack', name: pack.name, price: pack.price });
-      await ctx.answerCbQuery(`✅ ${pack.name} selecionado`);
+    
+    if (!pack) {
+      return ctx.reply('❌ Pack não encontrado.');
     }
-    await _renderBpmList(ctx, session);
-  });
+    
+    global._SESSIONS = global._SESSIONS || {};
+    global._SESSIONS[ctx.from.id] = {
+      type: 'creator_broadcast',
+      step: 'message',
+      broadcastType: 'media_pack',
+      mediaPackId: packId,
+      packName: pack.name,
+      packPrice: pack.price
+    };
+    
+    return ctx.editMessageText(`📸 *BROADCAST: ${pack.name}*
 
-  // Continuar para mensagem (BPM)
-  bot.action('bpm_continue', async (ctx) => {
-    await ctx.answerCbQuery();
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    const session = global._SESSIONS?.[ctx.from.id];
-    if (!session || session.type !== 'creator_broadcast_product_multi') {
-      return ctx.reply('❌ Sessão expirada. Tente novamente.');
-    }
-    if (session.selectedProducts.length === 0) {
-      return ctx.answerCbQuery('❌ Selecione pelo menos um produto!', { show_alert: true });
-    }
-    session.step = 'message';
-    const listaSel = session.selectedProducts.map(p =>
-      `✅ ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}`
-    ).join('\n');
-    return ctx.editMessageText(
-      `🛍️ *BROADCAST COM PRODUTO*\n\n📦 *Selecionados:*\n${listaSel}\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n📝 Escreva a *mensagem principal* do broadcast:\n\n💡 *Dica:* Seja impactante! Exemplos: 🔥 Promoção imperdível!, 🎁 Oferta especial só hoje!\n\n_Cancelar: /cancelar_`,
-      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]]) }
-    );
-  });
+💰 Preço: R$ ${parseFloat(pack.price).toFixed(2)}
 
-  // Confirmar e agendar (BPM)
-  bot.action('confirm_bpm_broadcast', async (ctx) => {
-    try { await ctx.answerCbQuery('🚀 Agendando broadcast...'); } catch (e) {}
-    const isCreator = await db.isUserCreator(ctx.from.id);
-    if (!isCreator) return;
-    const session = global._SESSIONS?.[ctx.from.id];
-    if (!session || session.type !== 'creator_broadcast_product_multi' || session.step !== 'confirm') {
-      return ctx.reply('❌ Sessão não encontrada. Tente novamente.');
-    }
-    try {
-      const user = await db.getOrCreateUser(ctx.from);
-      const productButtons = session.selectedProducts.map(p => {
-        if (p.type === 'product') return [{ text: `🛍️ Comprar ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}`, callback_data: `buy:${p.id}` }];
-        return [{ text: `📸 Comprar ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}`, callback_data: `buy_media:${p.id}` }];
-      });
-      const prodListText = session.selectedProducts.map(p =>
-        `📦 *${p.name}*\n💰 R$ ${parseFloat(p.price).toFixed(2)}`
-      ).join('\n\n');
-      const finalMessage =
-        `🔥 *${session.broadcastMessage}*\n\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `🛍️ *PRODUTOS EM DESTAQUE:*\n\n` +
-        `${prodListText}\n\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `✨ _Oferta por tempo limitado!_`;
-      const { data: campaign, error: campaignError } = await db.supabase
-        .from('broadcast_campaigns')
-        .insert([{
-          name: `CastCupom ${new Date().toLocaleDateString('pt-BR')}`,
-          message: finalMessage,
-          image_file_id: session.imageFileId || null,
-          buttons_json: productButtons.length > 0 ? productButtons : null,
-          creator_telegram_id: ctx.from.id,
-          target_audience: 'all',
-          status: 'pending',
-          created_by: user.id
-        }])
-        .select().single();
-      if (campaignError) throw campaignError;
-      delete global._SESSIONS[ctx.from.id];
-      const { count: totalUsers } = await db.supabase.from('users').select('*', { count: 'exact', head: true }).eq('is_blocked', false);
-      const prodNomes = session.selectedProducts.map(p => `• ${p.name}`).join('\n');
-      return ctx.editMessageText(
-        `✅ *CASTCUPOM AGENDADO!*\n\n` +
-        `📨 Será enviado para *${totalUsers}* usuários.\n\n` +
-        `📦 *Produtos no broadcast:*\n${prodNomes}\n\n` +
-        `⏱️ O envio acontece em lotes a cada 2 minutos.\n` +
-        `🔔 Você receberá uma notificação quando concluir.\n\n` +
-        `🆔 Campanha: \`${campaign.id.substring(0, 8)}...\``,
-        { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Voltar ao Painel', 'creator_refresh')]]) }
-      );
-    } catch (err) {
-      console.error('[BPM] Erro ao agendar:', err);
-      delete global._SESSIONS[ctx.from.id];
-      return ctx.reply('❌ Erro ao agendar CastCupom. Tente novamente.');
-    }
-  });
+📝 Agora envie a mensagem promocional:
 
+_Cancelar: /cancelar_`, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
+      ])
+    });
+  });
+  
   // ===== BROADCAST + PRODUTO + CUPOM (NOVO) =====
   bot.action('creator_broadcast_product_coupon', async (ctx) => {
     await ctx.answerCbQuery('🎁 Carregando produtos...');

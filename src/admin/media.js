@@ -17,48 +17,8 @@ function registerMediaHandlers(bot) {
       global._SESSIONS = global._SESSIONS || {};
       const session = global._SESSIONS[ctx.from.id];
       
-      // ── BPM: imagem do "Com Produto" (multi) ──────────────────────────────────
-      if (session && session.type === 'creator_broadcast_product_multi' &&
-          (session.step === 'image' || session.step === 'message')) {
-
-        const photo = ctx.message.photo[ctx.message.photo.length - 1];
-        session.imageFileId = photo.file_id;
-
-        // Se ainda estava no step 'message', usa a legenda da foto como mensagem
-        // (o usuário enviou a foto diretamente sem digitar texto separado)
-        if (session.step === 'message') {
-          const caption = ctx.message.caption || '';
-          if (!caption.trim()) {
-            // Sem legenda e sem mensagem — pedir que adicione legenda ou texto
-            return ctx.reply(
-              `⚠️ *Foto recebida, mas falta a mensagem!*\n\nPor favor, reenvie a foto com uma *legenda* (caption) ou primeiro envie o texto da mensagem e depois a foto.\n\n_Cancelar: /cancelar_`,
-              { parse_mode: 'Markdown' }
-            );
-          }
-          session.broadcastMessage = caption;
-        }
-
-        session.step = 'confirm';
-
-        const listaSel = (session.selectedProducts || []).map(p =>
-          `• ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}`
-        ).join('\n');
-
-        return ctx.reply(
-          `🛍️ *CONFIRMAR BROADCAST COM PRODUTO*\n\n*Mensagem:*\n${session.broadcastMessage}\n\n📸 *Imagem:* Anexada ✅\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n📦 *Produtos em destaque:*\n${listaSel}\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️ *Será enviado para TODOS os usuários.*\n\nDeseja continuar?`,
-          {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-              [Markup.button.callback('✅ Confirmar e Enviar', 'confirm_bpm_broadcast')],
-              [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
-            ])
-          }
-        );
-      }
-
       // Verificar se é broadcast + produto + cupom - imagem
       if (session && session.type === 'creator_broadcast_product_coupon' && session.step === 'image') {
-
         // Pegar a foto de maior qualidade (última do array)
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const photoFileId = photo.file_id;

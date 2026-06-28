@@ -1067,47 +1067,8 @@ ${message}`;
           ])
         });
       }
-
-      // ── BPM: mensagem do broadcast "Com Produto" (multi) ──────────────────────
-      if (session.type === 'creator_broadcast_product_multi' && session.step === 'message') {
-        const isCreator = await db.isUserCreator(ctx.from.id);
-        if (!isCreator) { delete global._SESSIONS[ctx.from.id]; return; }
-
-        session.broadcastMessage = ctx.message.text;
-        session.step = 'image';
-
-        return ctx.reply(
-          `✅ *Mensagem salva!*\n\n📝 *Prévia:*\n${ctx.message.text.substring(0, 120)}${ctx.message.text.length > 120 ? '...' : ''}\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n📸 Agora envie uma *imagem* para acompanhar o broadcast:\n\n💡 Use um banner atrativo ou foto do produto!\n\n_Digite /pular para continuar sem imagem_\n_Cancelar: /cancelar_`,
-          { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]]) }
-        );
-      }
-
-      // ── BPM: pular imagem ──────────────────────────────────────────────────────
-      if (ctx.message.text === '/pular' && session.type === 'creator_broadcast_product_multi' && session.step === 'image') {
-        const isCreator = await db.isUserCreator(ctx.from.id);
-        if (!isCreator) { delete global._SESSIONS[ctx.from.id]; return; }
-
-        session.imageFileId = null;
-        session.step = 'confirm';
-
-        const listaSel = session.selectedProducts.map(p =>
-          `• ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}`
-        ).join('\n');
-
-        return ctx.reply(
-          `🛍️ *CONFIRMAR BROADCAST COM PRODUTO*\n\n*Mensagem:*\n${session.broadcastMessage}\n\n📸 *Imagem:* Nenhuma\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n📦 *Produtos em destaque:*\n${listaSel}\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️ *Será enviado para TODOS os usuários.*\n\nDeseja continuar?`,
-          {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-              [Markup.button.callback('✅ Confirmar e Enviar', 'confirm_bpm_broadcast')],
-              [Markup.button.callback('❌ Cancelar', 'cancel_creator_broadcast')]
-            ])
-          }
-        );
-      }
-
+      
       // Verificar se é broadcast + produto + cupom - definindo descontos
-
       if (session.type === 'creator_broadcast_product_coupon' && session.step === 'set_discounts') {
         const isCreator = await db.isUserCreator(ctx.from.id);
         if (!isCreator) {
