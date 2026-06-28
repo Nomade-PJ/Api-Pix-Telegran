@@ -389,17 +389,11 @@ _Cancelar: /cancelar_`, {
     try {
       const user = await db.getOrCreateUser(ctx.from);
       const productButtons = session.selectedProducts.map(p => {
-        if (p.type === 'product') return [{ text: `🛍️ Comprar ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}`, callback_data: `buy:${p.id}` }];
-        return [{ text: `📸 Comprar ${p.name} — R$ ${parseFloat(p.price).toFixed(2)}`, callback_data: `buy_media:${p.id}` }];
+        if (p.type === 'product') return [{ text: `🔥 ${p.name} 🛒`, callback_data: `buy:${p.id}` }];
+        return [{ text: `🔥 ${p.name} 🛒`, callback_data: `buy_media:${p.id}` }];
       });
-      const prodListText = session.selectedProducts.map(p =>
-        `📦 *${p.name}*\n💰 R$ ${parseFloat(p.price).toFixed(2)}`
-      ).join('\n\n');
       const finalMessage =
-        `🔥 *${session.broadcastMessage}*\n\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `🛍️ *PRODUTOS EM DESTAQUE:*\n\n` +
-        `${prodListText}\n\n` +
+        `${session.broadcastMessage}\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `✨ _Oferta por tempo limitado!_`;
       const { data: campaign, error: campaignError } = await db.supabase
