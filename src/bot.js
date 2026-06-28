@@ -574,11 +574,13 @@ Selecione uma opção abaixo:`;
       if (session && (
         session.type === 'create_product' || 
         session.type === 'edit_product' ||
-        (session.type === 'creator_broadcast_product_coupon' && session.step === 'image')
+        (session.type === 'creator_broadcast_product_coupon' && session.step === 'image') ||
+        (session.type === 'creator_broadcast_product_multi' && session.step === 'image')
       )) {
         console.log('⏭️ [HANDLER-BOT] Sessão de admin/criador detectada, passando para handler do admin.js');
         return next(); // ✅ Passar para próximo handler (admin.js)
       }
+
       
       // 🆕 LOG INICIAL - CRÍTICO PARA DEBUG
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
