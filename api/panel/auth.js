@@ -1,23 +1,17 @@
 // api/panel/auth.js — Login do painel web
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// OBRIGATÓRIO: estas variáveis devem estar configuradas no Vercel.
-// Sem elas o servidor não aceita nenhum login — sem fallback, sem exceção.
-const SALT = process.env.PANEL_SALT;
 const JWT_SECRET = process.env.ADMIN_SECRET;
 
-if (!SALT || !JWT_SECRET) {
-  console.error('❌ [AUTH] PANEL_SALT e ADMIN_SECRET são obrigatórios. Configure no Vercel e faça redeploy.');
-}
-
-function hashPassword(password) {
-  return crypto.createHmac('sha256', SALT).update(password).digest('hex');
+if (!JWT_SECRET) {
+  console.error('❌ [AUTH] ADMIN_SECRET é obrigatório. Configure no Vercel e faça redeploy.');
 }
 
 function generateToken(email) {
@@ -48,7 +42,7 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Verificar token existente
+  // Verificar token existente (GET)
   if (req.method === 'GET') {
     const auth = req.headers.authorization?.replace('Bearer ', '');
     if (!auth) return res.status(401).json({ ok: false });
@@ -57,25 +51,36 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ ok: true, email: payload.email });
   }
 
-  // Bloquear qualquer operação se as variáveis críticas não estiverem configuradas
-  if (!SALT || !JWT_SECRET) {
+  if (!JWT_SECRET) {
     return res.status(500).json({ error: 'Servidor mal configurado. Contate o administrador.' });
   }
 
-  // Login
+  // Login (POST)
   if (req.method === 'POST') {
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email e senha obrigatórios' });
 
-    const hash = hashPassword(password);
     const { data: user } = await supabase
       .from('panel_users')
-      .select('id, email, name')
+      .select('id, email, name, password_hash')
       .eq('email', email.toLowerCase().trim())
-      .eq('password_hash', hash)
       .single();
 
     if (!user) return res.status(401).json({ error: 'Email ou senha incorretos' });
+
+    // Suporta bcrypt ($2b$) e HMAC-SHA256 legado (PANEL_SALT)
+    let passwordOk = false;
+    if (user.password_hash && user.password_hash.startsWith('$2')) {
+      passwordOk = await bcrypt.compare(password, user.password_hash);
+    } else {
+      const SALT = process.env.PANEL_SALT;
+      if (SALT) {
+        const hash = crypto.createHmac('sha256', SALT).update(password).digest('hex');
+        passwordOk = (hash === user.password_hash);
+      }
+    }
+
+    if (!passwordOk) return res.status(401).json({ error: 'Email ou senha incorretos' });
 
     await supabase.from('panel_users').update({ last_login: new Date().toISOString() }).eq('id', user.id);
 
