@@ -18,9 +18,26 @@ function registerMediaHandlers(bot) {
       const session = global._SESSIONS[ctx.from.id];
       
       // ── BPM: imagem do "Com Produto" (multi) ──────────────────────────────────
-      if (session && session.type === 'creator_broadcast_product_multi' && session.step === 'image') {
+      if (session && session.type === 'creator_broadcast_product_multi' &&
+          (session.step === 'image' || session.step === 'message')) {
+
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         session.imageFileId = photo.file_id;
+
+        // Se ainda estava no step 'message', usa a legenda da foto como mensagem
+        // (o usuário enviou a foto diretamente sem digitar texto separado)
+        if (session.step === 'message') {
+          const caption = ctx.message.caption || '';
+          if (!caption.trim()) {
+            // Sem legenda e sem mensagem — pedir que adicione legenda ou texto
+            return ctx.reply(
+              `⚠️ *Foto recebida, mas falta a mensagem!*\n\nPor favor, reenvie a foto com uma *legenda* (caption) ou primeiro envie o texto da mensagem e depois a foto.\n\n_Cancelar: /cancelar_`,
+              { parse_mode: 'Markdown' }
+            );
+          }
+          session.broadcastMessage = caption;
+        }
+
         session.step = 'confirm';
 
         const listaSel = (session.selectedProducts || []).map(p =>
