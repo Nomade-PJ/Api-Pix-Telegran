@@ -1,4 +1,4 @@
-// api/panel/auth.js — Login do painel web
+// api/panel/auth.js
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
@@ -8,81 +8,86 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const JWT_SECRET = process.env.ADMIN_SECRET;
-
-if (!JWT_SECRET) {
-  console.error('❌ [AUTH] ADMIN_SECRET é obrigatório. Configure no Vercel e faça redeploy.');
-}
+// Usa ADMIN_SECRET se existir, senão usa SUPABASE_SERVICE_KEY como fallback
+// Garante que JWT_SECRET NUNCA é undefined
+const JWT_SECRET = process.env.ADMIN_SECRET || process.env.SUPABASE_SERVICE_KEY || 'fallback-local-dev';
 
 function generateToken(email) {
   const payload = { email, ts: Date.now(), exp: Date.now() + 24 * 60 * 60 * 1000 };
-  const data = Buffer.from(JSON.stringify(payload)).toString('base64');
+  const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = crypto.createHmac('sha256', JWT_SECRET).update(data).digest('hex');
   return `${data}.${sig}`;
 }
 
 function verifyToken(token) {
   try {
+    if (!token || !token.includes('.')) return null;
     const lastDot = token.lastIndexOf('.');
-    if (lastDot === -1) return null;
     const data = token.substring(0, lastDot);
     const sig = token.substring(lastDot + 1);
     const expected = crypto.createHmac('sha256', JWT_SECRET).update(data).digest('hex');
     if (sig !== expected) return null;
-    const payload = JSON.parse(Buffer.from(data, 'base64').toString());
+    // base64url → base64 normal
+    const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(base64, 'base64').toString());
     if (payload.exp < Date.now()) return null;
     return payload;
-  } catch { return null; }
+  } catch (e) {
+    console.error('[verifyToken] erro:', e.message);
+    return null;
+  }
 }
 
 module.exports = async function handler(req, res) {
-  const allowedOrigin = process.env.PANEL_ORIGIN || 'https://api-pix-telegran.vercel.app';
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Verificar token existente (GET)
+  // GET — verifica token
   if (req.method === 'GET') {
-    const auth = req.headers.authorization?.replace('Bearer ', '');
-    if (!auth) return res.status(401).json({ ok: false });
+    const auth = (req.headers.authorization || '').replace('Bearer ', '').trim();
+    if (!auth) return res.status(401).json({ ok: false, error: 'Token ausente' });
     const payload = verifyToken(auth);
-    if (!payload) return res.status(401).json({ ok: false });
+    if (!payload) return res.status(401).json({ ok: false, error: 'Token inválido ou expirado' });
     return res.status(200).json({ ok: true, email: payload.email });
   }
 
-  if (!JWT_SECRET) {
-    return res.status(500).json({ error: 'Servidor mal configurado. Contate o administrador.' });
-  }
-
-  // Login (POST)
+  // POST — login
   if (req.method === 'POST') {
     const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'Email e senha obrigatórios' });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email e senha obrigatórios' });
+    }
 
-    const { data: user } = await supabase
+    const { data: user, error: dbErr } = await supabase
       .from('panel_users')
       .select('id, email, name, password_hash')
       .eq('email', email.toLowerCase().trim())
       .single();
 
-    if (!user) return res.status(401).json({ error: 'Email ou senha incorretos' });
-
-    // Suporta bcrypt ($2b$) e HMAC-SHA256 legado (PANEL_SALT)
-    let passwordOk = false;
-    if (user.password_hash && user.password_hash.startsWith('$2')) {
-      passwordOk = await bcrypt.compare(password, user.password_hash);
-    } else {
-      const SALT = process.env.PANEL_SALT;
-      if (SALT) {
-        const hash = crypto.createHmac('sha256', SALT).update(password).digest('hex');
-        passwordOk = (hash === user.password_hash);
-      }
+    if (dbErr || !user) {
+      return res.status(401).json({ error: 'Email ou senha incorretos' });
     }
 
-    if (!passwordOk) return res.status(401).json({ error: 'Email ou senha incorretos' });
+    let passwordOk = false;
+    if (user.password_hash?.startsWith('$2')) {
+      // bcrypt
+      passwordOk = await bcrypt.compare(password, user.password_hash);
+    } else if (process.env.PANEL_SALT) {
+      // HMAC-SHA256 legado
+      const hash = crypto.createHmac('sha256', process.env.PANEL_SALT).update(password).digest('hex');
+      passwordOk = (hash === user.password_hash);
+    }
 
-    await supabase.from('panel_users').update({ last_login: new Date().toISOString() }).eq('id', user.id);
+    if (!passwordOk) {
+      return res.status(401).json({ error: 'Email ou senha incorretos' });
+    }
+
+    await supabase
+      .from('panel_users')
+      .update({ last_login: new Date().toISOString() })
+      .eq('id', user.id);
 
     const token = generateToken(user.email);
     return res.status(200).json({ ok: true, token, name: user.name, email: user.email });

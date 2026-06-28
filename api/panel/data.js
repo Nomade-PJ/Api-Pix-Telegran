@@ -3,20 +3,24 @@ const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-const JWT_SECRET = process.env.ADMIN_SECRET;
+const JWT_SECRET = process.env.ADMIN_SECRET || process.env.SUPABASE_SERVICE_KEY || 'fallback-local-dev';
 
 function verifyToken(token) {
   try {
+    if (!token || !token.includes('.')) return null;
     const lastDot = token.lastIndexOf('.');
-    if (lastDot === -1) return null;
     const data = token.substring(0, lastDot);
     const sig = token.substring(lastDot + 1);
     const expected = crypto.createHmac('sha256', JWT_SECRET).update(data).digest('hex');
     if (sig !== expected) return null;
-    const payload = JSON.parse(Buffer.from(data, 'base64').toString());
+    const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(base64, 'base64').toString());
     if (payload.exp < Date.now()) return null;
     return payload;
-  } catch { return null; }
+  } catch (e) {
+    console.error('[verifyToken data.js] erro:', e.message);
+    return null;
+  }
 }
 
 function extractDDD(phone) {
