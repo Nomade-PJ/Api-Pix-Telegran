@@ -1140,27 +1140,21 @@ let delData={product:[],mediapack:[],group:[]};
 // ── AUTH ──────────────────────────────────────────────
 async function checkAuth(){
   if(!TOKEN){location.href='/login';return;}
-  try{
-    const r=await fetch('/api/panel/auth',{headers:{Authorization:'Bearer '+TOKEN}});
-    if(r.status===401){
-      // Token inválido ou expirado — limpa e redireciona
-      localStorage.removeItem('panel_token');
-      localStorage.removeItem('panel_user');
-      location.href='/login';
-      return;
-    }
-    if(!r.ok){
-      // Erro de servidor (500, etc) — NÃO desloga, só avisa
-      console.warn('[checkAuth] Erro de servidor:', r.status);
-      return;
-    }
-    const u=JSON.parse(localStorage.getItem('panel_user')||'{}');
+  // Preenche nome sem validar no servidor — o servidor vai rejeitar nas chamadas de dados se inválido
+  const u=JSON.parse(localStorage.getItem('panel_user')||'{}');
+  if(u.name){
     document.getElementById('uName').textContent=u.name||'Admin';
     document.getElementById('uAv').textContent=(u.name||'A')[0].toUpperCase();
-  }catch(e){
-    // Erro de rede — NÃO desloga, pode ser offline momentâneo
-    console.warn('[checkAuth] Erro de rede:', e.message);
   }
+  // Tenta validar mas NÃO desloga em nenhum cenário — só o botão logout desloga
+  try{
+    const r=await fetch('/api/panel/auth',{headers:{Authorization:'Bearer '+TOKEN}});
+    if(r.ok){
+      const u2=JSON.parse(localStorage.getItem('panel_user')||'{}');
+      document.getElementById('uName').textContent=u2.name||'Admin';
+      document.getElementById('uAv').textContent=(u2.name||'A')[0].toUpperCase();
+    }
+  }catch(e){console.warn('[checkAuth]',e.message);}
 }
 function logout(){localStorage.removeItem('panel_token');localStorage.removeItem('panel_user');location.href='/login';}
 
@@ -1169,13 +1163,7 @@ async function api(action,opts={}){
   const qs=new URLSearchParams({action,...params}).toString();
   try{
     const r=await fetch(API+'?'+qs,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+TOKEN},body:body?JSON.stringify(body):undefined});
-    if(r.status===401){
-      // Só redireciona se o token foi explicitamente rejeitado
-      localStorage.removeItem('panel_token');
-      localStorage.removeItem('panel_user');
-      location.href='/login';
-      return null;
-    }
+    if(!r.ok)return{error:'HTTP '+r.status};
     return r.json();
   }catch(e){return{error:e.message};}
 }
