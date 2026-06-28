@@ -103,9 +103,11 @@ async function login() {
   if (!email || !password) { err.textContent = 'Preencha e-mail e senha.'; err.classList.add('show'); return; }
   btn.disabled = true; btn.textContent = 'Autenticando...';
   try {
-    const r = await fetch('/api/panel/auth', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) });
+    const r = await fetch('/api/panel/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) });
     const d = await r.json();
-    if (d.ok) {
+    if (d.ok && d.token) {
+      localStorage.setItem('panel_token', d.token);
+      localStorage.setItem('panel_user', JSON.stringify({ name: d.name, email: d.email }));
       window.location.href = '/painel';
     } else {
       err.textContent = d.error || 'Credenciais inválidas.';
