@@ -1,6 +1,12 @@
 // api/panel/data.js — Nexus Panel API v4 — completa com paridade total ao bot
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
+const { COLD, WARM, BUYER } = require('../../remarketing/Templates');
+const { send: rmSend } = require('../../remarketing/Sender');
+const {
+  getColdBatch: rmGetColdBatch, getWarmBatch: rmGetWarmBatch, getBuyerBatch: rmGetBuyerBatch,
+  upsertLog: rmUpsertLog, optOut: rmOptOut, getRandomImage: rmGetRandomImage,
+} = require('../../remarketing/Segments');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const JWT_SECRET = process.env.ADMIN_SECRET;
@@ -64,6 +70,131 @@ function getBrasilStartOf(period) {
   return null;
 }
 
+// ═══════════════════════════════════════════════
+// CICLO DE REMARKETING — função compartilhada
+// Chamada tanto pelo cron externo (action=runRemarketingCycle, sem cookie)
+// quanto pelo painel (action=runRemarketingNow, com sessão de admin)
+// ═══════════════════════════════════════════════
+async function handleRemarketingCycle(req, res, isExternalCron) {
+  try {
+    const BR_TZ_OFFSET = -3;
+    const DELAY_MS = 800;
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const isBRBusinessHour = () => {
+      const utcHour = new Date().getUTCHours();
+      const brHour = ((utcHour + BR_TZ_OFFSET + 24) % 24);
+      return brHour >= 8 && brHour < 22;
+    };
+    const makeButton = (productId, label) => {
+      const botName = process.env.BOT_USERNAME || '';
+      const url = botName
+        ? `https://t.me/${botName}?start=produto_${productId}`
+        : `https://t.me/${process.env.TELEGRAM_BOT_TOKEN.split(':')[0]}?start=produto_${productId}`;
+      return [[{ text: label || '🛒 Comprar agora', url }]];
+    };
+
+    if (!isBRBusinessHour()) {
+      const payload = { success: true, message: 'Paused: outside business hours (BR 8h-22h)' };
+      return isExternalCron ? res.status(200).json(payload) : res.json({ ok: true, result: payload });
+    }
+
+    const startedAt = Date.now();
+    const MAX_RUNTIME_MS = 50000;
+    const timeLeft = () => MAX_RUNTIME_MS - (Date.now() - startedAt);
+
+    const coldList  = (await rmGetColdBatch()).slice(0, 10);
+    const warmList  = (await rmGetWarmBatch()).slice(0, 10);
+    const buyerList = (await rmGetBuyerBatch()).slice(0, 10);
+
+    let sentCold = 0, sentWarm = 0, sentBuyer = 0;
+    const COLD_INTERVALS  = [6, 6, 6, 12, 24];
+    const WARM_INTERVALS  = [2, 8, 24];
+    const BUYER_INTERVALS = [24, 72, 168, 360];
+
+    for (const u of coldList) {
+      if (timeLeft() < 5000) break;
+      const log_entry = u.remarketing_log?.[0];
+      const step = log_entry?.sequence_step ?? 0;
+      const template = COLD[Math.min(step, COLD.length - 1)];
+      const text = template.text(u.first_name || '');
+      const interval = COLD_INTERVALS[Math.min(step, COLD_INTERVALS.length - 1)];
+      const imageUrl = await rmGetRandomImage('pack_premium');
+      const buttons = makeButton(template.product, '🛒 Ver produtos');
+      try {
+        await rmSend(u.telegram_id, text, imageUrl, buttons);
+        await rmUpsertLog(u.telegram_id, 'cold', step, interval);
+        sentCold++;
+      } catch (err) {
+        if (err.tgCode === 403) {
+          await rmOptOut(u.telegram_id);
+          await supabase.from('users').update({ is_blocked: true }).eq('telegram_id', u.telegram_id);
+        }
+      }
+      await sleep(DELAY_MS);
+    }
+
+    for (const r of warmList) {
+      if (timeLeft() < 5000) break;
+      const u = r.users || r;
+      const log_entry = r.remarketing_log?.[0];
+      const step = log_entry?.sequence_step ?? 0;
+      const template = WARM[Math.min(step, WARM.length - 1)];
+      const text = template.text(u.first_name || r.first_name || '');
+      const product = r.product_id || r.media_pack_id || 'pack_premium';
+      const interval = WARM_INTERVALS[Math.min(step, WARM_INTERVALS.length - 1)];
+      const imageUrl = await rmGetRandomImage('pack_premium');
+      const buttons = makeButton(product, '⚡ Finalizar compra');
+      try {
+        await rmSend(r.telegram_id, text, imageUrl, buttons);
+        await rmUpsertLog(r.telegram_id, 'warm', step, interval);
+        sentWarm++;
+      } catch (err) {
+        if (err.tgCode === 403) {
+          await rmOptOut(r.telegram_id);
+          await supabase.from('users').update({ is_blocked: true }).eq('telegram_id', r.telegram_id);
+        }
+      }
+      await sleep(DELAY_MS);
+    }
+
+    for (const r of buyerList) {
+      if (timeLeft() < 5000) break;
+      const u = r.users || r;
+      const log_entry = r.remarketing_log?.[0];
+      const step = log_entry?.sequence_step ?? 0;
+      const template = BUYER[Math.min(step, BUYER.length - 1)];
+      const text = template.text(u.first_name || '', r.product_id);
+      const product = template.forcedProduct || r.product_id || 'destaquesdasemana';
+      const interval = BUYER_INTERVALS[Math.min(step, BUYER_INTERVALS.length - 1)];
+      const imageUrl = await rmGetRandomImage('pack_premium');
+      const buttons = makeButton(product, '✨ Ver novidades');
+      try {
+        await rmSend(r.telegram_id, text, imageUrl, buttons);
+        await rmUpsertLog(r.telegram_id, 'buyer', step, interval);
+        sentBuyer++;
+      } catch (err) {
+        if (err.tgCode === 403) {
+          await rmOptOut(r.telegram_id);
+          await supabase.from('users').update({ is_blocked: true }).eq('telegram_id', r.telegram_id);
+        }
+      }
+      await sleep(DELAY_MS);
+    }
+
+    const total = sentCold + sentWarm + sentBuyer;
+    const stats = { cold: sentCold, warm: sentWarm, buyer: sentBuyer, total };
+
+    if (isExternalCron) {
+      return res.status(200).json({ success: true, stats });
+    }
+    return res.json({ ok: true, result: { success: true, stats } });
+  } catch (err) {
+    console.error('[handleRemarketingCycle]', err.message, err.stack?.split('\n')[1]);
+    const payload = { error: 'Internal Server Error', message: err.message };
+    return isExternalCron ? res.status(500).json(payload) : res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
 module.exports = async function handler(req, res) {
   const allowedOrigin = process.env.PANEL_ORIGIN || 'https://api-pix-telegran.vercel.app';
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
@@ -71,6 +202,19 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-CSRF-Token');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // Exceção: chamada do cron externo (cron-job.org) para disparar o ciclo de remarketing.
+  // Não usa cookie de sessão admin — usa CRON_SECRET próprio, igual aos outros jobs.
+  if (req.query.action === 'runRemarketingCycle') {
+    const authHeader    = req.headers['authorization'] || '';
+    const bearerToken   = authHeader.replace('Bearer ', '');
+    const receivedToken = req.headers['x-cron-secret'] || req.query.secret || bearerToken;
+    const expectedToken = process.env.CRON_SECRET;
+    if (expectedToken && receivedToken !== expectedToken) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    return handleRemarketingCycle(req, res, true);
+  }
 
   // Autenticação via cookie httpOnly (não mais Authorization header / localStorage)
   const cookies = parseCookies(req);
@@ -793,20 +937,8 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    if (action === 'runRemarketingNow' && req.method === 'POST') {
-      // Dispara o ciclo manualmente chamando o próprio endpoint do job
-      try {
-        const baseUrl = `https://${req.headers.host}`;
-        const cronSecret = process.env.CRON_SECRET || '';
-        const r = await fetch(`${baseUrl}/api/jobs/remarketing${cronSecret ? '?secret=' + encodeURIComponent(cronSecret) : ''}`, {
-          method: 'GET',
-          headers: cronSecret ? { 'x-cron-secret': cronSecret } : {}
-        });
-        const result = await r.json();
-        return res.json({ ok: true, result });
-      } catch (e) {
-        return res.status(500).json({ error: 'Erro ao disparar ciclo: ' + e.message });
-      }
+    if ((action === 'runRemarketingNow' || action === 'runRemarketingCycle') && (req.method === 'POST' || req.method === 'GET')) {
+      return handleRemarketingCycle(req, res, false);
     }
 
     // ═══════════════════════════════════════════════
