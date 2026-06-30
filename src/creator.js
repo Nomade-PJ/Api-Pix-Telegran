@@ -51,6 +51,7 @@ Selecione uma opção abaixo:`;
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Estatísticas', 'creator_stats')],
         [Markup.button.callback('📢 CastCupom', 'creator_broadcast')],
+        [Markup.button.callback('📈 Remarketing', 'creator_remarketing')],
         [Markup.button.callback('🔄 Atualizar', 'creator_refresh')]
       ]);
       
@@ -1626,6 +1627,211 @@ A promoção foi completamente removida do sistema.`, {
   });
   
   // ===== ATUALIZAR PAINEL =====
+  // ===== REMARKETING — visão geral e disparo manual =====
+  bot.action('creator_remarketing', async (ctx) => {
+    await ctx.answerCbQuery('📈 Carregando...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+
+    try {
+      const sb = db.supabase;
+      const [
+        { count: totalUsers },
+        { count: totalCompradores },
+        { count: noMotor },
+        { count: optOuts },
+        { count: convertidos },
+        { count: coldAtivos },
+        { count: warmAtivos },
+        { count: buyerAtivos },
+        { data: ultimoEnvio }
+      ] = await Promise.all([
+        sb.from('users').select('*', { count: 'exact', head: true }).eq('is_blocked', false),
+        sb.from('transactions').select('telegram_id', { count: 'exact', head: true }).eq('status', 'delivered'),
+        sb.from('remarketing_log').select('*', { count: 'exact', head: true }),
+        sb.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('opted_out', true),
+        sb.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('converted', true),
+        sb.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'cold').eq('opted_out', false).eq('converted', false),
+        sb.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'warm').eq('opted_out', false).eq('converted', false),
+        sb.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'buyer').eq('opted_out', false).eq('converted', false),
+        sb.from('remarketing_log').select('last_sent_at').order('last_sent_at', { ascending: false }).limit(1)
+      ]);
+
+      const lastCycleAt = ultimoEnvio?.[0]?.last_sent_at;
+      let statusLine = '🔴 Motor nunca rodou ainda';
+      if (lastCycleAt) {
+        const minsAgo = Math.round((Date.now() - new Date(lastCycleAt).getTime()) / 60000);
+        const txt = minsAgo < 60 ? `${minsAgo} min` : `${Math.round(minsAgo / 60)}h`;
+        statusLine = minsAgo <= 20 ? `🟢 Motor ativo — último ciclo há ${txt}` : `🟡 Motor pausado — último ciclo há ${txt}`;
+      }
+
+      const message = `📈 *REMARKETING AUTOMÁTICO*
+
+${statusLine}
+
+❄️ *Cold* (nunca comprou): ${coldAtivos || 0} no funil
+🔥 *Warm* (abandonou PIX): ${warmAtivos || 0} no funil
+💎 *Buyer* (upsell): ${buyerAtivos || 0} no funil
+
+👥 Usuários ativos: ${totalUsers || 0}
+💳 Já compraram: ${totalCompradores || 0}
+🎯 No motor: ${noMotor || 0}
+✅ Convertidos: ${convertidos || 0}
+🚫 Opt-outs: ${optOuts || 0}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+Roda sozinho a cada 10 min (8h–22h BR). Use o botão abaixo para forçar um ciclo agora.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('▶ Disparar ciclo agora', 'creator_remarketing_run')],
+        [Markup.button.callback('🔄 Atualizar', 'creator_remarketing')],
+        [Markup.button.callback('⬅ Voltar', 'creator_refresh')]
+      ]);
+
+      if (ctx.callbackQuery && ctx.callbackQuery.message) {
+        try {
+          return await ctx.editMessageText(message, { parse_mode: 'Markdown', ...keyboard });
+        } catch (editError) {
+          if (editError.response?.error_code === 400 && editError.response?.description?.includes('message is not modified')) return;
+          throw editError;
+        }
+      }
+      return ctx.reply(message, { parse_mode: 'Markdown', ...keyboard });
+    } catch (err) {
+      console.error('❌ [CREATOR-REMARKETING] Erro:', err.message);
+      return ctx.reply('❌ Erro ao carregar dados de remarketing.');
+    }
+  });
+
+  // ===== REMARKETING — disparo manual do ciclo =====
+  bot.action('creator_remarketing_run', async (ctx) => {
+    await ctx.answerCbQuery('▶ Disparando ciclo...');
+    const isCreator = await db.isUserCreator(ctx.from.id);
+    if (!isCreator) return;
+
+    try {
+      await ctx.reply('⏳ Disparando ciclo de remarketing, aguarde...');
+
+      const { COLD, WARM, BUYER } = require('../remarketing/Templates');
+      const { send } = require('../remarketing/Sender');
+      const {
+        getColdBatch, getWarmBatch, getBuyerBatch,
+        upsertLog, optOut, getRandomImage,
+      } = require('../remarketing/Segments');
+
+      const sb = db.supabase;
+      const BR_TZ_OFFSET = -3;
+      const DELAY_MS = 800;
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const isBRBusinessHour = () => {
+        const utcHour = new Date().getUTCHours();
+        const brHour = ((utcHour + BR_TZ_OFFSET + 24) % 24);
+        return brHour >= 8 && brHour < 22;
+      };
+      const makeButton = (productId, label) => {
+        const botName = process.env.BOT_USERNAME || '';
+        const url = botName
+          ? `https://t.me/${botName}?start=produto_${productId}`
+          : `https://t.me/${process.env.TELEGRAM_BOT_TOKEN.split(':')[0]}?start=produto_${productId}`;
+        return [[{ text: label || '🛒 Comprar agora', url }]];
+      };
+
+      if (!isBRBusinessHour()) {
+        return ctx.reply('⏸ Fora do horário comercial (8h–22h BR). O ciclo automático só envia mensagens nesse intervalo.');
+      }
+
+      const startedAt = Date.now();
+      const MAX_RUNTIME_MS = 25000; // margem segura dentro do timeout do bot
+      const timeLeft = () => MAX_RUNTIME_MS - (Date.now() - startedAt);
+
+      const coldList  = (await getColdBatch()).slice(0, 10);
+      const warmList  = (await getWarmBatch()).slice(0, 10);
+      const buyerList = (await getBuyerBatch()).slice(0, 10);
+
+      let sentCold = 0, sentWarm = 0, sentBuyer = 0;
+      const COLD_INTERVALS  = [6, 6, 6, 12, 24];
+      const WARM_INTERVALS  = [2, 8, 24];
+      const BUYER_INTERVALS = [24, 72, 168, 360];
+
+      for (const u of coldList) {
+        if (timeLeft() < 5000) break;
+        const log_entry = u.remarketing_log?.[0];
+        const step = log_entry?.sequence_step ?? 0;
+        const template = COLD[Math.min(step, COLD.length - 1)];
+        const text = template.text(u.first_name || '');
+        const interval = COLD_INTERVALS[Math.min(step, COLD_INTERVALS.length - 1)];
+        const imageUrl = await getRandomImage('pack_premium');
+        const buttons = makeButton(template.product, '🛒 Ver produtos');
+        try {
+          await send(u.telegram_id, text, imageUrl, buttons);
+          await upsertLog(u.telegram_id, 'cold', step, interval);
+          sentCold++;
+        } catch (err) {
+          if (err.tgCode === 403) {
+            await optOut(u.telegram_id);
+            await sb.from('users').update({ is_blocked: true }).eq('telegram_id', u.telegram_id);
+          }
+        }
+        await sleep(DELAY_MS);
+      }
+
+      for (const r of warmList) {
+        if (timeLeft() < 5000) break;
+        const u = r.users || r;
+        const log_entry = r.remarketing_log?.[0];
+        const step = log_entry?.sequence_step ?? 0;
+        const template = WARM[Math.min(step, WARM.length - 1)];
+        const text = template.text(u.first_name || r.first_name || '');
+        const product = r.product_id || r.media_pack_id || 'pack_premium';
+        const interval = WARM_INTERVALS[Math.min(step, WARM_INTERVALS.length - 1)];
+        const imageUrl = await getRandomImage('pack_premium');
+        const buttons = makeButton(product, '⚡ Finalizar compra');
+        try {
+          await send(r.telegram_id, text, imageUrl, buttons);
+          await upsertLog(r.telegram_id, 'warm', step, interval);
+          sentWarm++;
+        } catch (err) {
+          if (err.tgCode === 403) {
+            await optOut(r.telegram_id);
+            await sb.from('users').update({ is_blocked: true }).eq('telegram_id', r.telegram_id);
+          }
+        }
+        await sleep(DELAY_MS);
+      }
+
+      for (const r of buyerList) {
+        if (timeLeft() < 5000) break;
+        const u = r.users || r;
+        const log_entry = r.remarketing_log?.[0];
+        const step = log_entry?.sequence_step ?? 0;
+        const template = BUYER[Math.min(step, BUYER.length - 1)];
+        const text = template.text(u.first_name || '', r.product_id);
+        const product = template.forcedProduct || r.product_id || 'destaquesdasemana';
+        const interval = BUYER_INTERVALS[Math.min(step, BUYER_INTERVALS.length - 1)];
+        const imageUrl = await getRandomImage('pack_premium');
+        const buttons = makeButton(product, '✨ Ver novidades');
+        try {
+          await send(r.telegram_id, text, imageUrl, buttons);
+          await upsertLog(r.telegram_id, 'buyer', step, interval);
+          sentBuyer++;
+        } catch (err) {
+          if (err.tgCode === 403) {
+            await optOut(r.telegram_id);
+            await sb.from('users').update({ is_blocked: true }).eq('telegram_id', r.telegram_id);
+          }
+        }
+        await sleep(DELAY_MS);
+      }
+
+      const total = sentCold + sentWarm + sentBuyer;
+      return ctx.reply(`✅ *Ciclo concluído!*\n\n❄️ Cold: ${sentCold}\n🔥 Warm: ${sentWarm}\n💎 Buyer: ${sentBuyer}\n\n📤 Total enviado: ${total}`, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('❌ [CREATOR-REMARKETING-RUN] Erro:', err.message);
+      return ctx.reply('❌ Erro ao disparar ciclo: ' + err.message);
+    }
+  });
+
   bot.action('creator_refresh', async (ctx) => {
     try {
       await ctx.answerCbQuery('🔄 Atualizando...');
@@ -1660,6 +1866,7 @@ Selecione uma opção abaixo:`;
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Estatísticas', 'creator_stats')],
         [Markup.button.callback('📢 CastCupom', 'creator_broadcast')],
+        [Markup.button.callback('📈 Remarketing', 'creator_remarketing')],
         [Markup.button.callback('🔄 Atualizar', 'creator_refresh')]
       ]);
       
