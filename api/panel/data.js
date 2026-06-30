@@ -717,6 +717,63 @@ module.exports = async function handler(req, res) {
     }
 
     // ═══════════════════════════════════════════════
+    // REMARKETING
+    // ═══════════════════════════════════════════════
+    if (action === 'remarketingStats') {
+      const [
+        { count: totalUsers },
+        { count: totalCompradores },
+        { count: noLog },
+        { count: optOuts },
+        { count: convertidos },
+        { count: coldAtivos },
+        { count: warmAtivos },
+        { count: buyerAtivos },
+        { data: ultimosEnvios }
+      ] = await Promise.all([
+        supabase.from('users').select('*', { count: 'exact', head: true }).eq('is_blocked', false),
+        supabase.from('transactions').select('telegram_id', { count: 'exact', head: true }).eq('status', 'delivered'),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('opted_out', true),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('converted', true),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'cold').eq('opted_out', false).eq('converted', false),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'warm').eq('opted_out', false).eq('converted', false),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'buyer').eq('opted_out', false).eq('converted', false),
+        supabase.from('remarketing_log').select('telegram_id, segment, sequence_step, last_sent_at').order('last_sent_at', { ascending: false }).limit(15)
+      ]);
+
+      return res.json({
+        ok: true,
+        total_users_ativos: totalUsers || 0,
+        total_compradores: totalCompradores || 0,
+        total_no_motor: noLog || 0,
+        opt_outs: optOuts || 0,
+        convertidos: convertidos || 0,
+        cold_ativos: coldAtivos || 0,
+        warm_ativos: warmAtivos || 0,
+        buyer_ativos: buyerAtivos || 0,
+        ultimos_envios: ultimosEnvios || [],
+        motor_ligado: noLog > 0
+      });
+    }
+
+    if (action === 'runRemarketingNow' && req.method === 'POST') {
+      // Dispara o ciclo manualmente chamando o próprio endpoint do job
+      try {
+        const baseUrl = `https://${req.headers.host}`;
+        const cronSecret = process.env.CRON_SECRET || '';
+        const r = await fetch(`${baseUrl}/api/jobs/remarketing${cronSecret ? '?secret=' + encodeURIComponent(cronSecret) : ''}`, {
+          method: 'GET',
+          headers: cronSecret ? { 'x-cron-secret': cronSecret } : {}
+        });
+        const result = await r.json();
+        return res.json({ ok: true, result });
+      } catch (e) {
+        return res.status(500).json({ error: 'Erro ao disparar ciclo: ' + e.message });
+      }
+    }
+
+    // ═══════════════════════════════════════════════
     // CUPONS
     // ═══════════════════════════════════════════════
     if (action === 'coupons') {

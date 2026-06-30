@@ -644,6 +644,7 @@ td b{color:var(--fg);font-weight:500}
     <div class="ni" onclick="go('tickets',this)"><i class="nico">▧</i>Tickets<span class="nbadge v" id="cnt-tick">–</span></div>
     <div class="ns">Marketing</div>
     <div class="ni" onclick="go('broadcast',this)"><i class="nico">◎</i>Broadcast</div>
+    <div class="ni" onclick="go('remarketing',this)"><i class="nico">↻</i>Remarketing</div>
     <div class="ni" onclick="go('autoresponses',this)"><i class="nico">◈</i>Auto Respostas</div>
     <div class="ns">Sistema</div>
     <div class="ni" onclick="go('deliver',this)"><i class="nico">↓</i>Entrega Manual</div>
@@ -850,6 +851,40 @@ td b{color:var(--fg);font-weight:500}
       <div id="bcList"><div class="loader"><div class="spin"></div></div></div>
     </div>
 
+    <!-- ═══ REMARKETING ═══ -->
+    <div id="s-remarketing" class="sec">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <div>
+          <span style="font-size:13px;font-weight:500">Motor de Remarketing Automático</span>
+          <div id="rmStatusBadge" style="font-size:11px;color:var(--fg3);margin-top:2px">verificando status...</div>
+        </div>
+        <button class="btn bp bxs" id="btnRunRm" onclick="runRemarketingNow()">▶ Disparar ciclo agora</button>
+      </div>
+
+      <div id="rmProgress" style="display:none;margin-bottom:14px">
+        <div style="font-size:12px;color:var(--fg3);margin-bottom:6px" id="rmProgressTxt">Processando ciclo...</div>
+        <div style="background:var(--line);border-radius:8px;height:6px;overflow:hidden"><div id="rmProgressBar" style="background:var(--purple);height:100%;width:30%;animation:rmPulse 1.2s ease-in-out infinite"></div></div>
+      </div>
+      <style>@keyframes rmPulse{0%{margin-left:0%;width:20%}50%{margin-left:60%;width:30%}100%{margin-left:0%;width:20%}}</style>
+
+      <div class="mgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px" id="rmCards">
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">👥 Usuários ativos</div><div style="font-size:22px;font-weight:600" id="rmTotalUsers">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">💳 Já compraram</div><div style="font-size:22px;font-weight:600" id="rmTotalBuyers">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">❄️ Cold (nunca comprou)</div><div style="font-size:22px;font-weight:600" id="rmColdAtivos">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">🔥 Warm (abandonou PIX)</div><div style="font-size:22px;font-weight:600" id="rmWarmAtivos">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">💎 Buyer (upsell)</div><div style="font-size:22px;font-weight:600" id="rmBuyerAtivos">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">🚫 Opt-outs</div><div style="font-size:22px;font-weight:600" id="rmOptOuts">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">✅ Convertidos</div><div style="font-size:22px;font-weight:600" id="rmConvertidos">—</div></div>
+      </div>
+
+      <div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Últimos envios</div>
+      <div class="card tbl-w hm" id="rmLastSends"><div class="loader"><div class="spin"></div></div></div>
+
+      <div class="card" style="padding:14px;margin-top:16px;font-size:12px;color:var(--fg3);line-height:1.6">
+        <b style="color:var(--fg2)">Como funciona:</b> o motor roda automaticamente em ciclos a cada 10 minutos via agendador externo, enviando mensagens segmentadas — <b>Cold</b> (nunca comprou), <b>Warm</b> (iniciou PIX mas não pagou) e <b>Buyer</b> (já comprou, upsell). Respeita o horário comercial (8h–22h BR) e para automaticamente quando o usuário bloqueia o bot ou converte. Use o botão acima para forçar um ciclo manual a qualquer momento.
+      </div>
+    </div>
+
     <!-- ═══ AUTO RESPOSTAS ═══ -->
     <div id="s-autoresponses" class="sec">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -1007,6 +1042,7 @@ td b{color:var(--fg);font-weight:500}
     <div class="ditem" onclick="goDrawer('stats')"><div class="dico">◉</div>Analytics</div>
     <div class="ditem" onclick="goDrawer('failures')"><div class="dico">◬</div>Falhas<span class="dbadge" id="db-fail" style="display:none">0</span></div>
     <div class="ditem" onclick="goDrawer('broadcast')"><div class="dico">◎</div>Broadcast</div>
+    <div class="ditem" onclick="goDrawer('remarketing')"><div class="dico">↻</div>Remarketing</div>
     <div class="ditem" onclick="goDrawer('products')"><div class="dico">▣</div>Produtos</div>
     <div class="ditem" onclick="goDrawer('mediapacks')"><div class="dico">▤</div>Media Packs</div>
     <div class="ditem" onclick="goDrawer('groups')"><div class="dico">◎</div>Grupos VIP</div>
@@ -1219,7 +1255,7 @@ function goMN(sec,mnId){
 
 // ── NAV ───────────────────────────────────────────────
 const meta={dashboard:'dashboard',stats:'analytics',transactions:'transações',failures:'falhas',products:'produtos',mediapacks:'media packs',groups:'grupos VIP',coupons:'cupons',users:'usuários',trusted:'confiáveis',tickets:'tickets',broadcast:'broadcast',autoresponses:'auto respostas',deliver:'entrega manual',settings:'configurações',ddds:'DDDs bloqueados'};
-const loads={dashboard:loadDash,stats:loadStats,transactions:loadTx,failures:loadFail,products:loadProd,mediapacks:loadMP,groups:loadGroups,coupons:loadCoupons,users:initUsers,trusted:loadTrusted,tickets:loadTickets,broadcast:loadBC,autoresponses:loadAR,deliver:loadDeliver,settings:loadSettings,ddds:loadDDDs};
+const loads={dashboard:loadDash,stats:loadStats,transactions:loadTx,failures:loadFail,products:loadProd,mediapacks:loadMP,groups:loadGroups,coupons:loadCoupons,users:initUsers,trusted:loadTrusted,tickets:loadTickets,broadcast:loadBC,remarketing:loadRemarketing,autoresponses:loadAR,deliver:loadDeliver,settings:loadSettings,ddds:loadDDDs};
 
 function go(sec,el){
   document.querySelectorAll('.sec').forEach(s=>s.classList.remove('on'));
@@ -1638,6 +1674,62 @@ async function viewBC(id){
   openM('mBC');
 }
 async function cancelBC(id){if(!confirm('Cancelar campanha?'))return;await api('cancelBroadcast',{method:'POST',body:{id}});toast('Campanha cancelada.','warn');loadBC();}
+
+// ── REMARKETING ───────────────────────────────────────
+async function loadRemarketing(){
+  const d=await api('remarketingStats');
+  if(!d||!d.ok){toast('Erro ao carregar dados de remarketing.','err');return;}
+  document.getElementById('rmTotalUsers').textContent=d.total_users_ativos.toLocaleString('pt-BR');
+  document.getElementById('rmTotalBuyers').textContent=d.total_compradores.toLocaleString('pt-BR');
+  document.getElementById('rmColdAtivos').textContent=d.cold_ativos.toLocaleString('pt-BR');
+  document.getElementById('rmWarmAtivos').textContent=d.warm_ativos.toLocaleString('pt-BR');
+  document.getElementById('rmBuyerAtivos').textContent=d.buyer_ativos.toLocaleString('pt-BR');
+  document.getElementById('rmOptOuts').textContent=d.opt_outs.toLocaleString('pt-BR');
+  document.getElementById('rmConvertidos').textContent=d.convertidos.toLocaleString('pt-BR');
+
+  const badge=document.getElementById('rmStatusBadge');
+  if(d.motor_ligado){
+    badge.innerHTML='<span style="color:#34d399">●</span> Motor ativo — '+d.total_no_motor.toLocaleString('pt-BR')+' usuário(s) no funil';
+  }else{
+    badge.innerHTML='<span style="color:#f87171">●</span> Motor ainda não rodou — configure o agendador externo (cron-job.org) ou clique em "Disparar ciclo agora"';
+  }
+
+  const segIcon={cold:'❄️',warm:'🔥',buyer:'💎'};
+  const tbl=document.getElementById('rmLastSends');
+  if(!d.ultimos_envios?.length){
+    tbl.innerHTML='<div class="empty"><div class="ei">↻</div><div class="et">nenhum envio ainda</div></div>';
+  }else{
+    tbl.innerHTML='<table class="tbl"><thead><tr><th>Usuário</th><th>Segmento</th><th>Step</th><th>Último envio</th></tr></thead><tbody>'+
+      d.ultimos_envios.map(e=>'<tr><td>'+e.telegram_id+'</td><td>'+(segIcon[e.segment]||'')+' '+e.segment+'</td><td>'+e.sequence_step+'</td><td>'+fmtD(e.last_sent_at)+'</td></tr>').join('')+
+      '</tbody></table>';
+  }
+}
+async function runRemarketingNow(){
+  const btn=document.getElementById('btnRunRm');
+  btn.disabled=true;
+  document.getElementById('rmProgress').style.display='block';
+  document.getElementById('rmProgressTxt').textContent='Disparando ciclo — buscando usuários e enviando mensagens...';
+  try{
+    const r=await api('runRemarketingNow',{method:'POST'});
+    if(r?.ok){
+      const stats=r.result?.stats;
+      if(stats){
+        toast(`✓ Ciclo concluído! Cold:${stats.cold} Warm:${stats.warm} Buyer:${stats.buyer} (total: ${stats.total})`);
+      }else if(r.result?.message){
+        toast(r.result.message,'warn');
+      }else{
+        toast('✓ Ciclo disparado.');
+      }
+    }else{
+      toast(r?.error||'Erro ao disparar ciclo.','err');
+    }
+  }catch(e){
+    toast('Erro ao disparar ciclo: '+e.message,'err');
+  }
+  document.getElementById('rmProgress').style.display='none';
+  btn.disabled=false;
+  loadRemarketing();
+}
 
 // ── AUTO RESPOSTAS ────────────────────────────────────
 async function loadAR(){

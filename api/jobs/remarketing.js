@@ -38,9 +38,13 @@ module.exports = async (req, res) => {
     }
 
     // 2. Validar autenticação do cron job
-    const receivedToken = req.headers['x-cron-secret'] || req.query.secret;
+    // Vercel Cron envia automaticamente: Authorization: Bearer <CRON_SECRET>
+    // Chamada manual do painel envia: x-cron-secret ou ?secret=
+    const authHeader    = req.headers['authorization'] || '';
+    const bearerToken   = authHeader.replace('Bearer ', '');
+    const receivedToken = req.headers['x-cron-secret'] || req.query.secret || bearerToken;
     const expectedToken = process.env.CRON_SECRET;
-    
+
     if (expectedToken && receivedToken !== expectedToken) {
       console.error('🚫 [REMARKETING-JOB] Secret inválido ou ausente');
       return res.status(401).json({ error: 'Unauthorized' });
@@ -48,6 +52,10 @@ module.exports = async (req, res) => {
 
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('🚀 [REMARKETING-JOB] Iniciando ciclo de remarketing...');
+
+    const startedAt = Date.now();
+    const MAX_RUNTIME_MS = 50000; // margem de segurança p/ limite de 60s do Vercel
+    const timeLeft = () => MAX_RUNTIME_MS - (Date.now() - startedAt);
     
     // 3. Verificar horário comercial
     if (!isBRBusinessHour()) {
@@ -60,9 +68,9 @@ module.exports = async (req, res) => {
 
     // 4. Buscar usuários de cada lote (fatia reduzida para evitar timeout no Vercel)
     console.log('🔍 [REMARKETING-JOB] Buscando usuários qualificados...');
-    const coldList  = (await getColdBatch()).slice(0, 5);
-    const warmList  = (await getWarmBatch()).slice(0, 5);
-    const buyerList = (await getBuyerBatch()).slice(0, 5);
+    const coldList  = (await getColdBatch()).slice(0, 10);
+    const warmList  = (await getWarmBatch()).slice(0, 10);
+    const buyerList = (await getBuyerBatch()).slice(0, 10);
     
     console.log(`📊 [REMARKETING-JOB] Lotes obtidos: Cold:${coldList.length}, Warm:${warmList.length}, Buyer:${buyerList.length}`);
 
@@ -76,6 +84,7 @@ module.exports = async (req, res) => {
 
     // --- PROCESSAR COLD ---
     for (const u of coldList) {
+      if (timeLeft() < 5000) { console.log('⏱️ Tempo esgotando, parando COLD.'); break; }
       const log_entry = u.remarketing_log?.[0];
       const step      = log_entry?.sequence_step ?? 0;
       const template  = COLD[Math.min(step, COLD.length - 1)];
@@ -105,6 +114,7 @@ module.exports = async (req, res) => {
 
     // --- PROCESSAR WARM ---
     for (const r of warmList) {
+      if (timeLeft() < 5000) { console.log('⏱️ Tempo esgotando, parando WARM.'); break; }
       const u         = r.users || r;
       const log_entry = r.remarketing_log?.[0];
       const step      = log_entry?.sequence_step ?? 0;
@@ -135,6 +145,7 @@ module.exports = async (req, res) => {
 
     // --- PROCESSAR BUYER ---
     for (const r of buyerList) {
+      if (timeLeft() < 5000) { console.log('⏱️ Tempo esgotando, parando BUYER.'); break; }
       const u         = r.users || r;
       const log_entry = r.remarketing_log?.[0];
       const step      = log_entry?.sequence_step ?? 0;

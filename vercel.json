@@ -50,6 +50,10 @@
       "use": "@vercel/node"
     },
     {
+      "src": "api/jobs/remarketing.js",
+      "use": "@vercel/node"
+    },
+    {
       "src": "public/**",
       "use": "@vercel/static"
     }
@@ -105,6 +109,14 @@
     {
       "src": "/api/jobs/broadcast",
       "dest": "/api/jobs/broadcast.js",
+      "methods": [
+        "POST",
+        "GET"
+      ]
+    },
+    {
+      "src": "/api/jobs/remarketing",
+      "dest": "/api/jobs/remarketing.js",
       "methods": [
         "POST",
         "GET"
