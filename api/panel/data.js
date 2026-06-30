@@ -720,6 +720,11 @@ module.exports = async function handler(req, res) {
     // REMARKETING
     // ═══════════════════════════════════════════════
     if (action === 'remarketingStats') {
+      const now = new Date();
+      const todayStart = new Date(now); todayStart.setUTCHours(3, 0, 0, 0); // 0h BR = 3h UTC
+      if (now.getUTCHours() < 3) todayStart.setUTCDate(todayStart.getUTCDate() - 1);
+      const last24h = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+
       const [
         { count: totalUsers },
         { count: totalCompradores },
@@ -729,6 +734,15 @@ module.exports = async function handler(req, res) {
         { count: coldAtivos },
         { count: warmAtivos },
         { count: buyerAtivos },
+        { count: enviadosHoje },
+        { count: enviados24h },
+        { count: coldConvertidos },
+        { count: warmConvertidos },
+        { count: buyerConvertidos },
+        { count: coldTotalJaEntrou },
+        { count: warmTotalJaEntrou },
+        { count: buyerTotalJaEntrou },
+        { data: ultimoEnvio },
         { data: ultimosEnvios }
       ] = await Promise.all([
         supabase.from('users').select('*', { count: 'exact', head: true }).eq('is_blocked', false),
@@ -739,8 +753,21 @@ module.exports = async function handler(req, res) {
         supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'cold').eq('opted_out', false).eq('converted', false),
         supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'warm').eq('opted_out', false).eq('converted', false),
         supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'buyer').eq('opted_out', false).eq('converted', false),
-        supabase.from('remarketing_log').select('telegram_id, segment, sequence_step, last_sent_at').order('last_sent_at', { ascending: false }).limit(15)
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).gte('last_sent_at', todayStart.toISOString()),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).gte('last_sent_at', last24h),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'cold').eq('converted', true),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'warm').eq('converted', true),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'buyer').eq('converted', true),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'cold'),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'warm'),
+        supabase.from('remarketing_log').select('*', { count: 'exact', head: true }).eq('segment', 'buyer'),
+        supabase.from('remarketing_log').select('last_sent_at').order('last_sent_at', { ascending: false }).limit(1),
+        supabase.from('remarketing_log').select('telegram_id, segment, sequence_step, last_sent_at, converted, opted_out').order('last_sent_at', { ascending: false }).limit(20)
       ]);
+
+      const pct = (a, b) => b > 0 ? Math.round((a / b) * 1000) / 10 : 0;
+      const lastCycleAt = ultimoEnvio?.[0]?.last_sent_at || null;
+      const minutesSinceLastCycle = lastCycleAt ? Math.round((now - new Date(lastCycleAt)) / 60000) : null;
 
       return res.json({
         ok: true,
@@ -752,8 +779,17 @@ module.exports = async function handler(req, res) {
         cold_ativos: coldAtivos || 0,
         warm_ativos: warmAtivos || 0,
         buyer_ativos: buyerAtivos || 0,
+        enviados_hoje: enviadosHoje || 0,
+        enviados_24h: enviados24h || 0,
+        conversao_cold_pct: pct(coldConvertidos, coldTotalJaEntrou),
+        conversao_warm_pct: pct(warmConvertidos, warmTotalJaEntrou),
+        conversao_buyer_pct: pct(buyerConvertidos, buyerTotalJaEntrou),
+        conversao_geral_pct: pct(convertidos, noLog),
         ultimos_envios: ultimosEnvios || [],
-        motor_ligado: noLog > 0
+        last_cycle_at: lastCycleAt,
+        minutes_since_last_cycle: minutesSinceLastCycle,
+        motor_ligado: noLog > 0,
+        motor_ativo_recente: minutesSinceLastCycle !== null && minutesSinceLastCycle <= 20
       });
     }
 

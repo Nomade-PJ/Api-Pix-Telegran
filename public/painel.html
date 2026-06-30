@@ -865,19 +865,54 @@ td b{color:var(--fg);font-weight:500}
         <div style="font-size:12px;color:var(--fg3);margin-bottom:6px" id="rmProgressTxt">Processando ciclo...</div>
         <div style="background:var(--line);border-radius:8px;height:6px;overflow:hidden"><div id="rmProgressBar" style="background:var(--purple);height:100%;width:30%;animation:rmPulse 1.2s ease-in-out infinite"></div></div>
       </div>
-      <style>@keyframes rmPulse{0%{margin-left:0%;width:20%}50%{margin-left:60%;width:30%}100%{margin-left:0%;width:20%}}</style>
+      <style>
+        @keyframes rmPulse{0%{margin-left:0%;width:20%}50%{margin-left:60%;width:30%}100%{margin-left:0%;width:20%}}
+        @keyframes rmDotPulse{0%,100%{opacity:1}50%{opacity:.3}}
+        .rm-live{animation:rmDotPulse 1.5s ease-in-out infinite}
+      </style>
 
-      <div class="mgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px" id="rmCards">
-        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">👥 Usuários ativos</div><div style="font-size:22px;font-weight:600" id="rmTotalUsers">—</div></div>
-        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">💳 Já compraram</div><div style="font-size:22px;font-weight:600" id="rmTotalBuyers">—</div></div>
-        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">❄️ Cold (nunca comprou)</div><div style="font-size:22px;font-weight:600" id="rmColdAtivos">—</div></div>
-        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">🔥 Warm (abandonou PIX)</div><div style="font-size:22px;font-weight:600" id="rmWarmAtivos">—</div></div>
-        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">💎 Buyer (upsell)</div><div style="font-size:22px;font-weight:600" id="rmBuyerAtivos">—</div></div>
+      <!-- Cards de envio -->
+      <div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Atividade de envio</div>
+      <div class="mgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px">
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">📤 Enviados hoje</div><div style="font-size:22px;font-weight:600" id="rmEnviadosHoje">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">📨 Últimas 24h</div><div style="font-size:22px;font-weight:600" id="rmEnviados24h">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">✅ Conversão geral</div><div style="font-size:22px;font-weight:600;color:#34d399" id="rmConversaoGeral">—</div></div>
         <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">🚫 Opt-outs</div><div style="font-size:22px;font-weight:600" id="rmOptOuts">—</div></div>
-        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">✅ Convertidos</div><div style="font-size:22px;font-weight:600" id="rmConvertidos">—</div></div>
       </div>
 
-      <div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Últimos envios</div>
+      <!-- Funil por segmento -->
+      <div style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Funil por segmento</div>
+      <div class="mgrid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:18px">
+        <div class="card" style="padding:14px;border-left:3px solid #60a5fa">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:12px;font-weight:500">❄️ Cold</span><span style="font-size:11px;color:var(--fg3)">nunca comprou</span></div>
+          <div style="font-size:20px;font-weight:600" id="rmColdAtivos">—</div>
+          <div style="font-size:11px;color:var(--fg3);margin-top:4px">no funil agora · conversão <span id="rmConvCold" style="color:#34d399;font-weight:500">—</span></div>
+        </div>
+        <div class="card" style="padding:14px;border-left:3px solid #fb923c">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:12px;font-weight:500">🔥 Warm</span><span style="font-size:11px;color:var(--fg3)">abandonou PIX</span></div>
+          <div style="font-size:20px;font-weight:600" id="rmWarmAtivos">—</div>
+          <div style="font-size:11px;color:var(--fg3);margin-top:4px">no funil agora · conversão <span id="rmConvWarm" style="color:#34d399;font-weight:500">—</span></div>
+        </div>
+        <div class="card" style="padding:14px;border-left:3px solid #a78bfa">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:12px;font-weight:500">💎 Buyer</span><span style="font-size:11px;color:var(--fg3)">upsell</span></div>
+          <div style="font-size:20px;font-weight:600" id="rmBuyerAtivos">—</div>
+          <div style="font-size:11px;color:var(--fg3);margin-top:4px">no funil agora · conversão <span id="rmConvBuyer" style="color:#34d399;font-weight:500">—</span></div>
+        </div>
+      </div>
+
+      <!-- Visão geral -->
+      <div class="mgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px">
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">👥 Usuários ativos</div><div style="font-size:18px;font-weight:600" id="rmTotalUsers">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">💳 Já compraram</div><div style="font-size:18px;font-weight:600" id="rmTotalBuyers">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">🎯 No motor</div><div style="font-size:18px;font-weight:600" id="rmTotalMotor">—</div></div>
+        <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--fg3)">✨ Convertidos (total)</div><div style="font-size:18px;font-weight:600" id="rmConvertidos">—</div></div>
+      </div>
+
+      <!-- Últimos envios -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:11px;font-weight:500;color:var(--fg3);text-transform:uppercase;letter-spacing:.07em">Últimos 20 envios</span>
+        <button class="btn bgh bxs" onclick="loadRemarketing()" style="font-size:11px">↻ Atualizar</button>
+      </div>
       <div class="card tbl-w hm" id="rmLastSends"><div class="loader"><div class="spin"></div></div></div>
 
       <div class="card" style="padding:14px;margin-top:16px;font-size:12px;color:var(--fg3);line-height:1.6">
@@ -1679,28 +1714,51 @@ async function cancelBC(id){if(!confirm('Cancelar campanha?'))return;await api('
 async function loadRemarketing(){
   const d=await api('remarketingStats');
   if(!d||!d.ok){toast('Erro ao carregar dados de remarketing.','err');return;}
-  document.getElementById('rmTotalUsers').textContent=d.total_users_ativos.toLocaleString('pt-BR');
-  document.getElementById('rmTotalBuyers').textContent=d.total_compradores.toLocaleString('pt-BR');
+
+  // Status do motor — verifica se rodou nos últimos 20 minutos
+  const badge=document.getElementById('rmStatusBadge');
+  if(d.motor_ativo_recente){
+    badge.innerHTML='<span class="rm-live" style="color:#34d399">●</span> Motor rodando — último ciclo há '+d.minutes_since_last_cycle+' min';
+  }else if(d.motor_ligado){
+    const min=d.minutes_since_last_cycle;
+    const txt=min!=null?(min<60?min+' min':Math.round(min/60)+'h'):'?';
+    badge.innerHTML='<span style="color:#f59e0b">●</span> Motor pausado — último ciclo há '+txt+'. Verifique o agendador externo (cron-job.org)';
+  }else{
+    badge.innerHTML='<span style="color:#f87171">●</span> Motor nunca rodou — configure o agendador externo ou clique em "Disparar ciclo agora"';
+  }
+
+  // Atividade de envio
+  document.getElementById('rmEnviadosHoje').textContent=d.enviados_hoje.toLocaleString('pt-BR');
+  document.getElementById('rmEnviados24h').textContent=d.enviados_24h.toLocaleString('pt-BR');
+  document.getElementById('rmConversaoGeral').textContent=d.conversao_geral_pct+'%';
+  document.getElementById('rmOptOuts').textContent=d.opt_outs.toLocaleString('pt-BR');
+
+  // Funil por segmento
   document.getElementById('rmColdAtivos').textContent=d.cold_ativos.toLocaleString('pt-BR');
   document.getElementById('rmWarmAtivos').textContent=d.warm_ativos.toLocaleString('pt-BR');
   document.getElementById('rmBuyerAtivos').textContent=d.buyer_ativos.toLocaleString('pt-BR');
-  document.getElementById('rmOptOuts').textContent=d.opt_outs.toLocaleString('pt-BR');
+  document.getElementById('rmConvCold').textContent=d.conversao_cold_pct+'%';
+  document.getElementById('rmConvWarm').textContent=d.conversao_warm_pct+'%';
+  document.getElementById('rmConvBuyer').textContent=d.conversao_buyer_pct+'%';
+
+  // Visão geral
+  document.getElementById('rmTotalUsers').textContent=d.total_users_ativos.toLocaleString('pt-BR');
+  document.getElementById('rmTotalBuyers').textContent=d.total_compradores.toLocaleString('pt-BR');
+  document.getElementById('rmTotalMotor').textContent=d.total_no_motor.toLocaleString('pt-BR');
   document.getElementById('rmConvertidos').textContent=d.convertidos.toLocaleString('pt-BR');
 
-  const badge=document.getElementById('rmStatusBadge');
-  if(d.motor_ligado){
-    badge.innerHTML='<span style="color:#34d399">●</span> Motor ativo — '+d.total_no_motor.toLocaleString('pt-BR')+' usuário(s) no funil';
-  }else{
-    badge.innerHTML='<span style="color:#f87171">●</span> Motor ainda não rodou — configure o agendador externo (cron-job.org) ou clique em "Disparar ciclo agora"';
-  }
-
+  // Tabela de últimos envios
   const segIcon={cold:'❄️',warm:'🔥',buyer:'💎'};
+  const segLabel={cold:'Cold',warm:'Warm',buyer:'Buyer'};
   const tbl=document.getElementById('rmLastSends');
   if(!d.ultimos_envios?.length){
     tbl.innerHTML='<div class="empty"><div class="ei">↻</div><div class="et">nenhum envio ainda</div></div>';
   }else{
-    tbl.innerHTML='<table class="tbl"><thead><tr><th>Usuário</th><th>Segmento</th><th>Step</th><th>Último envio</th></tr></thead><tbody>'+
-      d.ultimos_envios.map(e=>'<tr><td>'+e.telegram_id+'</td><td>'+(segIcon[e.segment]||'')+' '+e.segment+'</td><td>'+e.sequence_step+'</td><td>'+fmtD(e.last_sent_at)+'</td></tr>').join('')+
+    tbl.innerHTML='<table class="tbl"><thead><tr><th>Usuário</th><th>Segmento</th><th>Step</th><th>Status</th><th>Último envio</th></tr></thead><tbody>'+
+      d.ultimos_envios.map(e=>{
+        const statusTag=e.converted?'<span class="tag t-ok">✓ convertido</span>':e.opted_out?'<span class="tag t-err">bloqueou</span>':'<span class="tag">ativo</span>';
+        return '<tr><td>'+e.telegram_id+'</td><td>'+(segIcon[e.segment]||'')+' '+(segLabel[e.segment]||e.segment)+'</td><td>'+e.sequence_step+'</td><td>'+statusTag+'</td><td>'+fmtD(e.last_sent_at)+'</td></tr>';
+      }).join('')+
       '</tbody></table>';
   }
 }
@@ -1730,6 +1788,7 @@ async function runRemarketingNow(){
   btn.disabled=false;
   loadRemarketing();
 }
+setInterval(()=>{if(cur==='remarketing')loadRemarketing();},30000);
 
 // ── AUTO RESPOSTAS ────────────────────────────────────
 async function loadAR(){
