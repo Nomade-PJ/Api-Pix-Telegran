@@ -65,7 +65,7 @@ async function getWarmBatch() {
       .from('transactions')
       .select(`
         telegram_id, product_id, media_pack_id, amount, created_at,
-        users!inner (first_name, username, is_blocked),
+        users!transactions_user_id_fkey!inner (first_name, username, is_blocked),
         remarketing_log!left (
           id, segment, sequence_step, last_sent_at, next_send_at,
           total_sent, opted_out, converted
@@ -103,7 +103,7 @@ async function getBuyerBatch() {
     .from('transactions')
     .select(`
       telegram_id, product_id, media_pack_id, delivered_at,
-      users!inner (first_name, username, is_blocked),
+      users!transactions_user_id_fkey!inner (first_name, username, is_blocked),
       remarketing_log!left (
         id, segment, sequence_step, last_sent_at, next_send_at,
         total_sent, opted_out, converted
