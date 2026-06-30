@@ -21,19 +21,13 @@ async function getColdBatch() {
     }));
   }
 
-  // Fallback: query direta + filtro em memória.
-  // PostgREST não suporta referenciar coluna de tabela embutida (remarketing_log.*)
-  // dentro de .or() quando ela vem de um left join via select() — por isso filtramos
-  // tudo em JS aqui em vez de usar .or() no banco.
+  // Fallback: query direta + join em memória.
+  // Não há FK declarada entre users e remarketing_log (relacionam-se só por
+  // telegram_id, sem constraint), então o PostgREST não consegue fazer embed automático.
+  // Buscamos os usuários e os logs separadamente e juntamos em memória.
   const { data: rows, error: e2 } = await sb
     .from('users')
-    .select(`
-      telegram_id, first_name, username,
-      remarketing_log!left (
-        id, segment, sequence_step, last_sent_at, next_send_at,
-        total_sent, opted_out, converted
-      )
-    `)
+    .select('telegram_id, first_name, username')
     .eq('is_blocked', false)
     .not('telegram_id', 'in', sb
       .from('transactions')
@@ -43,14 +37,26 @@ async function getColdBatch() {
     .limit(BATCH * 5);
 
   if (e2) throw e2;
+  if (!rows || rows.length === 0) return [];
 
-  return (rows || []).filter(u => {
-    const log = u.remarketing_log?.[0];
+  const ids = rows.map(u => u.telegram_id);
+  const { data: logs } = await sb
+    .from('remarketing_log')
+    .select('telegram_id, segment, sequence_step, last_sent_at, next_send_at, total_sent, opted_out, converted')
+    .in('telegram_id', ids);
+
+  const logByUser = new Map((logs || []).map(l => [l.telegram_id, l]));
+
+  return rows.filter(u => {
+    const log = logByUser.get(u.telegram_id);
     if (!log) return true; // nunca contatado
     if (log.opted_out || log.converted) return false;
     if (log.sequence_step >= 5) return false; // esgotou sequência
     return !log.next_send_at || new Date(log.next_send_at) <= new Date();
-  }).slice(0, BATCH);
+  }).map(u => ({
+    ...u,
+    remarketing_log: logByUser.has(u.telegram_id) ? [logByUser.get(u.telegram_id)] : []
+  })).slice(0, BATCH);
 }
 
 // ── WARM: criou PIX mas não pagou (abandoned), hora certa ───────────────
@@ -61,15 +67,14 @@ async function getWarmBatch() {
   const { data, error } = await sb.rpc('get_warm_users', { batch_size: BATCH, now_ts: now });
   if (error) {
     // fallback: query direta
+    // Não há FK declarada entre transactions e remarketing_log (relacionam-se só por
+    // telegram_id, sem constraint), então o PostgREST não consegue fazer embed automático.
+    // Buscamos as transações e os logs separadamente e juntamos em memória.
     const { data: rows, error: e2 } = await sb
       .from('transactions')
       .select(`
         telegram_id, product_id, media_pack_id, amount, created_at,
-        users!transactions_user_id_fkey!inner (first_name, username, is_blocked),
-        remarketing_log!left (
-          id, segment, sequence_step, last_sent_at, next_send_at,
-          total_sent, opted_out, converted
-        )
+        users!transactions_user_id_fkey!inner (first_name, username, is_blocked)
       `)
       .in('status', ['pending', 'expired'])
       .is('proof_file_id', null)
@@ -81,33 +86,47 @@ async function getWarmBatch() {
 
     // Deduplica por telegram_id — pega mais recente
     const seen = new Set();
-    return (rows || []).filter(r => {
-      const log = r.remarketing_log?.[0];
+    const deduped = (rows || []).filter(r => {
       if (seen.has(r.telegram_id)) return false;
       seen.add(r.telegram_id);
-      if (r.users.is_blocked) return false;
+      return !r.users.is_blocked;
+    });
+
+    if (deduped.length === 0) return [];
+
+    // Busca os logs de remarketing desses telegram_ids numa query separada
+    const ids = deduped.map(r => r.telegram_id);
+    const { data: logs } = await sb
+      .from('remarketing_log')
+      .select('telegram_id, segment, sequence_step, last_sent_at, next_send_at, total_sent, opted_out, converted')
+      .in('telegram_id', ids);
+
+    const logByUser = new Map((logs || []).map(l => [l.telegram_id, l]));
+
+    return deduped.filter(r => {
+      const log = logByUser.get(r.telegram_id);
       if (!log) return true;
       if (log.opted_out || log.converted) return false;
       if (log.sequence_step >= 3) return false;
       return !log.next_send_at || new Date(log.next_send_at) <= new Date();
-    }).slice(0, BATCH);
+    }).map(r => ({
+      ...r,
+      remarketing_log: logByUser.has(r.telegram_id) ? [logByUser.get(r.telegram_id)] : []
+    })).slice(0, BATCH);
   }
   return data || [];
 }
 
 // ── BUYER: comprou, hora de upsell ──────────────────────────────────────
 async function getBuyerBatch() {
-  const now = new Date().toISOString();
-
+  // Não há FK declarada entre transactions e remarketing_log (relacionam-se só por
+  // telegram_id, sem constraint), então o PostgREST não consegue fazer embed automático.
+  // Buscamos as transações e os logs separadamente e juntamos em memória.
   const { data, error } = await sb
     .from('transactions')
     .select(`
       telegram_id, product_id, media_pack_id, delivered_at,
-      users!transactions_user_id_fkey!inner (first_name, username, is_blocked),
-      remarketing_log!left (
-        id, segment, sequence_step, last_sent_at, next_send_at,
-        total_sent, opted_out, converted
-      )
+      users!transactions_user_id_fkey!inner (first_name, username, is_blocked)
     `)
     .eq('status', 'delivered')
     .eq('users.is_blocked', false)
@@ -116,15 +135,32 @@ async function getBuyerBatch() {
   if (error) throw error;
 
   const seen = new Set();
-  return (data || []).filter(r => {
+  const deduped = (data || []).filter(r => {
     if (seen.has(r.telegram_id)) return false;
     seen.add(r.telegram_id);
-    const log = r.remarketing_log?.[0];
+    return true;
+  });
+
+  if (deduped.length === 0) return [];
+
+  const ids = deduped.map(r => r.telegram_id);
+  const { data: logs } = await sb
+    .from('remarketing_log')
+    .select('telegram_id, segment, sequence_step, last_sent_at, next_send_at, total_sent, opted_out, converted')
+    .in('telegram_id', ids);
+
+  const logByUser = new Map((logs || []).map(l => [l.telegram_id, l]));
+
+  return deduped.filter(r => {
+    const log = logByUser.get(r.telegram_id);
     if (!log) return true;
     if (log.opted_out || log.converted) return false;
     if (log.sequence_step >= 4) return false;
     return !log.next_send_at || new Date(log.next_send_at) <= new Date();
-  }).slice(0, BATCH);
+  }).map(r => ({
+    ...r,
+    remarketing_log: logByUser.has(r.telegram_id) ? [logByUser.get(r.telegram_id)] : []
+  })).slice(0, BATCH);
 }
 
 // ── Upsert log após envio ────────────────────────────────────────────────
