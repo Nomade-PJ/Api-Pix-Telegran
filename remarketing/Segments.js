@@ -9,9 +9,23 @@ const BATCH = 80; // usuários por rodada (seguro p/ rate limit)
 
 // ── COLD: nunca comprou, não opted_out, hora certa de enviar ─────────────
 async function getColdBatch() {
-  const now = new Date().toISOString();
+  const { data, error } = await sb.rpc('get_cold_users', { batch_size: BATCH });
+  if (!error) {
+    return (data || []).map(r => ({
+      telegram_id: r.telegram_id,
+      first_name: r.first_name,
+      username: r.username,
+      remarketing_log: r.log_sequence_step !== null
+        ? [{ sequence_step: r.log_sequence_step, next_send_at: r.log_next_send_at }]
+        : []
+    }));
+  }
 
-  const { data, error } = await sb
+  // Fallback: query direta + filtro em memória.
+  // PostgREST não suporta referenciar coluna de tabela embutida (remarketing_log.*)
+  // dentro de .or() quando ela vem de um left join via select() — por isso filtramos
+  // tudo em JS aqui em vez de usar .or() no banco.
+  const { data: rows, error: e2 } = await sb
     .from('users')
     .select(`
       telegram_id, first_name, username,
@@ -21,25 +35,22 @@ async function getColdBatch() {
       )
     `)
     .eq('is_blocked', false)
-    // Não tem nenhuma transação delivered
     .not('telegram_id', 'in', sb
       .from('transactions')
       .select('telegram_id')
       .eq('status', 'delivered')
     )
-    .or(`remarketing_log.next_send_at.lte.${now},remarketing_log.id.is.null`)
-    .limit(BATCH);
+    .limit(BATCH * 5);
 
-  if (error) throw error;
+  if (e2) throw e2;
 
-  // Filtrar: sem log (novo) OU next_send_at <= agora E não opted_out E não converted E step < 5
-  return (data || []).filter(u => {
+  return (rows || []).filter(u => {
     const log = u.remarketing_log?.[0];
     if (!log) return true; // nunca contatado
     if (log.opted_out || log.converted) return false;
     if (log.sequence_step >= 5) return false; // esgotou sequência
     return !log.next_send_at || new Date(log.next_send_at) <= new Date();
-  });
+  }).slice(0, BATCH);
 }
 
 // ── WARM: criou PIX mas não pagou (abandoned), hora certa ───────────────
